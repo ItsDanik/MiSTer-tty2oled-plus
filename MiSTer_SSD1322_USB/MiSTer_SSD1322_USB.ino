@@ -197,6 +197,23 @@ Adafruit_SSD1322 oled(256, 64, &SPI, OLED_DC, OLED_RESET, OLED_CS);
 #endif
 U8G2_FOR_ADAFRUIT_GFX u8g2;
 
+// ESP32 core 3.x LEDC compatibility
+// Core 3.0 dropped the channel-based LEDC API (ledcAttachPin/ledcDetachPin,
+// and channel-addressed ledcWriteNote/ledcWriteTone) for a pin-based one.
+// Upstream's stable sketch is written against 2.x; rather than rewrite the
+// buzzer routines and lose 2.x support, map the old spelling onto the new
+// calls. Frequency and resolution match the values in venice1200's own v3
+// test sketch. Building against 2.x is unaffected - none of this is defined.
+#if defined(BUZZER) && defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+  #define LEDC_FREQ 12000                // LED Control API Frequency
+  #define LEDC_RESO 8                    // LED Control API Resolution
+  // 3.x addresses the timer by pin, so the channel argument becomes the pin.
+  #undef  TONE_PWM_CHANNEL
+  #define TONE_PWM_CHANNEL BUZZER
+  #define ledcAttachPin(pin, ch)  ledcAttach((pin), LEDC_FREQ, LEDC_RESO)
+  #define ledcDetachPin(pin)      ledcDetach(pin)
+#endif
+
 // Tilt Sensor
 #include <Bounce2.h>                     // << Extra Library, via Arduino Library Manager
 #define DEBOUNCE_TIME 25                 // Debounce Time
