@@ -68,6 +68,26 @@
 #define META_MAX_VALUE  48
 #define META_MAX_TITLE  64
 
+// ---------------------------------------------------------------------------
+// Console layout rows
+// ---------------------------------------------------------------------------
+// A fixed "Now playing" header sits above the rule, the game title below it in
+// a font a step larger than the field list, then the fields themselves.
+// These are shared by the renderer and the scroll tick so the marquee measures
+// the same window the title is actually drawn into.
+#define CON_HEADER_TEXT  "Now playing"
+#define CON_HEADER_FONT  7              // tenfatguys, 10px
+#define CON_HEADER_Y     11             // header baseline
+#define CON_RULE_Y       14             // hairline under the header
+#define CON_TITLE_FONT   2              // luBS10 - larger than the 5x7 fields
+#define CON_TITLE_LABEL  "Title: "
+#define CON_TITLE_Y      26             // title baseline
+#define CON_FIELD_FONT   0              // 5x7
+#define CON_FIELD_Y0     36             // first field baseline
+#define CON_FIELD_PITCH  9
+// Leave the bottom few rows clear for the page indicator.
+#define CON_FIELD_ROWS   ((DispHeight - 6 - CON_FIELD_Y0) / CON_FIELD_PITCH + 1)
+
 // Display kinds, matching the wire protocol.
 #define MKIND_OFF       0
 #define MKIND_ARCADE    1
@@ -338,31 +358,46 @@ static void meta_blitIcon(void) {
 static void meta_renderConsole(void) {
   oled.clearDisplay();
 
-  // --- Title, with marquee when it overflows -------------------------------
-  oled_setfont(7);                                  // tenfatguys, 10px
+  // --- Header --------------------------------------------------------------
+  // Fixed caption rather than the game title: the title has moved below the
+  // rule where it gets a larger font and the full width of the column.
+  oled_setfont(CON_HEADER_FONT);
   u8g2.setForegroundColor(SSD1322_WHITE);
   u8g2.setBackgroundColor(SSD1322_BLACK);
+  meta_drawClipped(CON_HEADER_TEXT, 2, CON_HEADER_Y, TEXT_W, 0);
+
+  oled.drawFastHLine(0, CON_RULE_Y, TEXT_W + 2, 6);
+
+  // --- Title, with marquee when it overflows -------------------------------
+  oled_setfont(CON_TITLE_FONT);
+  const int titleLabelW = meta_textWidth(CON_TITLE_LABEL);
+  const int titleX      = 2 + titleLabelW;
+  const int titleWin    = TEXT_W - titleLabelW;
+
+  u8g2.setForegroundColor(8);                       // label dimmed, as fields
+  u8g2.setCursor(2, CON_TITLE_Y);
+  u8g2.print(CON_TITLE_LABEL);
+  u8g2.setForegroundColor(SSD1322_WHITE);
 
   int tw = meta_textWidth(metaTitle);
-  if (tw <= TEXT_W) {
+  if (tw <= titleWin) {
     titleScrollX = 0;
-    meta_drawClipped(metaTitle, 2, 11, TEXT_W, 0);
+    meta_drawClipped(metaTitle, titleX, CON_TITLE_Y, titleWin, 0);
   } else {
-    meta_drawClipped(metaTitle, 2, 11, TEXT_W, (int)titleScrollX);
+    meta_drawClipped(metaTitle, titleX, CON_TITLE_Y, titleWin, (int)titleScrollX);
     // Second copy trailing the first so the wrap reads continuously.
     int wrapAt = tw + SCROLL_GAP;
-    if (titleScrollX > wrapAt - TEXT_W) {
-      meta_drawClipped(metaTitle, 2, 11, TEXT_W, (int)titleScrollX - wrapAt);
+    if (titleScrollX > wrapAt - titleWin) {
+      meta_drawClipped(metaTitle, titleX, CON_TITLE_Y, titleWin,
+                       (int)titleScrollX - wrapAt);
     }
   }
 
-  oled.drawFastHLine(0, 14, TEXT_W + 2, 6);
-
   // --- Field list ----------------------------------------------------------
-  oled_setfont(0);                                  // 5x7
-  const int firstY   = 24;
-  const int pitch    = 9;
-  const int maxRows  = (DispHeight - firstY) / pitch + 1;   // 5 rows
+  oled_setfont(CON_FIELD_FONT);
+  const int firstY   = CON_FIELD_Y0;
+  const int pitch    = CON_FIELD_PITCH;
+  const int maxRows  = CON_FIELD_ROWS;
   int pages = (metaFieldCount + maxRows - 1) / maxRows;
   if (pages < 1) pages = 1;
   if (fieldPage >= pages) fieldPage = 0;
@@ -471,7 +506,7 @@ bool meta_tick(void) {
     bool dirty = false;
 
     // Field pager.
-    const int maxRows = (DispHeight - 24) / 9 + 1;
+    const int maxRows = CON_FIELD_ROWS;
     int pages = (metaFieldCount + maxRows - 1) / maxRows;
     if (pages > 1 && now - lastPageTick >= VSCROLL_MS) {
       fieldPage    = (fieldPage + 1) % pages;
@@ -479,11 +514,13 @@ bool meta_tick(void) {
       dirty        = true;
     }
 
-    // Title marquee. Only runs when the title actually overflows; the width
-    // test uses the same font the renderer will use.
-    oled_setfont(7);
+    // Title marquee. Only runs when the title actually overflows. The window
+    // is the column minus the "Title: " label, measured in the same font the
+    // renderer uses, so the scroll and the draw agree on when it overflows.
+    oled_setfont(CON_TITLE_FONT);
+    const int titleWin = TEXT_W - meta_textWidth(CON_TITLE_LABEL);
     int tw = meta_textWidth(metaTitle);
-    if (tw > TEXT_W && now >= scrollHoldUntil && now - lastScrollTick >= SCROLL_STEP_MS) {
+    if (tw > titleWin && now >= scrollHoldUntil && now - lastScrollTick >= SCROLL_STEP_MS) {
       lastScrollTick = now;
       titleScrollX++;
       int wrapAt = tw + SCROLL_GAP;

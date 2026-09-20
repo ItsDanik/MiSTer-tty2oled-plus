@@ -31,6 +31,8 @@
 #ifndef ARDUINO_STUBS_H
 #define ARDUINO_STUBS_H
 
+#include <string>
+
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -88,6 +90,8 @@ public:
 
     void print(const char *s) {
         lastPrint = s;
+        printLog += s;
+        printLog += "\n";
         printCalls++;
         // Record the right-most pixel any draw would touch, so tests can prove
         // nothing is drawn outside its column.
@@ -100,11 +104,14 @@ public:
     uint16_t fgColor = 0, bgColor = 0;
     int charW = 6;
     const char *lastPrint = "";
+    std::string printLog;          // every string drawn since the last reset
     int printCalls = 0;
     int16_t maxRight = -32768;
     int16_t minLeft  = 32767;
 
-    void resetProbe() { maxRight = -32768; minLeft = 32767; printCalls = 0; }
+    void resetProbe() {
+        maxRight = -32768; minLeft = 32767; printCalls = 0; printLog.clear();
+    }
 };
 
 #endif // ARDUINO_STUBS_H
