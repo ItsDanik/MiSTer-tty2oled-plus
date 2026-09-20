@@ -93,8 +93,8 @@ section() { printf '\n\033[1m%s\033[0m\n' "${1}"; }
 reset_capture() {
   sync_capture
   : > "${CAPTURE}"
-  rm -f "${TMP}/STARTPATH" "${TMP}/FULLPATH" "${TMP}/FILESELECT" \
-        "${TMP}/GAMEID" "${TMP}/titleindex" "${TMP}/coretypes"
+  rm -f "${TMP}/STARTPATH" "${TMP}/FULLPATH" "${TMP}/CURRENTPATH" \
+        "${TMP}/FILESELECT" "${TMP}/GAMEID" "${TMP}/titleindex" "${TMP}/coretypes"
   # sendmeta now suppresses an identical repeat, so clear that memory too or
   # tests would silently depend on the order they run in.
   META_WIRE_LAST=""
@@ -301,6 +301,41 @@ for f in ${watch}; do
   [ -e "${f}" ] || { FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m watch list names a missing file: %s\n' "${f}"; }
 done
 PASS=$((PASS+1)); printf '  \033[32mok\033[0m   every watched path exists\n'
+
+# ---------------------------------------------------------------------------
+section "MiSTer splits the selection across FULLPATH and CURRENTPATH"
+# ---------------------------------------------------------------------------
+# Taken verbatim from a real MiSTer: FULLPATH is the containing folder and
+# CURRENTPATH the file name. Reading FULLPATH alone titled the game "GAMEBOY".
+reset_capture
+printf 'GAMEBOY=console\n' > "${TMP}/coretypes"
+printf 'GAMEBOY\n' > "${TMP}/CORENAME"
+printf 'GAMEBOY\n' > "${TMP}/RBFNAME"
+sleep 0.05
+printf 'games/GAMEBOY\n'               > "${TMP}/FULLPATH"
+printf 'A-mazing Tater (USA).gb\n'     > "${TMP}/CURRENTPATH"
+printf 'selected\n'                    > "${TMP}/FILESELECT"
+printf 'CRC32: D229AC62\n'             > "${TMP}/GAMEID"
+sendmeta "GAMEBOY"
+out="$(captured)"
+contains "title comes from the file name" "${out}" "A-mazing Tater"
+contains "region parsed"                  "${out}" "Region=USA"
+contains "format parsed"                  "${out}" "Format=GB"
+case "${out}" in
+  *"CMDMETA,2,12,GAMEBOY|"*) FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m titled from the folder again\n' ;;
+  *) PASS=$((PASS+1)); printf '  \033[32mok\033[0m   not titled from the folder\n' ;;
+esac
+
+# Fallback: a setup where FULLPATH really does hold the whole path.
+reset_capture
+printf 'GAMEBOY=console\n' > "${TMP}/coretypes"
+printf 'GAMEBOY\n' > "${TMP}/CORENAME"
+sleep 0.05
+printf '/media/fat/games/GAMEBOY/Tetris (World).gb\n' > "${TMP}/FULLPATH"
+rm -f "${TMP}/CURRENTPATH"
+printf 'selected\n' > "${TMP}/FILESELECT"
+sendmeta "GAMEBOY"
+contains "falls back to FULLPATH" "$(captured)" "Tetris"
 
 # ---------------------------------------------------------------------------
 section "console core with no game keeps the full-screen artwork"

@@ -328,7 +328,7 @@ meta_addfield() {
 # Computer/unknown: core-level only; the caller keeps the existing behaviour.
 # ---------------------------------------------------------------------------
 build_meta() {
-  local corename="${1}" fullpath="" fileselect="" rbfname=""
+  local corename="${1}" fullpath="" fileselect="" rbfname="" currentpath="" romref=""
 
   meta_reset
   classify_core "${corename}"
@@ -357,15 +357,24 @@ build_meta() {
       ;;
 
     console)
-      _slurp fullpath   "${MISTER_FULLPATH}"
-      _slurp fileselect "${MISTER_FILESELECT}"
-      _slurp rbfname    "${MISTER_RBFNAME}"
+      _slurp fullpath    "${MISTER_FULLPATH}"
+      _slurp currentpath "${MISTER_CURRENTPATH}"
+      _slurp fileselect  "${MISTER_FILESELECT}"
+      _slurp rbfname     "${MISTER_RBFNAME}"
+
+      # MiSTer splits the selection across two files. FULLPATH holds the
+      # containing FOLDER - "games/GAMEBOY" - and CURRENTPATH the file name,
+      # "A-mazing Tater (USA).gb". Taking the title from FULLPATH therefore
+      # yields the folder name, which is how a Game Boy ROM came out titled
+      # "GAMEBOY". CURRENTPATH is the one to read; FULLPATH stays as a fallback
+      # for any setup where it does carry a complete path.
+      romref="${currentpath:-${fullpath}}"
 
       # FULLPATH is also written while merely browsing the file list
       # (MENU_FILE_SELECT1 writes it with FILESELECT="active"). Only trust it
       # once something was actually chosen.
       if [ "${fileselect}" != "selected" ]; then
-        fullpath=""
+        romref=""
       fi
 
       # FULLPATH, FILESELECT and GAMEID persist in /tmp across a core change -
@@ -373,13 +382,17 @@ build_meta() {
       # started from the menu would otherwise inherit the previous core's game,
       # showing a stale title and CRC before anything has been loaded. Only
       # trust them when they were written after the core name was.
-      if [ -n "${fullpath}" ] && [ -e "${MISTER_CORENAME}" ] &&
+      # Stale only when BOTH selection files predate the core name. They are
+      # written together, but checking each keeps this correct if a future
+      # MiSTer writes only one of them.
+      if [ -n "${romref}" ] && [ -e "${MISTER_CORENAME}" ] &&
+         [ ! "${MISTER_CURRENTPATH}" -nt "${MISTER_CORENAME}" ] &&
          [ ! "${MISTER_FULLPATH}" -nt "${MISTER_CORENAME}" ]; then
-        fullpath=""
+        romref=""
       fi
 
-      if [ -n "${fullpath}" ]; then
-        clean_romname "${fullpath}"
+      if [ -n "${romref}" ]; then
+        clean_romname "${romref}"
         META_TITLE="${ROM_TITLE}"
         META_SOURCE="filename"
         META_GAME="yes"
