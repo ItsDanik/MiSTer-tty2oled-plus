@@ -156,10 +156,20 @@ Added to `tty2oled-system.ini`; override them in `tty2oled-user.ini`.
 consulted before any guesswork, and a deploy will not overwrite one you have
 edited.
 
-Two switches are shipped **off** so neither updater can overwrite this fork:
-`SCRIPT_UPDATE="no"` here, and set `TTY2OLED_UPDATE="no"` in your user ini to
-stop `update_all` reflashing stock firmware. Repoint `REPOSITORY_URL` at your
+Two switches are shipped **off** in `tty2oled-system.ini` so neither updater
+can overwrite this fork: `SCRIPT_UPDATE="no"` stops the updater pulling
+upstream's scripts over these, and `TTY2OLED_UPDATE="no"` stops `update_all`
+reflashing stock firmware over your build. Repoint `REPOSITORY_URL` at your
 own fork before turning either back on.
+
+To confirm what is actually in force on the MiSTer, including anything your
+own `tty2oled-user.ini` overrides:
+
+```bash
+. /media/fat/tty2oled/tty2oled-system.ini
+[ -r /media/fat/tty2oled/tty2oled-user.ini ] && . /media/fat/tty2oled/tty2oled-user.ini
+echo "TTY2OLED_UPDATE=${TTY2OLED_UPDATE} SCRIPT_UPDATE=${SCRIPT_UPDATE}"
+```
 
 ## Troubleshooting
 

@@ -393,10 +393,28 @@ ImageMagick otherwise.
 
 ## Two switches that exist to stop your work being overwritten
 
-- `SCRIPT_UPDATE="no"` in `tty2oled-system.ini` — otherwise the updater pulls
-  upstream's `tty2oled.sh` over this one.
-- `TTY2OLED_UPDATE="no"` in `tty2oled-user.ini` — otherwise `update_all`
-  reflashes stock firmware from tty2tft.de over your build.
+Both live in `tty2oled-system.ini`, which **is** deployed, so the protection
+ships rather than depending on a hand-edit:
+
+- `SCRIPT_UPDATE="no"` — otherwise the updater pulls upstream's `tty2oled.sh`
+  over this one.
+- `TTY2OLED_UPDATE="no"` — otherwise `update_all` reflashes stock firmware
+  from tty2tft.de over your build.
+
+This one was wrong for a while: the note said to set `TTY2OLED_UPDATE` in
+`tty2oled-user.ini`, which is the one file `deploy-mister.sh` deliberately
+never copies. A switch that guards against an overwrite is worthless if it
+only takes effect when the user remembers to set it by hand, so it is set in
+`tty2oled-system.ini` now. A user ini can still override it, because it is
+sourced second.
+
+Check what is actually in force rather than what the repo says:
+
+```bash
+ssh root@MiSTer.local '. /media/fat/tty2oled/tty2oled-system.ini
+  [ -r /media/fat/tty2oled/tty2oled-user.ini ] && . /media/fat/tty2oled/tty2oled-user.ini
+  echo "TTY2OLED_UPDATE=${TTY2OLED_UPDATE} SCRIPT_UPDATE=${SCRIPT_UPDATE}"'
+```
 
 `REPOSITORY_URL` still points at upstream. Repoint it at the fork before
 turning either back on.
