@@ -3,3 +3,4 @@
 tests/firmware/test_meta_parse
 tests/firmware/test_meta_layout
 tests/fixtures/tmp/
+MiSTer_SSD1322_USB/build-out-*/

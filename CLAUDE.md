@@ -25,7 +25,10 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootscreen.h` | New. LittleFS-backed custom boot image. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
 | `tests/` | 201 checks, no hardware needed. |
-| `tools/` | Build and diagnostic helpers. |
+| `tools/build-tty2oled.sh` | Builds the firmware with arduino-cli. Runs on the workstation. |
+| `tools/deploy-mister.sh` | Pushes this working copy to the MiSTer over SSH. Workstation. |
+| `tools/flash-mister.sh` | Flashes the firmware. Runs **on the MiSTer**. |
+| `tools/tty2oled-diag.sh` | Dumps MiSTer's state files and what they parse to. **On the MiSTer**. |
 
 ## Running the tests
 
@@ -61,24 +64,47 @@ echo "CMDHWINF" > ${TTYDEV}; read -t5 R < ${TTYDEV}; echo "$R"   # HWLOLIN32;230
 
 Installs arduino-cli, the ESP32 core and every library, then compiles. Produces
 `build-out-<board>/MiSTer_SSD1322_USB.ino.merged.bin`, flashable as one file at
-`0x0`. The Arduino IDE works too — board profile `WEMOS LOLIN32`, and on an S3
-set **USB CDC On Boot: Disabled** or `Serial` leaves the UART bridge the MiSTer
-talks to.
+`0x0` — the merged image already carries the bootloader, partition table and
+boot_app0 at their right offsets, which is what makes the S3's bootloader-at-`0x0`
+versus classic-ESP32-at-`0x1000` difference a non-issue.
+
+Build output is gitignored (`MiSTer_SSD1322_USB/build-out-*/`); those are ~1MB
+binaries that do not belong in history.
+
+The Arduino IDE works too — board profile `WEMOS LOLIN32`, and on an S3 set
+**USB CDC On Boot: Disabled** or `Serial` leaves the UART bridge the MiSTer
+talks to. The Flatpak IDE needs `flatpak override --user --device=all
+cc.arduino.IDE2` before it can see a serial port at all, and the arduino-cli
+route avoids the whole question.
 
 ## Deploying
 
-Scripts: copy `tty2oled.sh`, `tty2oled-meta.sh`, `tty2oled-system.ini` to
-`/media/fat/tty2oled/`, `chmod +x` the two scripts, restart with
-`/media/fat/tty2oled/S60tty2oled restart`. **Never overwrite
-`tty2oled-user.ini`** — it is the user's, and it is sourced after
-`system.ini` so their settings win.
+Over SSH from the repo root — no Samba, no git on the MiSTer:
 
-Firmware first, then scripts. New firmware with old scripts behaves exactly
-like upstream; the reverse sends commands the firmware cannot parse.
+```bash
+./tools/deploy-mister.sh                    # scripts, then restart the daemon
+./tools/deploy-mister.sh --firmware --flash # also copy and flash the newest build
+```
+
+`MISTER=root@192.168.1.50 ./tools/deploy-mister.sh` if mDNS does not resolve.
+`ssh-copy-id root@MiSTer.local` once and it stops asking for a password.
+
+The full loop is then: edit → `./tools/build-tty2oled.sh MiSTer_SSD1322_USB lolin32`
+→ `./tools/deploy-mister.sh --firmware --flash` → `ssh root@MiSTer.local 'tail -f /tmp/tty2oled'`.
+Script-only changes need neither the build nor the flash.
+
+**`tty2oled-user.ini` is deliberately not in the deploy list.** It holds the
+user's own settings and is sourced after `tty2oled-system.ini`, so copying the
+repo's copy over it would wipe their configuration.
+
+Firmware first, then scripts, when doing it by hand. New firmware with old
+scripts behaves exactly like upstream; the reverse sends commands the firmware
+cannot parse. (`deploy-mister.sh --firmware --flash` gets this order right.)
 
 Debug with `debug="true"` in `tty2oled-user.ini`, log at `/tmp/tty2oled`.
 `./tools/tty2oled-diag.sh` on the MiSTer dumps every state file with mtimes and
-shows what `build_meta` made of them — run it right after loading a game.
+shows what `build_meta` made of them — run it right after loading a game. That
+is what found the `FULLPATH` bug.
 
 ## Things that cost time, recorded so they do not again
 
