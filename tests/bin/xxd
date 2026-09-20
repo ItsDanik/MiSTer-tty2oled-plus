@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""
+Minimal xxd stand-in for the test suite.
+
+MiSTer ships a real xxd and the daemon uses it, but plenty of build containers
+do not have one. This covers only the two modes the daemon and the tests need:
+
+    xxd -p        binary on stdin  -> plain hex on stdout
+    xxd -r -p     plain hex stdin  -> binary on stdout
+
+It is used only by tests, via tests/bin being prepended to PATH.
+"""
+import sys
+
+args = set(sys.argv[1:])
+revert = "-r" in args
+plain = "-p" in args
+
+if not plain:
+    sys.exit("xxd shim: only -p and -r -p are supported")
+
+if revert:
+    data = sys.stdin.buffer.read()
+    # Strip whitespace, then decode hex. Tolerate an odd trailing nibble the
+    # way xxd does, by ignoring it.
+    hex_text = b"".join(data.split()).decode("ascii", "ignore")
+    if len(hex_text) % 2:
+        hex_text = hex_text[:-1]
+    sys.stdout.buffer.write(bytes.fromhex(hex_text))
+else:
+    data = sys.stdin.buffer.read()
+    text = data.hex()
+    # xxd -p wraps at 60 hex chars (30 bytes) per line.
+    for i in range(0, len(text), 60):
+        sys.stdout.write(text[i:i + 60] + "\n")

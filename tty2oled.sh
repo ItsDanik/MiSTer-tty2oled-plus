@@ -62,8 +62,17 @@
 #
 #
 
+# 2026-09-20 Game metadata display (fork)
+#            Sends per-game metadata ahead of the picture so the display can
+#            show arcade info cards and the console split layout.
+#            Requires "log_file_entry=1" in MiSTer.ini for anything beyond
+#            core-level display; see tty2oled-meta.sh for why.
+#
+#
+
 . /media/fat/tty2oled/tty2oled-system.ini
 . /media/fat/tty2oled/tty2oled-user.ini
+. /media/fat/tty2oled/tty2oled-meta.sh
 cd /tmp
 
 
@@ -140,6 +149,14 @@ senddata() {
   newcore="${1}"
   unset picfnam
   if [ "${USBMODE}" = "yes" ]; then                       # Check the tty2xxx mode
+
+    # Metadata first: the firmware needs to know which layout to compose
+    # before the picture arrives, and the console icon has to be in place
+    # before CMDCOR triggers the first paint of the split layout.
+    if sendmeta "${newcore}"; then
+      sendicon "${META_ICON}"
+    fi
+
     if [ -e "${picturefolder_pri}/${newcore}.gsc" ]; then # Check for _pri pictures
       picfnam="${picturefolder_pri}/${newcore}.gsc"
     elif [ -e "${picturefolder_pri}/${newcore}.xbm" ]; then
@@ -178,6 +195,94 @@ senddata() {
   else                                               # SD/Standard Mode ? Just send the Corename
     echo "${1}" >${TTYDEV}                           # Instruct the device to load the appropriate picture from SD card
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Metadata support (fork additions)
+# ---------------------------------------------------------------------------
+
+# Strip the characters that would break the CMDMETA wire format, plus anything
+# non-printable that could desynchronise the serial stream.
+metasanitize() {
+  local s="${1}"
+  s="${s//|/ }"       # field separator
+  s="${s//,/ }"       # command separator
+  s="${s//=/ }"       # label/value separator
+  s="$(printf '%s' "${s}" | tr -d '\000-\037\177')"
+  printf '%s' "${s}"
+}
+
+# Map META_KIND onto the numeric kind the firmware expects.
+metakindnum() {
+  case "${1}" in
+    arcade)   printf '1' ;;
+    console)  printf '2' ;;
+    computer) printf '3' ;;
+    *)        printf '0' ;;
+  esac
+}
+
+# Locate the 86x64 console icon for a core, honouring the _pri override folder
+# so hand-made icons can replace generated ones one at a time.
+findicon() {
+  local key="${1}"
+  ICONFILE=""
+  [ -n "${key}" ] || return 1
+  if [ -e "${iconfolder_pri}/${key}.gsc" ]; then
+    ICONFILE="${iconfolder_pri}/${key}.gsc"
+  elif [ -e "${iconfolder}/${key}.gsc" ]; then
+    ICONFILE="${iconfolder}/${key}.gsc"
+  else
+    return 1
+  fi
+  return 0
+}
+
+# Send CMDMETA for the current game. Returns 1 if metadata mode is not active
+# so the caller can fall back to plain picture display.
+sendmeta() {
+  local corename="${1}" kindnum="" payload="" label="" value="" f=""
+
+  [ "${SHOW_METADATA}" = "yes" ] || return 1
+  [ "${USBMODE}" = "yes" ]       || return 1
+
+  build_meta "${corename}"
+
+  # Computer cores stay on plain full-screen artwork by design.
+  if [ "${META_KIND}" = "computer" ] || [ "${META_KIND}" = "unknown" ]; then
+    dbug "Sending: CMDMETAOFF (kind=${META_KIND})"
+    echo "CMDMETAOFF" >${TTYDEV}
+    sleep ${WAITSECS}
+    return 1
+  fi
+
+  kindnum="$(metakindnum "${META_KIND}")"
+  payload="$(metasanitize "${META_TITLE}")"
+
+  for f in "${META_FIELDS[@]}"; do
+    label="${f%%$'\t'*}"
+    value="${f#*$'\t'}"
+    payload="${payload}|$(metasanitize "${label}")=$(metasanitize "${value}")"
+  done
+
+  dbug "Sending: CMDMETA,${kindnum},${METADATA_INTERVAL},${payload}"
+  echo "CMDMETA,${kindnum},${METADATA_INTERVAL},${payload}" >${TTYDEV}
+  sleep ${WAITSECS}
+  return 0
+}
+
+# Send the 86x64 console icon, if one exists for this core.
+sendicon() {
+  local key="${1}"
+  [ "${META_KIND}" = "console" ] || return 1
+  findicon "${key}" || { dbug "No icon for ${key}"; return 1; }
+
+  dbug "Sending: CMDICON (${ICONFILE})"
+  echo "CMDICON" >${TTYDEV}
+  sleep ${WAITSECS}
+  tail -n +4 "${ICONFILE}" | xxd -r -p >${TTYDEV}
+  sleep ${WAITSECS}
+  return 0
 }
 
 sendtime() {
@@ -221,6 +326,17 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
   sendrotation												# Set Display Rotation
   sendtime													# Set time and date
   sendscreensaver											# Set Screensaver
+
+  # Metadata needs MiSTer to publish its state files. That is off by default,
+  # so say so once rather than silently showing core-level info forever.
+  if [ "${SHOW_METADATA}" = "yes" ] && [ "${METADATA_WARN}" = "yes" ]; then
+    check_mister_ini
+    if [ "${MISTER_LOGFILEENTRY}" = "no" ]; then
+      echo "tty2oled: game metadata is enabled but 'log_file_entry=1' is missing from ${MISTER_INI}."
+      echo "tty2oled: without it MiSTer does not publish the loaded game, so only core names will show."
+      dbug "log_file_entry not enabled - metadata limited to core level"
+    fi
+  fi
   while true; do											# main loop
     if [ -r ${corenamefile} ]; then							# proceed if file exists and is readable (-r)
       if [ -f ${SLEEPFILE} ]; then							# Sleepmode = Yes
