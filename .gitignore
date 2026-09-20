@@ -1,0 +1,5 @@
+
+# Host test binaries
+tests/firmware/test_meta_parse
+tests/firmware/test_meta_layout
+tests/fixtures/tmp/

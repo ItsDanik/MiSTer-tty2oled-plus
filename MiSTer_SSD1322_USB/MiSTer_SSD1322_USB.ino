@@ -237,12 +237,25 @@ const int hwDelay=100;                        // Delay for HWINFO Request
 size_t bytesReadCount=0;
 //uint8_t *logoBin;                             // <<== For malloc in Setup
 uint8_t logoBin[8192];                        // fixed definition
+
+// Source buffer the transition effects read from.
+// Normally the picture just received from the MiSTer, but the metadata display
+// points it at its own composed screen so the same effects can animate towards
+// a text card without duplicating any of the transition code.
+uint8_t *srcBin = logoBin;
+
 enum picType {NONE, XBM, GSC, TXT};           // Enum Picture Type
 int actPicType=NONE;
 int16_t xs, ys;
 uint16_t ws, hs;
 const uint8_t minEffect=1, maxEffect=23;      // Min/Max Effects for Random
 //const uint8_t minEffect=22, maxEffect=23;   // Min/Max Effects for TESTING
+
+// Game metadata display modes and the user-replaceable boot screen.
+// Included here, after the display objects and picture buffers they use, in
+// the same style the sketch already uses for bitmaps.h and fonts.h.
+#include "bootscreen.h"                       // Flash-backed power-on screen
+#include "metadisplay.h"                      // Arcade card / console split layout
 
 // Blinker 500ms Interval
 const long interval = 500;                    // Interval for Blink (milliseconds)
@@ -370,6 +383,12 @@ void oled_setttyack(void);
 // Info about overloading found here
 // https://stackoverflow.com/questions/1880866/can-i-set-a-default-argument-from-a-previous-argument
 inline void oled_drawEightPixelXY(int x, int y) { oled_drawEightPixelXY(x,y,x,y); };
+
+// Game metadata command handlers (fork additions)
+void oled_readmeta(void);
+void oled_readicon(void);
+void oled_showmeta(void);
+void oled_readbootimage(void);
 
 // =============================================================================================================
 // ================================================ SETUP ======================================================
@@ -571,6 +590,10 @@ void setup(void) {
   oled.setRotation(2);                                     // 180° Rotation
 #endif
 
+// Mount the filesystem that may hold a user boot image. Must run before the
+// start screen so a custom image can be shown on this very first draw.
+  boot_begin();
+
 // Go...
   oled_showStartScreen();                                  // OLED Startup
 
@@ -642,6 +665,16 @@ void loop(void) {
   if (ScreenSaverPos) Serial.println("ScreenSaverTimer");
 #endif
 */
+
+#ifdef HAS_METADISPLAY
+  // Metadata animation: arcade alternation and console scrolling.
+  // Suppressed while the start screen is up or the screensaver owns the
+  // display, and skipped entirely when serial data is waiting so an incoming
+  // picture transfer is never delayed by a scroll tick.
+  if (!startScreenActive && !ScreenSaverActive && !Serial.available()) {
+    meta_tick();
+  }
+#endif
 
   // Get Serial Data
   if (Serial.available()) {
@@ -769,10 +802,20 @@ void loop(void) {
     }
 
     else if (newCommand.startsWith("CMDCOR")) {                             // Command from Serial to receive Picture Data via USB Serial from the MiSTer
-      if (oled_readlogo()==1) {                                             // Receive Picture Data... 
+      if (oled_readlogo()==1) {                                             // Receive Picture Data...
+#ifdef HAS_METADISPLAY
+        // In console mode the picture is not shown full-screen: the layout is
+        // text on the left with the console icon on the right, so compose that
+        // instead. Arcade and computer modes fall through to the normal
+        // full-screen path below.
+        if (metaKind==MKIND_CONSOLE) {
+          meta_showConsole();
+        }
+        else
+#endif
         if (tEffect==-1) {                                                  // Send without Effect Parameter or with Effect Parameter -1
           oled_drawlogo(random(minEffect,maxEffect+1));                     // ...and show them on the OLED with Transition Effect 1..MaxEffect
-        } 
+        }
         else {                                                              // Send with Effect "CMDCOR,llander,15"
           oled_drawlogo(tEffect);
         }
@@ -848,7 +891,38 @@ void loop(void) {
     else if (newCommand=="CMDSHTIME") {                                     // ShowTime
       oled_showtime();
     }
-    
+
+// ---------------------------------------------------
+// -- Game metadata display (fork additions)
+// ---------------------------------------------------
+    else if (newCommand.startsWith("CMDMETA,")) {                           // Set metadata for the current game
+      oled_readmeta();
+    }
+
+    else if (newCommand=="CMDMETAOFF") {                                    // Leave metadata mode
+      meta_reset();
+    }
+
+    else if (newCommand=="CMDICON") {                                       // Receive an 86x64 console icon
+      oled_readicon();
+    }
+
+    else if (newCommand=="CMDSHMETA") {                                     // Force the metadata view now
+      oled_showmeta();
+    }
+
+    else if (newCommand=="CMDWRBOOT") {                                     // Receive and store a boot image
+      oled_readbootimage();
+    }
+
+    else if (newCommand=="CMDCLRBOOT") {                                    // Forget the stored boot image
+      boot_clear();
+    }
+
+    else if (newCommand=="CMDBOOTINF") {                                    // Report boot image status
+      Serial.println(boot_info());
+    }
+
 #endif  // ESP32
 
 // ---------------------------------------------------
@@ -917,6 +991,22 @@ void oled_showStartScreen(void) {
 #ifdef XDEBUG
   Serial.println("Show Startscreen");
 #endif
+
+#ifdef HAS_METADISPLAY
+  // A user boot image replaces the built-in logo and its sweep animation
+  // entirely: it is a full 256x64 picture, so there is no empty strip left to
+  // animate in. boot_load() only succeeds for an image of exactly the right
+  // size, so a truncated upload falls through to the stock screen below.
+  if (boot_load(metaBin, sizeof(metaBin))) {
+    oled.clearDisplay();
+    oled.draw4bppBitmap(metaBin);
+    oled.display();
+    startScreenActive = true;
+    delay(2000);
+    return;
+  }
+#endif
+
   oled.clearDisplay();
   oled.drawXBitmap(82, 0, tty2oled_logo, tty2oled_logo_width, tty2oled_logo_height, SSD1322_WHITE);
   oled.display();
@@ -2240,7 +2330,7 @@ void oled_drawEightPixelXY(int x, int y, int dx, int dy) {
   int i;
   switch (actPicType) {
     case XBM:
-      b=logoBin[dx+dy*DispLineBytes1bpp];                // Get Data Byte for 8 Pixels
+      b=srcBin[dx+dy*DispLineBytes1bpp];                 // Get Data Byte for 8 Pixels
       for (i=0; i<8; i++){
         if (bitRead(b, i)) {
           oled.drawPixel(x*8+i,y,SSD1322_WHITE);         // Draw Pixel if "1"
@@ -2252,7 +2342,7 @@ void oled_drawEightPixelXY(int x, int y, int dx, int dy) {
     break;
     case GSC:
       for (i=0; i<4; i++) {
-        b=logoBin[(dx*4)+i+dy*DispLineBytes4bpp];        // Get Data Byte for 2 Pixels
+        b=srcBin[(dx*4)+i+dy*DispLineBytes4bpp];         // Get Data Byte for 2 Pixels
         oled.drawPixel(x*8+i*2+0, y, (0xF0 & b) >> 4);   // Draw Pixel 1, Left Nibble
         oled.drawPixel(x*8+i*2+1, y, 0x0F & b);          // Draw Pixel 2, Right Nibble
       }
@@ -2908,6 +2998,91 @@ void oled_showtime(void) {
   u8g2.setCursor(55,58);                                  // Set Cursor Position
   u8g2.print(actTime);                                    // Write Text
   oled.display();                                         // Output Text
+}
+
+// --------------------------------------------------------------
+// ---------------- Game Metadata Command Handlers ---------------
+// --------------------------------------------------------------
+// Fork additions. Kept at the end of the sketch so the diff against upstream
+// stays readable; the display logic itself lives in metadisplay.h.
+
+// CMDMETA,<kind>,<interval>,<title>[|<label>=<value>]...
+// Stores the metadata for the game that is about to be shown. The picture
+// itself still arrives separately via CMDCOR, so this must be sent first.
+void oled_readmeta(void) {
+#ifdef XDEBUG
+  Serial.println("Called Command CMDMETA");
+#endif
+
+#ifdef HAS_METADISPLAY
+  if (!meta_parse(newCommand.c_str())) {
+#ifdef XDEBUG
+    Serial.println("CMDMETA parse failed");
+#endif
+    return;
+  }
+
+#ifdef XDEBUG
+  Serial.printf("Meta kind:%d interval:%d fields:%d title:%s\n",
+                metaKind, metaInterval, metaFieldCount, metaTitle);
+#endif
+#endif  // HAS_METADISPLAY
+}
+
+
+// CMDICON followed by ICON_BYTES raw bytes.
+// The 86x64 4bpp console icon shown on the right of the split layout.
+void oled_readicon(void) {
+#ifdef XDEBUG
+  Serial.println("Called Command CMDICON");
+#endif
+
+#ifdef HAS_METADISPLAY
+  size_t got = Serial.readBytes((char*)iconBin, ICON_BYTES);
+
+  // A short read means the transfer was truncated. Drop the icon rather than
+  // blitting whatever happened to be left in the buffer.
+  metaHasIcon = (got == ICON_BYTES);
+
+#ifdef XDEBUG
+  Serial.printf("Icon bytes: %u (want %u)\n", (unsigned)got, (unsigned)ICON_BYTES);
+#endif
+
+  if (metaHasIcon && metaKind==MKIND_CONSOLE) meta_showConsole();
+#endif  // HAS_METADISPLAY
+}
+
+
+// CMDSHMETA - force the metadata view immediately, ignoring the timer.
+void oled_showmeta(void) {
+#ifdef HAS_METADISPLAY
+  if (metaKind==MKIND_CONSOLE)     meta_showConsole();
+  else if (metaFieldCount > 0)     meta_showCard(-1);
+#endif
+}
+
+
+// CMDWRBOOT followed by 8192 raw bytes.
+// Persists a user boot image to the ESP's own flash so it appears at power-up
+// even with the MiSTer switched off.
+void oled_readbootimage(void) {
+#ifdef XDEBUG
+  Serial.println("Called Command CMDWRBOOT");
+#endif
+
+#ifdef HAS_METADISPLAY
+  // Reuse metaBin as the receive buffer - the boot image is exactly one
+  // framebuffer and metaBin is not in use while a transfer is in flight.
+  size_t got = Serial.readBytes((char*)metaBin, BOOTIMG_BYTES);
+
+  if (got != BOOTIMG_BYTES) {
+    Serial.println("BOOTIMG,short");
+    return;
+  }
+  Serial.println(boot_store(metaBin, got) ? "BOOTIMG,stored" : "BOOTIMG,failed");
+#else
+  Serial.println("BOOTIMG,unsupported");
+#endif
 }
 
 #endif // ESP32
