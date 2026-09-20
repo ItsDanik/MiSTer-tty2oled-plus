@@ -55,7 +55,11 @@ if [ -e /run/tty2oled-daemon.pid ]; then DAEMON_WAS_RUNNING="yes"; fi
 restore_daemon() {
   if [ "${DAEMON_WAS_RUNNING}" = "yes" ]; then
     say "Restarting the tty2oled daemon"
-    "${INIT}" start
+    # The init script backgrounds the daemon without detaching it, so the
+    # daemon would keep this script's stdout - and over SSH that is the
+    # connection, which then never closes. Give it a file of its own.
+    "${INIT}" start </dev/null >>/tmp/tty2oled-daemon.log 2>&1
+    echo "    started; its output goes to /tmp/tty2oled-daemon.log"
   fi
 }
 trap restore_daemon EXIT

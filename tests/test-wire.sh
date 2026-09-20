@@ -259,7 +259,7 @@ printf 'GAMEBOY\n' > "${TMP}/CORENAME"          # core written AFTER the game st
 printf 'GAMEBOY\n' > "${TMP}/RBFNAME"
 printf 'console\n' > "${TMP}/coretypes" 2>/dev/null || true
 printf 'GAMEBOY=console\n' > "${TMP}/coretypes"
-sendmeta "GAMEBOY"
+sendmeta "GAMEBOY" force            # a core change, which is when this applies
 out="$(captured)"
 contains "metadata mode turned off" "${out}" "CMDMETAOFF"
 case "${out}" in

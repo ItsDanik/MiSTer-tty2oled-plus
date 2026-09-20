@@ -1,6 +1,18 @@
-
 # Host test binaries
 tests/firmware/test_meta_parse
 tests/firmware/test_meta_layout
 tests/fixtures/tmp/
+
+# Firmware build output - ~1MB binaries (arduino-cli) and ~25MB of
+# intermediates (the Arduino IDE). Neither belongs in history.
 MiSTer_SSD1322_USB/build-out-*/
+MiSTer_SSD1322_USB/build/
+
+# Generated from libretro-database by tools/build-title-index.sh: ~2.5MB of
+# data that is rebuilt on demand, plus its download cache.
+titleindex/
+.index-cache/
+
+# The .gsc is the artefact and is committed; the PNG beside it is the source
+# you draw in, and is yours rather than the repo's.
+pics_pri/ICON/*.png

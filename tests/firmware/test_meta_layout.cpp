@@ -128,7 +128,7 @@ int main() {
         okBool("something was drawn",  u8g2.printCalls > 0, true);
     }
 
-    section("console layout: header, then labelled title, then fields");
+    section("console layout: header, then bare title, then fields");
     {
         meta_parse("CMDMETA,2,0,Tetris|System=GAMEBOY|Region=USA|Format=GB");
         metaHasIcon = false;
@@ -138,8 +138,8 @@ int main() {
 
         okBool("header drawn",
                u8g2.printLog.find("Now playing") != std::string::npos, true);
-        okBool("title is labelled",
-               u8g2.printLog.find("Title: ") != std::string::npos, true);
+        okBool("title carries no label",
+               u8g2.printLog.find("Title:") == std::string::npos, true);
         okBool("game title drawn",
                u8g2.printLog.find("Tetris") != std::string::npos, true);
         okBool("field labels drawn",
@@ -153,19 +153,54 @@ int main() {
         okBool("no draw past ICON_X", u8g2.maxRight <= ICON_X, true);
     }
 
-    section("title marquee accounts for the label width");
+    section("a short console title is drawn without a marquee to trigger it");
     {
-        // Sized to fit the full column but NOT the column minus "Title: ".
-        // If the tick measured the wrong window it would sit still.
-        oled_setfont(CON_TITLE_FONT);
-        int labelW = meta_textWidth(CON_TITLE_LABEL);
-        int charW  = meta_textWidth("M");
-        int fitsColumn   = TEXT_W / charW;
-        int fitsWindow   = (TEXT_W - labelW) / charW;
-        okBool("the two windows differ", fitsColumn > fitsWindow, true);
+        // The Airwolf case. A game change sends CMDMETA and nothing else: the
+        // core has not changed so no CMDCOR follows, and NES ships no icon so
+        // no CMDICON either. A title this short never marquees and two fields
+        // never page, so before the pending-draw flag nothing ever put it on
+        // screen and the previous game stayed up.
+        meta_parse("CMDMETA,2,12,Airwolf|System=NES|Format=NES");
+        metaHasIcon = false;
+        u8g2.resetProbe();
 
-        std::string title((size_t)(fitsWindow + 2), 'M');   // between the two
-        std::string cmd = "CMDMETA,2,0," + title + "|System=SNES";
+        okBool("tick draws it", meta_tick(), true);
+        okBool("title reached the screen",
+               u8g2.printLog.find("Airwolf") != std::string::npos, true);
+
+        // ...and exactly once. A short title has nothing to animate, so the
+        // ticks after it must go back to doing nothing.
+        g_fakeMillis += SCROLL_PAUSE_MS + VSCROLL_MS + 1;
+        okBool("the next tick is idle", meta_tick(), false);
+    }
+
+    section("a draw from CMDCOR or CMDICON satisfies the pending first draw");
+    {
+        meta_parse("CMDMETA,2,12,Airwolf|System=NES|Format=NES");
+        metaHasIcon = false;
+        meta_showConsole();            // as the CMDCOR handler does
+        okBool("tick does not draw it again", meta_tick(), false);
+    }
+
+    section("arcade metadata does not ask for a console draw");
+    {
+        // Arcade alternates from its own timer and must show the artwork
+        // first, so a fresh card must not jump the queue.
+        meta_parse("CMDMETA,1,12,Pong|Year=1972");
+        okBool("no pending console draw", metaNeedsDraw, false);
+    }
+
+    section("title marquee measures the unlabelled window");
+    {
+        // The window is the whole text column bar the 2px indent now. A title
+        // that fits it must sit still; one just past it must scroll. A tick
+        // still measuring against a label width would move the first one.
+        oled_setfont(CON_TITLE_FONT);
+        int charW      = meta_textWidth("M");
+        int fitsWindow = (TEXT_W - CON_TITLE_X) / charW;
+
+        std::string fits((size_t)(fitsWindow - 1), 'M');
+        std::string cmd = "CMDMETA,2,0," + fits + "|System=SNES";
         meta_parse(cmd.c_str());
 
         titleScrollX    = 0;
@@ -174,7 +209,20 @@ int main() {
         g_fakeMillis   += SCROLL_PAUSE_MS + 1;
         g_fakeMillis   += SCROLL_STEP_MS + 1;
         meta_tick();
-        okBool("scrolls once the label is accounted for", titleScrollX > 0, true);
+        okBool("a title that fits stays put", titleScrollX == 0, true);
+
+        std::string over((size_t)(fitsWindow + 2), 'M');
+        cmd = "CMDMETA,2,0," + over + "|System=SNES";
+        meta_parse(cmd.c_str());
+
+        titleScrollX    = 0;
+        scrollHoldUntil = 0;
+        lastScrollTick  = 0;
+        g_fakeMillis   += SCROLL_PAUSE_MS + 1;
+        g_fakeMillis   += SCROLL_STEP_MS + 1;
+        meta_tick();                             // absorbed by the first draw
+        meta_tick();
+        okBool("a title that overflows scrolls", titleScrollX > 0, true);
     }
 
     section("arcade card centres a short title and clips a long one");
@@ -262,6 +310,7 @@ int main() {
         std::string longTitle(60, 'M');
         std::string cmd = "CMDMETA,2,0," + longTitle + "|System=SNES";
         meta_parse(cmd.c_str());
+        meta_tick();                             // absorb the first draw
 
         g_fakeMillis += SCROLL_PAUSE_MS + 1;     // clear the initial hold
         lastScrollTick = 0;
@@ -299,6 +348,7 @@ int main() {
     section("field pager cycles when fields overflow the rows");
     {
         meta_parse("CMDMETA,2,0,Game|A=1|B=2|C=3|D=4|E=5|F=6");
+        meta_tick();                             // absorb the first draw
         fieldPage = 0;
         lastPageTick = g_fakeMillis;
 

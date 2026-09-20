@@ -246,7 +246,9 @@ sendmeta() {
   [ "${SHOW_METADATA}" = "yes" ] || return 1
   [ "${USBMODE}" = "yes" ]       || return 1
 
-  build_meta "${corename}"
+  # "force" is set on a core change, which is the only time the leftover-state
+  # guard in build_meta applies.
+  build_meta "${corename}" "${force:+corechange}"
 
   # Computer cores stay on plain full-screen artwork by design, and so does a
   # console core sitting at its menu with no game loaded - there is nothing to

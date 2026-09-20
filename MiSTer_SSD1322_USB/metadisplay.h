@@ -80,7 +80,7 @@
 #define CON_HEADER_Y     11             // header baseline
 #define CON_RULE_Y       14             // hairline under the header
 #define CON_TITLE_FONT   2              // luBS10 - larger than the 5x7 fields
-#define CON_TITLE_LABEL  "Title: "
+#define CON_TITLE_X      2              // title left edge, unlabelled
 #define CON_TITLE_Y      26             // title baseline
 #define CON_FIELD_FONT   0              // 5x7
 #define CON_FIELD_Y0     36             // first field baseline
@@ -114,6 +114,13 @@ MetaField metaFields[META_MAX_FIELDS];
 int       metaFieldCount   = 0;
 int       metaInterval     = 12;        // arcade alternation period, seconds
 bool      metaHasIcon      = false;     // a console icon has been received
+
+// A console layout is only ever drawn because something asked for it: CMDCOR
+// on a core change, CMDICON when an icon arrives, or a scroll tick. A game
+// change touches none of those - the core has not changed, and most systems
+// ship no icon - so new metadata sets this and the next tick puts it on screen.
+// Without it only titles long enough to marquee ever redrew themselves.
+bool      metaNeedsDraw    = false;
 
 // Arcade alternation.
 bool          metaShowingCard = false;  // currently showing the metadata card
@@ -151,6 +158,7 @@ void meta_reset(void) {
   metaTitle[0] = 0;
   metaFieldCount = 0;
   metaHasIcon = false;
+  metaNeedsDraw = false;
   metaShowingCard = false;
   titleScrollX = 0;
   fieldPage = 0;
@@ -236,6 +244,7 @@ bool meta_parse(const char *cmd) {
   // Entering a new game resets all scroll/alternation state so the display
   // always starts from a predictable position.
   metaShowingCard = false;
+  metaNeedsDraw   = (kind == MKIND_CONSOLE);
   metaLastSwap    = millis();
   titleScrollX    = 0;
   fieldPage       = 0;
@@ -370,13 +379,9 @@ static void meta_renderConsole(void) {
 
   // --- Title, with marquee when it overflows -------------------------------
   oled_setfont(CON_TITLE_FONT);
-  const int titleLabelW = meta_textWidth(CON_TITLE_LABEL);
-  const int titleX      = 2 + titleLabelW;
-  const int titleWin    = TEXT_W - titleLabelW;
+  const int titleX   = CON_TITLE_X;
+  const int titleWin = TEXT_W - CON_TITLE_X;
 
-  u8g2.setForegroundColor(8);                       // label dimmed, as fields
-  u8g2.setCursor(2, CON_TITLE_Y);
-  u8g2.print(CON_TITLE_LABEL);
   u8g2.setForegroundColor(SSD1322_WHITE);
 
   int tw = meta_textWidth(metaTitle);
@@ -480,6 +485,7 @@ void meta_showPicture(int effect) {
 void meta_showConsole(void) {
   meta_renderConsole();
   oled.display();
+  metaNeedsDraw = false;    // whoever drew it, the pending first draw is done
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +511,12 @@ bool meta_tick(void) {
   if (metaKind == MKIND_CONSOLE) {
     bool dirty = false;
 
+    // First draw after new metadata, if nothing else has drawn it already.
+    if (metaNeedsDraw) {
+      meta_showConsole();     // clears metaNeedsDraw
+      return true;
+    }
+
     // Field pager.
     const int maxRows = CON_FIELD_ROWS;
     int pages = (metaFieldCount + maxRows - 1) / maxRows;
@@ -515,10 +527,10 @@ bool meta_tick(void) {
     }
 
     // Title marquee. Only runs when the title actually overflows. The window
-    // is the column minus the "Title: " label, measured in the same font the
+    // is the text column minus the title indent, measured in the same font the
     // renderer uses, so the scroll and the draw agree on when it overflows.
     oled_setfont(CON_TITLE_FONT);
-    const int titleWin = TEXT_W - meta_textWidth(CON_TITLE_LABEL);
+    const int titleWin = TEXT_W - CON_TITLE_X;
     int tw = meta_textWidth(metaTitle);
     if (tw > titleWin && now >= scrollHoldUntil && now - lastScrollTick >= SCROLL_STEP_MS) {
       lastScrollTick = now;

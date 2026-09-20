@@ -7,6 +7,7 @@
 # Covers:
 #   test-meta.sh        metadata extraction from MiSTer's /tmp state and MRA files
 #   test-wire.sh        the exact bytes the daemon sends to the display
+#   test-index.sh       the libretro title-index builder and the CRC lookup
 #   test_meta_parse     the firmware's CMDMETA parser
 #   test_meta_layout    the firmware's layout code, under ASan/UBSan
 
@@ -27,6 +28,7 @@ run() {
 
 run "shell: metadata extraction" "${HERE}/test-meta.sh"
 run "shell: wire protocol"       "${HERE}/test-wire.sh"
+run "shell: title index"         "${HERE}/test-index.sh"
 
 # The firmware tests need a host C++ compiler. Skipped rather than failed when
 # one is unavailable, so the shell suite still runs anywhere.
