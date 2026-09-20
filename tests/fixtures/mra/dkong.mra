@@ -1,0 +1,13 @@
+<misterromdescription>
+	<name>Donkey Kong (US set 1)</name>
+	<setname>dkong</setname>
+	<rbf>DonkeyKong</rbf>
+	<mameversion>0216</mameversion>
+	<year>1981</year>
+	<manufacturer>Nintendo of America</manufacturer>
+	<category>Platform</category>
+	<rotation>vertical</rotation>
+	<rom index="0" zip="dkong.zip" md5="none">
+		<part name="c_5et_g.bin" crc="ba70b88b"/>
+	</rom>
+</misterromdescription>
