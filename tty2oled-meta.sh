@@ -47,6 +47,7 @@ META_TITLE=""       # primary display line
 META_FIELDS=()      # ordered "Label\tValue" pairs for the console layout
 META_ICON=""        # icon key used to find the 86x64 art
 META_SOURCE=""      # where the title came from: mra | index | filename | core
+META_GAME="no"      # yes when a real game is loaded, not just a core
 
 meta_reset() {
   META_KIND=""
@@ -54,6 +55,7 @@ meta_reset() {
   META_FIELDS=()
   META_ICON=""
   META_SOURCE=""
+  META_GAME="no"        # yes once an actual game, not just a core, is identified
 }
 
 # Read a file into a variable, tolerating absence. Avoids a subshell.
@@ -337,6 +339,7 @@ build_meta() {
       if parse_mra "${CORE_STARTPATH}"; then
         META_TITLE="${MRA_NAME}"
         META_SOURCE="mra"
+        META_GAME="yes"
         meta_addfield "Year"         "${MRA_YEAR}"
         meta_addfield "Manufacturer" "${MRA_MANUFACTURER}"
         meta_addfield "Category"     "${MRA_CATEGORY}"
@@ -347,6 +350,7 @@ build_meta() {
         # which for arcade is already the MRA setname.
         META_TITLE="${corename}"
         META_SOURCE="core"
+        META_GAME="yes"
         meta_addfield "Set" "${corename}"
       fi
       META_ICON="${corename}"
@@ -378,6 +382,7 @@ build_meta() {
         clean_romname "${fullpath}"
         META_TITLE="${ROM_TITLE}"
         META_SOURCE="filename"
+        META_GAME="yes"
 
         # Upgrade to the canonical title when the CRC is indexed. The index
         # wins over the filename because it is correct for renamed or badly
@@ -397,7 +402,10 @@ build_meta() {
         # not something a player wants on screen, and it crowds out real
         # fields on the four rows the split layout has.
       else
-        # Console core with nothing loaded yet.
+        # Console core with nothing loaded yet. There is no game to describe,
+        # so the split layout would just show the core name next to an empty
+        # icon panel. Leave META_GAME unset and the caller falls back to
+        # upstream's full-screen artwork, which is the better screen here.
         META_TITLE="${corename}"
         META_SOURCE="core"
         meta_addfield "System" "${rbfname:-${corename}}"

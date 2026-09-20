@@ -248,10 +248,13 @@ sendmeta() {
 
   build_meta "${corename}"
 
-  # Computer cores stay on plain full-screen artwork by design.
-  if [ "${META_KIND}" = "computer" ] || [ "${META_KIND}" = "unknown" ]; then
+  # Computer cores stay on plain full-screen artwork by design, and so does a
+  # console core sitting at its menu with no game loaded - there is nothing to
+  # describe, and the core's artwork is the better screen.
+  if [ "${META_KIND}" = "computer" ] || [ "${META_KIND}" = "unknown" ] ||
+     [ "${META_GAME:-no}" != "yes" ]; then
     if [ "${force}" = "force" ] || [ "${META_WIRE_LAST:-}" != "OFF" ]; then
-      dbug "Sending: CMDMETAOFF (kind=${META_KIND})"
+      dbug "Sending: CMDMETAOFF (kind=${META_KIND} game=${META_GAME:-no})"
       echo "CMDMETAOFF" >${TTYDEV}
       sleep ${WAITSECS}
       META_WIRE_LAST="OFF"

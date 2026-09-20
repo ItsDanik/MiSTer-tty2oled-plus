@@ -261,7 +261,7 @@ printf 'console\n' > "${TMP}/coretypes" 2>/dev/null || true
 printf 'GAMEBOY=console\n' > "${TMP}/coretypes"
 sendmeta "GAMEBOY"
 out="$(captured)"
-contains "falls back to the core name" "${out}" "CMDMETA,2,12,GAMEBOY|"
+contains "metadata mode turned off" "${out}" "CMDMETAOFF"
 case "${out}" in
   *CBC7131F*) FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m stale CRC leaked into the card\n' ;;
   *) PASS=$((PASS+1)); printf '  \033[32mok\033[0m   stale CRC not shown\n' ;;
@@ -269,6 +269,10 @@ esac
 case "${out}" in
   *"Some Old Game"*) FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m stale title leaked into the card\n' ;;
   *) PASS=$((PASS+1)); printf '  \033[32mok\033[0m   stale title not shown\n' ;;
+esac
+case "${out}" in
+  *CMDMETA,*) FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m sent a metadata card with no game loaded\n' ;;
+  *) PASS=$((PASS+1)); printf '  \033[32mok\033[0m   no card sent, artwork stays\n' ;;
 esac
 
 reset_capture
@@ -297,6 +301,24 @@ for f in ${watch}; do
   [ -e "${f}" ] || { FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m watch list names a missing file: %s\n' "${f}"; }
 done
 PASS=$((PASS+1)); printf '  \033[32mok\033[0m   every watched path exists\n'
+
+# ---------------------------------------------------------------------------
+section "console core with no game keeps the full-screen artwork"
+# ---------------------------------------------------------------------------
+# A console core sitting at its menu has nothing to describe. sendmeta must
+# return non-zero so senddata falls through to upstream's picture path.
+reset_capture
+printf 'GAMEBOY=console\n' > "${TMP}/coretypes"
+printf 'GAMEBOY\n' > "${TMP}/CORENAME"
+printf 'GAMEBOY\n' > "${TMP}/RBFNAME"
+rm -f "${TMP}/FULLPATH" "${TMP}/FILESELECT" "${TMP}/GAMEID"
+if sendmeta "GAMEBOY"; then
+  FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m returned success, caller would skip the picture\n'
+else
+  PASS=$((PASS+1)); printf '  \033[32mok\033[0m   returns non-zero so the picture is sent\n'
+fi
+contains "CMDMETAOFF sent" "$(captured)" "CMDMETAOFF"
+ok "no metadata card" "$(captured | grep -c 'CMDMETA,' || true)" "0"
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n\n' "${PASS}" "${FAIL}"
