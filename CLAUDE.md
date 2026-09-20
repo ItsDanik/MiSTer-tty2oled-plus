@@ -1,7 +1,14 @@
-# tty2oled game-metadata fork — working notes
+# tty2oled+ — working notes
 
-Fork of [venice1200/MiSTer_tty2oled](https://github.com/venice1200/MiSTer_tty2oled),
+**tty2oled+** is a fork of
+[venice1200/MiSTer_tty2oled](https://github.com/venice1200/MiSTer_tty2oled),
 GPLv3 like upstream. Branch: `feature/game-metadata`, based on upstream `50c08ac`.
+
+The name is branding only. Install paths (`/media/fat/tty2oled`), script and ini
+filenames, the `S60tty2oled` init script, the NVS namespace and the serial
+protocol all deliberately keep the upstream spelling - renaming any of them
+would break existing installs, the official installer and the update scripts
+for no benefit.
 
 Upstream shows one picture per **core**. This fork shows the **game**: arcade
 cores alternate artwork with an info card, console cores get a split layout
