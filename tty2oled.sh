@@ -153,7 +153,7 @@ senddata() {
     # Metadata first: the firmware needs to know which layout to compose
     # before the picture arrives, and the console icon has to be in place
     # before CMDCOR triggers the first paint of the split layout.
-    if sendmeta "${newcore}"; then
+    if sendmeta "${newcore}" force; then
       sendicon "${META_ICON}"
     fi
 
@@ -241,7 +241,7 @@ findicon() {
 # Send CMDMETA for the current game. Returns 1 if metadata mode is not active
 # so the caller can fall back to plain picture display.
 sendmeta() {
-  local corename="${1}" kindnum="" payload="" label="" value="" f=""
+  local corename="${1}" force="${2:-}" kindnum="" payload="" label="" value="" f="" wire=""
 
   [ "${SHOW_METADATA}" = "yes" ] || return 1
   [ "${USBMODE}" = "yes" ]       || return 1
@@ -250,9 +250,12 @@ sendmeta() {
 
   # Computer cores stay on plain full-screen artwork by design.
   if [ "${META_KIND}" = "computer" ] || [ "${META_KIND}" = "unknown" ]; then
-    dbug "Sending: CMDMETAOFF (kind=${META_KIND})"
-    echo "CMDMETAOFF" >${TTYDEV}
-    sleep ${WAITSECS}
+    if [ "${force}" = "force" ] || [ "${META_WIRE_LAST:-}" != "OFF" ]; then
+      dbug "Sending: CMDMETAOFF (kind=${META_KIND})"
+      echo "CMDMETAOFF" >${TTYDEV}
+      sleep ${WAITSECS}
+      META_WIRE_LAST="OFF"
+    fi
     return 1
   fi
 
@@ -265,10 +268,45 @@ sendmeta() {
     payload="${payload}|$(metasanitize "${label}")=$(metasanitize "${value}")"
   done
 
-  dbug "Sending: CMDMETA,${kindnum},${METADATA_INTERVAL},${payload}"
-  echo "CMDMETA,${kindnum},${METADATA_INTERVAL},${payload}" >${TTYDEV}
+  wire="CMDMETA,${kindnum},${METADATA_INTERVAL},${payload}"
+
+  # The daemon now also wakes on game-state changes, and MiSTer rewrites those
+  # files while the user is merely browsing. Resending an identical line would
+  # restart the card's scroll and animation for no reason, so send only what
+  # actually changed. "force" is used on a core change, where the firmware has
+  # just been reset and must be told again regardless.
+  if [ "${force}" != "force" ] && [ "${wire}" = "${META_WIRE_LAST:-}" ]; then
+    dbug "Metadata unchanged, not resending"
+    return 1
+  fi
+
+  dbug "Sending: ${wire}"
+  echo "${wire}" >${TTYDEV}
   sleep ${WAITSECS}
+  META_WIRE_LAST="${wire}"
   return 0
+}
+
+# Refresh metadata without redrawing the artwork. Used when the game changed
+# but the core did not - loading a ROM does not touch /tmp/CORENAME, so there
+# is nothing to redraw, only new text to send.
+refreshmeta() {
+  local corename="${1}"
+  if sendmeta "${corename}"; then
+    sendicon "${META_ICON}"
+  fi
+  return 0
+}
+
+# The state files MiSTer publishes, filtered to those that exist. Watching a
+# missing file makes inotifywait exit immediately, which would spin the loop.
+metawatchlist() {
+  local f="" out=""
+  for f in "${corenamefile}" "${MISTER_FULLPATH}" "${MISTER_FILESELECT}" \
+           "${MISTER_GAMEID}" "${MISTER_STARTPATH}"; do
+    [ -e "${f}" ] && out="${out} ${f}"
+  done
+  printf '%s' "${out# }"
 }
 
 # Send the 86x64 console icon, if one exists for this core.
@@ -350,20 +388,49 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
       fi
       if [ ! -f ${SLEEPFILE} ]; then				  # Sleepmode = No
         newcore=$(<${corenamefile})				  # get CORENAME
-        #if [ "$newcore" != "$oldcore" ]; then
-          dbug "Read CORENAME: -${newcore}-"
-          dbug "Send -${newcore}- to ${TTYDEV}."
-          senddata "${newcore}" 				   # The "Magic"
-          oldcore=$newcore
-          [ "${1}" = "tty2x" ] && exit 9
-          if [ "${debug}" = "false" ]; then
-            inotifywait -qq -e modify "${corenamefile}"            # wait here for next change of corename, -qq for quietness
-          elif [ "${debug}" = "true" ]; then
-            inotifywait -e modify "${corenamefile}"                # but not -qq when debugging
+        if [ "${SHOW_METADATA}" = "yes" ] && [ "${USBMODE}" = "yes" ]; then
+          # Metadata mode. Loading a ROM does not modify /tmp/CORENAME, so
+          # watching that file alone never notices a game change - which is
+          # why the display used to sit on the core screen forever. Watch the
+          # game-state files too, and tell the two cases apart: a new core
+          # needs the full redraw, a new game needs only fresh text.
+          if [ "${newcore}" != "${oldcore}" ]; then
+            dbug "Read CORENAME: -${newcore}-"
+            dbug "Send -${newcore}- to ${TTYDEV}."
+            senddata "${newcore}"
+            oldcore=$newcore
+          else
+            dbug "Core unchanged, refreshing metadata only"
+            refreshmeta "${newcore}"
           fi
-	#else
-        #  dbug "Core not changed!"
-        #fi #newcore != oldcore
+          [ "${1}" = "tty2x" ] && exit 9
+          metawatch="$(metawatchlist)"
+          # The timeout is what picks up a state file that did not exist when
+          # the watch list was built - GAMEID only appears once a game with a
+          # known CRC is loaded. A wake with nothing changed costs one cheap
+          # rebuild and no serial traffic, because sendmeta de-duplicates.
+          if [ "${debug}" = "false" ]; then
+            inotifywait -qq -t "${METADATA_POLL:-5}" -e modify,create,moved_to ${metawatch}
+          else
+            inotifywait -t "${METADATA_POLL:-5}" -e modify,create,moved_to ${metawatch}
+          fi
+        else
+          # Upstream path, unchanged.
+          #if [ "$newcore" != "$oldcore" ]; then
+            dbug "Read CORENAME: -${newcore}-"
+            dbug "Send -${newcore}- to ${TTYDEV}."
+            senddata "${newcore}" 				   # The "Magic"
+            oldcore=$newcore
+            [ "${1}" = "tty2x" ] && exit 9
+            if [ "${debug}" = "false" ]; then
+              inotifywait -qq -e modify "${corenamefile}"            # wait here for next change of corename, -qq for quietness
+            elif [ "${debug}" = "true" ]; then
+              inotifywait -e modify "${corenamefile}"                # but not -qq when debugging
+            fi
+	  #else
+          #  dbug "Core not changed!"
+          #fi #newcore != oldcore
+        fi
       fi
     else # CORENAME file not found
       dbug "File ${corenamefile} not found!"

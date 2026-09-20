@@ -364,6 +364,16 @@ build_meta() {
         fullpath=""
       fi
 
+      # FULLPATH, FILESELECT and GAMEID persist in /tmp across a core change -
+      # MiSTer writes them when a game is loaded and never clears them. A core
+      # started from the menu would otherwise inherit the previous core's game,
+      # showing a stale title and CRC before anything has been loaded. Only
+      # trust them when they were written after the core name was.
+      if [ -n "${fullpath}" ] && [ -e "${MISTER_CORENAME}" ] &&
+         [ ! "${MISTER_FULLPATH}" -nt "${MISTER_CORENAME}" ]; then
+        fullpath=""
+      fi
+
       if [ -n "${fullpath}" ]; then
         clean_romname "${fullpath}"
         META_TITLE="${ROM_TITLE}"
@@ -383,7 +393,9 @@ build_meta() {
         meta_addfield "Year"    "${IDX_YEAR}"
         meta_addfield "Company" "${IDX_PUBLISHER}"
         meta_addfield "Format"  "${ROM_EXT^^}"
-        meta_addfield "CRC32"   "${GAME_CRC32}"
+        # CRC32 is deliberately not shown. It is how the title index is keyed,
+        # not something a player wants on screen, and it crowds out real
+        # fields on the four rows the split layout has.
       else
         # Console core with nothing loaded yet.
         META_TITLE="${corename}"

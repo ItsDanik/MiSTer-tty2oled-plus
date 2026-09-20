@@ -95,6 +95,10 @@ reset_capture() {
   : > "${CAPTURE}"
   rm -f "${TMP}/STARTPATH" "${TMP}/FULLPATH" "${TMP}/FILESELECT" \
         "${TMP}/GAMEID" "${TMP}/titleindex" "${TMP}/coretypes"
+  # sendmeta now suppresses an identical repeat, so clear that memory too or
+  # tests would silently depend on the order they run in.
+  META_WIRE_LAST=""
+  corenamefile="${MISTER_CORENAME}"
 }
 captured() { sync_capture; cat "${CAPTURE}"; }
 
@@ -215,6 +219,84 @@ USBMODE="no"
 sendmeta "dkong"
 ok "SD mode sends nothing" "$(sync_capture; stat -c%s "${CAPTURE}")" "0"
 USBMODE="yes"
+
+
+# ---------------------------------------------------------------------------
+section "identical metadata is not resent"
+# ---------------------------------------------------------------------------
+# The daemon now wakes on game-state changes too, and MiSTer rewrites those
+# files while the user is only browsing. Resending the same line would restart
+# the card's scroll and animation for no reason.
+reset_capture
+printf '%s\n' "${FIX}/mra/dkong.mra" > "${TMP}/STARTPATH"
+sendmeta "dkong"
+ok "first send goes out"      "$(sync_capture; wc -l < "${CAPTURE}")" "1"
+sendmeta "dkong"
+ok "identical repeat suppressed" "$(sync_capture; wc -l < "${CAPTURE}")" "1"
+sendmeta "dkong" force
+ok "force resends"            "$(sync_capture; wc -l < "${CAPTURE}")" "2"
+
+reset_capture
+printf '%s\n' "${FIX}/mra/dkong.mra" > "${TMP}/STARTPATH"
+sendmeta "dkong"
+printf '%s\n' "${FIX}/mra/sf2.mra" > "${TMP}/STARTPATH"
+sendmeta "sf2"
+ok "a real change still sends" "$(sync_capture; wc -l < "${CAPTURE}")" "2"
+
+# ---------------------------------------------------------------------------
+section "stale game state from a previous core is ignored"
+# ---------------------------------------------------------------------------
+# MiSTer never clears FULLPATH/FILESELECT/GAMEID, so a core started from the
+# menu used to inherit the previous core's game and show its title and CRC
+# before anything had been loaded.
+reset_capture
+mkdir -p "${TMP}/games"
+printf '%s\n' "${TMP}/games/Some Old Game (USA).sfc" > "${TMP}/FULLPATH"
+printf 'selected\n' > "${TMP}/FILESELECT"
+printf 'CRC32: CBC7131F\n' > "${TMP}/GAMEID"
+sleep 0.05
+printf 'GAMEBOY\n' > "${TMP}/CORENAME"          # core written AFTER the game state
+printf 'GAMEBOY\n' > "${TMP}/RBFNAME"
+printf 'console\n' > "${TMP}/coretypes" 2>/dev/null || true
+printf 'GAMEBOY=console\n' > "${TMP}/coretypes"
+sendmeta "GAMEBOY"
+out="$(captured)"
+contains "falls back to the core name" "${out}" "CMDMETA,2,12,GAMEBOY|"
+case "${out}" in
+  *CBC7131F*) FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m stale CRC leaked into the card\n' ;;
+  *) PASS=$((PASS+1)); printf '  \033[32mok\033[0m   stale CRC not shown\n' ;;
+esac
+case "${out}" in
+  *"Some Old Game"*) FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m stale title leaked into the card\n' ;;
+  *) PASS=$((PASS+1)); printf '  \033[32mok\033[0m   stale title not shown\n' ;;
+esac
+
+reset_capture
+printf 'GAMEBOY=console\n' > "${TMP}/coretypes"
+printf 'GAMEBOY\n' > "${TMP}/CORENAME"
+printf 'GAMEBOY\n' > "${TMP}/RBFNAME"
+sleep 0.05
+printf '%s\n' "${TMP}/games/Tetris (World).gb" > "${TMP}/FULLPATH"   # game AFTER the core
+printf 'selected\n' > "${TMP}/FILESELECT"
+sendmeta "GAMEBOY"
+contains "a freshly loaded game is used" "$(captured)" "Tetris"
+
+# ---------------------------------------------------------------------------
+section "watch list covers only files that exist"
+# ---------------------------------------------------------------------------
+# inotifywait exits immediately on a missing path, which would spin the loop.
+reset_capture
+printf 'GAMEBOY\n' > "${TMP}/CORENAME"
+rm -f "${TMP}/FULLPATH" "${TMP}/GAMEID" "${TMP}/FILESELECT" "${TMP}/STARTPATH"
+watch="$(metawatchlist)"
+ok "only CORENAME watched" "${watch}" "${TMP}/CORENAME"
+printf 'x\n' > "${TMP}/FULLPATH"
+watch="$(metawatchlist)"
+contains "FULLPATH picked up once it appears" "${watch}" "${TMP}/FULLPATH"
+for f in ${watch}; do
+  [ -e "${f}" ] || { FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m watch list names a missing file: %s\n' "${f}"; }
+done
+PASS=$((PASS+1)); printf '  \033[32mok\033[0m   every watched path exists\n'
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n\n' "${PASS}" "${FAIL}"
