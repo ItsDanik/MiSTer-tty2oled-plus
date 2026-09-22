@@ -1,7 +1,7 @@
 # Every push: the test suites, and the firmware for all three boards.
 # A v* tag: the same, then a GitHub release built from them.
 #
-# The release is what tools/tty2oledplus_installer.sh installs from, so this
+# The release is what tools/update_tty2oledplus.sh installs from, so this
 # is the only way a build reaches anyone who does not have the repository.
 # The procedure that ends in a tag push is at the top of CLAUDE.md.
 

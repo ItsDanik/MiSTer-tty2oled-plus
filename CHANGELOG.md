@@ -4,9 +4,20 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.4.2b — 2026-09-22
+
+The first published release. Everything described under 0.4.1b and 0.4.0b is
+in it; neither of those was ever published.
+
+- The installer behind the Scripts menu is now called `update_tty2oledplus.sh`
+  everywhere - in the release as well as in the menu. The SSH one-liner
+  downloads `.../releases/latest/download/update_tty2oledplus.sh`. 0.4.1b's
+  release failed to publish because GitHub treats `TTY2OLEDplus_Installer.sh`
+  and the installer's old name, `tty2oledplus_installer.sh`, as the same file.
+
 ## 0.4.1b — 2026-09-22
 
-The first published release. Everything described under 0.4.0b is in it.
+Tagged, never released.
 
 - **ESP32 DevKit and ESP32-S3 firmware builds again.** 0.4.0b was tagged but
   never released: with Adafruit GFX 1.12.6 the grey-scale picture path failed
@@ -62,5 +73,5 @@ First versioned build of the fork.
   DB, the non-USB sketches and the `Testing/` tree are gone — all of them
   existed to pull upstream's files over a local install, which is the one
   thing a fork must not allow.
-- 1247 checks in `./tests/run-all.sh`, needing no MiSTer, no ESP32 and no
+- 1248 checks in `./tests/run-all.sh`, needing no MiSTer, no ESP32 and no
   serial port.

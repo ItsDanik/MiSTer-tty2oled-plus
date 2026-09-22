@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Tests for the release: tools/make-release.sh, which builds it, and
-# tools/tty2oledplus_installer.sh, which installs it on a MiSTer.
+# tools/update_tty2oledplus.sh, which installs it on a MiSTer.
 #
 # A real release is built from this working copy - with a small title index,
 # a small artwork pack and stand-in firmware images, so it takes a second
@@ -60,7 +60,11 @@ ok "a release builds" "${RC}" "0"
 D="${TMP}/dist"
 ok "with version-free asset names, so latest/download finds them" \
    "$(cd "${D}" && ls | tr '\n' ' ')" \
-   "SHA256SUMS TTY2OLEDplus_Installer.sh VERSION tty2oledplus-esp32s3.bin tty2oledplus-lolin32.bin tty2oledplus-pics.tar.gz tty2oledplus.tar.gz tty2oledplus_installer.sh "
+   "SHA256SUMS TTY2OLEDplus_Installer.sh VERSION tty2oledplus-esp32s3.bin tty2oledplus-lolin32.bin tty2oledplus-pics.tar.gz tty2oledplus.tar.gz update_tty2oledplus.sh "
+# GitHub compares asset names without case: TTY2OLEDplus_Installer.sh beside
+# tty2oledplus_installer.sh failed the upload of v0.4.1b with "already exists".
+ok "no two asset names differ only in case" \
+   "$(cd "${D}" && ls | tr '[:upper:]' '[:lower:]' | sort | uniq -d)" ""
 ok "VERSION says which" "$(cat "${D}/VERSION")" "${VERSION}"
 ok "every asset matches SHA256SUMS" "$(cd "${D}" && sha256sum -c --quiet SHA256SUMS 2>&1)" ""
 ok "SHA256SUMS lists all seven" "$(grep -c '' "${D}/SHA256SUMS")" "7"
@@ -81,7 +85,7 @@ ok "everything unpacks under tty2oledplus/" "$(printf '%s\n' "${LISTING}" | grep
 ok "the artwork is in its own archive" "$(tar tzf "${D}/tty2oledplus-pics.tar.gz" | grep -c 'tty2oledplus/pics/GSC/NES.gsc')" "1"
 ok "the notes carry this version's changelog" \
    "$(head -n1 "${TMP}/notes.md" | grep -c .)" "1"
-ok "and how to install it" "$(grep -c 'releases/latest/download/tty2oledplus_installer.sh' "${TMP}/notes.md")" "1"
+ok "and how to install it" "$(grep -c '^curl .*releases/latest/download/update_tty2oledplus.sh | bash$' "${TMP}/notes.md")" "1"
 ok "including from the Scripts menu" "$(grep -c 'run \*\*TTY2OLEDplus_Installer\*\* from the Scripts' "${TMP}/notes.md")" "1"
 
 release "${TMP}/dist2"
@@ -143,7 +147,7 @@ install() {
   : > "${CALLS}"
   T2OP_FAT="${FAT}" T2OP_URL="file://${REL}" T2OP_INIT="${TMP}/fake-init" \
   T2OP_FLASH="${TMP}/fake-flash" \
-    bash "${ROOT}/tools/tty2oledplus_installer.sh" "$@" > "${TMP}/out" 2>&1 </dev/null
+    bash "${ROOT}/tools/update_tty2oledplus.sh" "$@" > "${TMP}/out" 2>&1 </dev/null
 }
 said() { grep -c -- "$1" "${TMP}/out"; }
 flashed() { grep '^flash' "${CALLS}" | sed 's/^flash //'; }
@@ -166,7 +170,7 @@ ok "the display was flashed, once, with its own board's image" "$(flashed)" "tty
 ok "with a board id found behind stale ttyacks" "$(said 'reported: lolin32, firmware 0.3.0b')" "1"
 ok "the boot hook is added" "$(grep -c "${INSTALL}/S60tty2oled" "${FAT}/linux/user-startup.sh")" "1"
 ok "the daemon is running at the end" "$(running)" "running"
-ok "the updater is in the Scripts menu" "$(cmp -s "${FAT}/Scripts/update_tty2oledplus.sh" "${ROOT}/tools/tty2oledplus_installer.sh" && echo same)" "same"
+ok "the updater is in the Scripts menu" "$(cmp -s "${FAT}/Scripts/update_tty2oledplus.sh" "${ROOT}/tools/update_tty2oledplus.sh" && echo same)" "same"
 ok "and is executable" "$(yesno test -x "${FAT}/Scripts/update_tty2oledplus.sh")" "yes"
 ok "no half-written updater is left behind" "$(ls -A "${FAT}/Scripts" | grep -c '\.new$')" "0"
 ok "log_file_entry being off is pointed out" "$(said 'log_file_entry=1')" "1"
@@ -240,7 +244,7 @@ set_installed_version "0.0.1b"
 echo '# marker' >> "${INSTALL}/tty2oled.sh"
 : > "${CALLS}"
 T2OP_FAT="${FAT}" T2OP_URL="file://${BAD}" T2OP_INIT="${TMP}/fake-init" T2OP_FLASH="${TMP}/fake-flash" \
-  T2OP_HWINF="HWLOLIN32;${VERSION};" bash "${ROOT}/tools/tty2oledplus_installer.sh" > "${TMP}/out" 2>&1 </dev/null
+  T2OP_HWINF="HWLOLIN32;${VERSION};" bash "${ROOT}/tools/update_tty2oledplus.sh" > "${TMP}/out" 2>&1 </dev/null
 RC="${?}"
 ok "a damaged download fails" "${RC}" "1"
 ok "saying so" "$(said 'does not match its checksum')" "1"
@@ -248,7 +252,7 @@ ok "with the installed scripts untouched" "$(grep -c '# marker' "${INSTALL}/tty2
 ok "and the daemon running again" "$(running)" "running"
 
 T2OP_FAT="${FAT}" T2OP_URL="file://${TMP}/nowhere" T2OP_INIT="${TMP}/fake-init" T2OP_FLASH="${TMP}/fake-flash" \
-  bash "${ROOT}/tools/tty2oledplus_installer.sh" > "${TMP}/out" 2>&1 </dev/null
+  bash "${ROOT}/tools/update_tty2oledplus.sh" > "${TMP}/out" 2>&1 </dev/null
 ok "an unreachable release fails" "${?}" "1"
 ok "with the installed scripts untouched" "$(grep -c '# marker' "${INSTALL}/tty2oled.sh")" "1"
 
@@ -312,7 +316,7 @@ ok "saying so" "$(said 'removed itself')" "1"
 ok "no staging directory is left in /tmp" "$(ls -d /tmp/tty2oledplus-start.* 2>/dev/null | wc -l | tr -d ' ')" "0"
 
 rm -rf "${BAD}"; cp -r "${REL}" "${BAD}"
-printf '# tampered\n' >> "${BAD}/latest/download/tty2oledplus_installer.sh"
+printf '# tampered\n' >> "${BAD}/latest/download/update_tty2oledplus.sh"
 fresh_mister
 starter "${BAD}"; RC="${?}"
 ok "a damaged installer is refused" "${RC}" "1"
@@ -333,7 +337,7 @@ ok "saying where it looked" "$(said 'Is the MiSTer online')" "1"
 
 section "installer: reading the display's answer"
 
-T2OP_LIB=yes . "${ROOT}/tools/tty2oledplus_installer.sh"
+T2OP_LIB=yes . "${ROOT}/tools/update_tty2oledplus.sh"
 hw() { parse_hwinf <<<"$1"; echo "${HW_BOARD}/${HW_VERSION}"; }
 ok "a plain answer"                    "$(hw 'HWLOLIN32;0.4.1b;')"                       "lolin32/0.4.1b"
 ok "behind stale acknowledgements"     "$(hw $'ttyack;ttyack;HWESP32DE;0.4.1b;\r\nttyack;')" "esp32de/0.4.1b"

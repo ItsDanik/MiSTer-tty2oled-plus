@@ -46,7 +46,7 @@ same serial port - so the installer stops and says what to remove if it finds
 
 ```sh
 curl -fsSL --cacert /etc/ssl/certs/cacert.pem \
-  https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_installer.sh | bash
+  https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/update_tty2oledplus.sh | bash
 ```
 
 If the display is too broken to say what board it is, name it:

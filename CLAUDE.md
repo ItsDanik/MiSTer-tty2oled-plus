@@ -125,7 +125,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1247 checks, no hardware needed. |
+| `tests/` | 1248 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -139,7 +139,7 @@ with scrolling text and an icon panel.
 | `tools/manifest.sh` | What an install is made of. Read by the deploy and the release, so they agree. |
 | `tools/make-release.sh` | Builds the release assets into `dist/`. CI runs it on a tag; so can you. |
 | `tools/TTY2OLEDplus_Installer.sh` | The starter users drop in `/media/fat/Scripts`: fetches the latest installer, checks it, runs it, removes itself. **On the MiSTer**. |
-| `tools/tty2oledplus_installer.sh` | Installs/updates from a GitHub release. **On the MiSTer**; `update_tty2oledplus` in its Scripts menu. |
+| `tools/update_tty2oledplus.sh` | Installs/updates from a GitHub release. **On the MiSTer**; `update_tty2oledplus` in its Scripts menu. |
 | `.github/workflows/ci.yml` | Tests and firmware on every push; the release on a `v*` tag. |
 | `tools/flash-mister.sh` | Flashes the firmware. Runs **on the MiSTer**. |
 | `tools/fw-segments.py` | Which parts of a merged image to write, so the boot image and settings survive. **On the MiSTer**. |
@@ -774,6 +774,13 @@ is what found the `FULLPATH` bug.
   `arduino-cli lib upgrade` and build all three boards, **lolin32 last**:
   `deploy-mister.sh --firmware` takes the newest `merged.bin` in any
   `build-out-*`, so an S3 image built after it is what gets flashed.
+- **GitHub release asset names are case-insensitive.** `v0.4.1b`'s release
+  job created the release, then failed uploading `tty2oledplus_installer.sh`
+  beside `TTY2OLEDplus_Installer.sh` with "ReleaseAsset.name already exists",
+  and `gh` deleted the half-made release - another tag spent. The installer is
+  `update_tty2oledplus.sh` now, the name it already had in the Scripts menu,
+  and `test-installer.sh` fails on any two assets that differ only in case.
+  The same pair would also have collided in a clone on macOS or Windows.
 - **A theory that fits is not a cause.** The flash hang first looked like the
   firmware formatting LittleFS after the erase and missing the daemon's
   handshake meanwhile. Reproducing it - erase the region, reset, start the
@@ -1181,7 +1188,7 @@ instead. Over SSH it is one line:
 
 ```sh
 curl -fsSL --cacert /etc/ssl/certs/cacert.pem \
-  https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_installer.sh | bash
+  https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/update_tty2oledplus.sh | bash
 ```
 
 **Asset names carry no version** - `tty2oledplus.tar.gz`, `tty2oledplus-lolin32.bin`,
@@ -1215,7 +1222,7 @@ OSD showing its output, has no terminal to read a key from, and returns to the
 menu when it exits. update_all.sh prompts in neither case, and nor do we.
 
 **`TTY2OLEDplus_Installer.sh` is only a starter**, so the copy a user
-downloads never goes stale: it fetches `tty2oledplus_installer.sh` and
+downloads never goes stale: it fetches `update_tty2oledplus.sh` and
 `SHA256SUMS` from `/releases/latest`, refuses an installer that does not match,
 runs it with the same arguments, and deletes itself - by that exact name, and
 only after a successful run that left `update_tty2oledplus.sh` beside it. A

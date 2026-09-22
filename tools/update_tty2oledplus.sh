@@ -4,7 +4,7 @@
 #
 # First install, over SSH:
 #   curl -fsSL --cacert /etc/ssl/certs/cacert.pem \
-#     https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_installer.sh | bash
+#     https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/update_tty2oledplus.sh | bash
 #
 # After that it is in the Scripts menu as update_tty2oledplus, and runs the same
 # way from there. Options, when run by hand:
@@ -254,7 +254,7 @@ main() {
   # --- Download and verify everything before changing anything -----------
   say "Downloading"
   local assets=()
-  [ "${scripts}" = "yes" ] && assets+=(tty2oledplus.tar.gz tty2oledplus_installer.sh)
+  [ "${scripts}" = "yes" ] && assets+=(tty2oledplus.tar.gz update_tty2oledplus.sh)
   [ "${pics}" = "yes" ] && assets+=(tty2oledplus-pics.tar.gz)
   [ "${flash}" = "yes" ] && assets+=("tty2oledplus-${board}.bin")
   local a
@@ -323,7 +323,7 @@ main() {
     # By rename, never in place: if this *is* update_tty2oledplus.sh, bash is
     # still reading it, and overwriting the open file would feed it the new
     # script from the old one's byte offset.
-    cp "${STAGE}/tty2oledplus_installer.sh" "${FAT}/Scripts/.update_tty2oledplus.sh.new"
+    cp "${STAGE}/update_tty2oledplus.sh" "${FAT}/Scripts/.update_tty2oledplus.sh.new"
     chmod +x "${FAT}/Scripts/.update_tty2oledplus.sh.new"
     mv "${FAT}/Scripts/.update_tty2oledplus.sh.new" "${FAT}/Scripts/update_tty2oledplus.sh"
     note "update_tty2oledplus is in the Scripts menu for next time."

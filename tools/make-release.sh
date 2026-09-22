@@ -24,7 +24,7 @@
 #   tty2oledplus-pics.tar.gz    the artwork pack, separate: it is 12MB and
 #                               rarely changes, so updates skip it
 #   tty2oledplus-<board>.bin    merged firmware, one per board built
-#   tty2oledplus_installer.sh   the installer itself
+#   update_tty2oledplus.sh      the installer itself, and the Scripts menu updater
 #   TTY2OLEDplus_Installer.sh   the starter a user drops into Scripts; it
 #                               fetches and runs the installer above
 #
@@ -125,7 +125,7 @@ done < <(find "${FWDIR:-MiSTer_SSD1322_USB}" -name 'MiSTer_SSD1322_USB.ino.merge
 [ "${FOUND}" -gt 0 ] || die "no firmware found - build it first, or pass --firmware"
 
 # --- The rest --------------------------------------------------------------
-cp tools/tty2oledplus_installer.sh tools/TTY2OLEDplus_Installer.sh "${OUT}/"
+cp tools/update_tty2oledplus.sh tools/TTY2OLEDplus_Installer.sh "${OUT}/"
 printf '%s\n' "${VERSION}" > "${OUT}/VERSION"
 ( cd "${OUT}" && sha256sum -- * | grep -v ' SHA256SUMS$' > SHA256SUMS )
 
@@ -140,7 +140,7 @@ on the MiSTer's SD card, and run **TTY2OLEDplus_Installer** from the Scripts
 menu. Or on the MiSTer, over SSH:
 
 \`\`\`sh
-curl -fsSL --cacert /etc/ssl/certs/cacert.pem https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_installer.sh | bash
+curl -fsSL --cacert /etc/ssl/certs/cacert.pem https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/update_tty2oledplus.sh | bash
 \`\`\`
 
 After that, **update_tty2oledplus** in the MiSTer's Scripts menu does the same.

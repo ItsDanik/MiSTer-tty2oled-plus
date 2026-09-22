@@ -12,7 +12,7 @@
 # the Scripts menu, which is the same installer, for every update after.
 #
 # Options are passed through to the installer (--board lolin32, --no-firmware,
-# ...); see the top of tty2oledplus_installer.sh for the list.
+# ...); see the top of update_tty2oledplus.sh for the list.
 
 REPO="ItsDanik/MiSTer-tty2oled-plus"
 
@@ -45,10 +45,10 @@ main() {
   local tmp="${TMPDIR_START}"
 
   say "Fetching the tty2oled+ installer"
-  fetch SHA256SUMS "${tmp}/SHA256SUMS" && fetch tty2oledplus_installer.sh "${tmp}/installer.sh" \
+  fetch SHA256SUMS "${tmp}/SHA256SUMS" && fetch update_tty2oledplus.sh "${tmp}/installer.sh" \
     || die "Could not reach ${RELEASES}. Is the MiSTer online?"
 
-  want="$(awk '$2 == "tty2oledplus_installer.sh" || $2 == "*tty2oledplus_installer.sh" { print $1 }' "${tmp}/SHA256SUMS")"
+  want="$(awk '$2 == "update_tty2oledplus.sh" || $2 == "*update_tty2oledplus.sh" { print $1 }' "${tmp}/SHA256SUMS")"
   got="$(sha256sum "${tmp}/installer.sh" | cut -d' ' -f1)"
   [ -n "${want}" ] && [ "${want}" = "${got}" ] \
     || die "The installer does not match the release's checksum - the download is damaged. Try again."
