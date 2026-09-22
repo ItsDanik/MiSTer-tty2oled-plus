@@ -4,6 +4,16 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.4.1b — 2026-09-22
+
+The first published release. Everything described under 0.4.0b is in it.
+
+- **ESP32 DevKit and ESP32-S3 firmware builds again.** 0.4.0b was tagged but
+  never released: with Adafruit GFX 1.12.6 the grey-scale picture path failed
+  to compile for those two boards (an ambiguous `round()` on a whole number,
+  inherited from upstream). The WEMOS LOLIN32 build was unaffected. The fix
+  does not change a single pixel.
+
 ## 0.4.0b — 2026-09-22
 
 First versioned build of the fork.

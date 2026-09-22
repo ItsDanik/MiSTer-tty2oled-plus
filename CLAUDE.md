@@ -765,6 +765,15 @@ is what found the `FULLPATH` bug.
   0xC00`, matches the image's; any doubt - unreadable table, moved
   partitions, data outside them - and it writes the whole image as before.
   `tests/test-flash.sh` applies the plan to a simulated chip and compares.
+- **CI builds three boards against today's libraries; a local build is one
+  board against whatever was installed.** `v0.4.0b` was tagged with the
+  esp32de and esp32s3 builds broken: Adafruit GFX 1.12.6 made upstream's
+  `round(<int>)` in the GSC path an ambiguous overload, and the workstation
+  still had 1.12.3 and only ever built lolin32. The release job never ran, so
+  nothing was published, but the tag was spent - hence 0.4.1b. Before tagging,
+  `arduino-cli lib upgrade` and build all three boards, **lolin32 last**:
+  `deploy-mister.sh --firmware` takes the newest `merged.bin` in any
+  `build-out-*`, so an S3 image built after it is what gets flashed.
 - **A theory that fits is not a cause.** The flash hang first looked like the
   firmware formatting LittleFS after the erase and missing the daemon's
   handshake meanwhile. Reproducing it - erase the region, reset, start the

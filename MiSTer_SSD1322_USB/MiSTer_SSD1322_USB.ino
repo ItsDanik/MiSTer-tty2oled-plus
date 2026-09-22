@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.4.0b"
+#define BuildVersion "0.4.1b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -1595,7 +1595,9 @@ void oled_showSmallCorePicture(int xpos, int ypos) {
             b1=logoBin[(px*4)+i+py*DispLineBytes4bpp];                                                  // Get Data Byte 1 for 2 Pixels
             b2=logoBin[(px*4)+i+(py+1)*DispLineBytes4bpp];                                              // Get Data Byte 2 for 2 Pixels
             //br=(((0xF0 & b1) >> 4) + (0x0F & b1) + ((0xF0 & b2) >> 4) + (0x0F & b2)) / 4;               // cutting
-            br=round((((0xF0 & b1) >> 4) + (0x0F & b1) + ((0xF0 & b2) >> 4) + (0x0F & b2)) / 4);        // rounding
+            // Was round(<int>/4): the division has already truncated, so round() did nothing - and
+            // since Adafruit GFX 1.12.6 it is an ambiguous overload that fails the build.
+            br=(((0xF0 & b1) >> 4) + (0x0F & b1) + ((0xF0 & b2) >> 4) + (0x0F & b2)) / 4;
             oled.drawPixel(xpos+x, ypos+y, br);   // Draw only Pixel 1, Left Nibble
             //Serial.printf("X: %d Y: %d\n",x,y);
             x++;
