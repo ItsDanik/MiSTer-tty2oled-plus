@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1383 checks, no hardware needed. |
+| `tests/` | 1388 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -1208,10 +1208,27 @@ black - all sixteen levels, `BOOT_BAR_TAIL` (64) pixels of them. It was whole
 visible steps, the dark end being invisible against the panel, and it jumped a
 block at a time.
 
-The head moves **one pixel per frame**, every `BOOT_BAR_PX_MS` (2ms), so a run
-is 320 frames rather than 32 and takes the same 640ms it always did. It costs
-little because only the bar's own rows are drawn into and the panel library
-sends only the rows that changed - about 1KB a frame, not the 8KB panel.
+The head moves `BOOT_BAR_PX_STEP` (2) pixels every `BOOT_BAR_PX_MS` (2ms), so
+a run is 160 frames rather than 32 and takes about a third of a second. It
+costs little because only the bar's own rows are drawn into and the panel
+library sends only the rows that changed - about 1KB a frame, not the 8KB
+panel.
+
+**One step per tick, never a catch-up burst**, and that is the whole reason
+the pair of numbers exists rather than "a pixel every millisecond". A frame
+costs about a millisecond of SPI whatever it draws, so a cadence the wire
+cannot keep makes the bar's speed whatever the panel and the rest of `loop()`
+leave over - and then any tick that arrives late advances the head by however
+many pixels the clock is owed. That lurched the moment the daemon spoke (the
+handover from the blocking power-on loop to `loop()` is exactly such a late
+tick) and it **smeared**: a head that jumps further than the black segment at
+the end of its own tail leaves the pixels in between lit behind it. A step of
+2 against `BOOT_BAR_SEG` of 4 cannot outrun that black end, and
+`test_meta_layout` holds both - the step against the segment, and no drawn
+frame moving further than a step.
+
+`boot_barClear` blacks the bar's whole width when a run ends, so a frame cut
+short by the ending cannot leave anything behind either.
 `boot_barDraw` is the one thing that draws it, shared by the power-on sweep,
 the outro and the busy bar; it lives in `bootoutro.h` rather than beside its
 constants in `bootscreen.h` because it draws, and `bootscreen.h` is included

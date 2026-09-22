@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.4.6b"
+#define BuildVersion "0.4.7b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -1178,14 +1178,14 @@ void oled_showStartScreen(bool waitForHost) {
 
     // One pixel per frame: the comet's tail rubs out what it leaves behind,
     // so there is no clearing pass to follow it.
-    for (int head=barX; head<barX+BOOT_BAR_SPAN(barX) && !aborted; head++) {
+    for (int head=barX; head<barX+BOOT_BAR_SPAN(barX) && !aborted; head+=BOOT_BAR_PX_STEP) {
       sweepHead = head;
       boot_barDraw(head, barX);
       oled.display();
 #ifdef USE_ESP32XDEV
       // Every BOOT_BAR_TAIL pixels rather than every frame: FastLED.show()
       // costs far more than the pixel it would be following.
-      if (dtiv>=12 && (head-barX) % BOOT_BAR_TAIL == 0) {
+      if (dtiv>=12 && (head-barX) % BOOT_BAR_TAIL < BOOT_BAR_PX_STEP) {
         wsleds[0] = CHSV(head,255,255);
         FastLED.show();
       }

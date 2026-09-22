@@ -4,6 +4,17 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.4.7b — 2026-09-23
+
+- **The sweep no longer lurches or smears when the MiSTer is ready.** Handing
+  the animation over from the boot screen to the running firmware let it catch
+  up on the time the handover had taken, so it jumped forward - and a jump
+  longer than the dark end of the comet's tail left lit pixels behind it. It
+  moves one step per frame now whatever the clock says, and the bar is blacked
+  outright when a run ends.
+- **The bar moves twice as fast**, a run taking about a third of a second
+  rather than two thirds.
+
 ## 0.4.6b — 2026-09-23
 
 - **The installer sets `log_file_entry=1` for you.** It is what makes MiSTer

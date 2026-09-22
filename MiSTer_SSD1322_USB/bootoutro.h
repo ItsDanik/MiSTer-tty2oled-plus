@@ -76,6 +76,16 @@ void boot_compose(uint8_t *pic) {
 // Everything is clipped to [startX, panel width): the columns left of startX
 // belong to the build version.
 // ---------------------------------------------------------------------------
+// Black the whole bar, from the version's right edge to the panel's. Called
+// when a run ends: the comet has drained off the right edge by then, but a
+// frame that was interrupted - or one drawn before a jump in the clock - can
+// still have pixels on the panel, and a bar that stops has to stop empty.
+static inline void boot_barClear(int startX) {
+  if (startX < 0) startX = 0;
+  if (startX >= BOOT_PANEL_W) return;
+  oled.fillRect(startX, BOOT_BAR_Y, BOOT_PANEL_W - startX, BOOT_BAR_H, SSD1322_BLACK);
+}
+
 static inline void boot_barDraw(int head, int startX) {
   for (int k = 0; k < BOOT_BAR_LEVELS; k++) {
     int x0 = head - (k + 1) * BOOT_BAR_SEG + 1;
@@ -138,17 +148,23 @@ void boot_outroTick(void) {
   if (!boStarted) bo_start(now);
   bool drew = false;
 
-  // The bar: a pixel every BOOT_BAR_PX_MS, as the sweep itself moves, until
-  // the comet has run off the right edge and the band is empty again.
-  if (!boBarDone) {
-    int moved = 0;
-    while (now - boBarLast >= BOOT_BAR_PX_MS) {
-      boBarLast += BOOT_BAR_PX_MS;
-      boBarHead++;
-      moved++;
-      if (boBarHead >= boBarX + BOOT_BAR_SPAN(boBarX)) { boBarDone = true; break; }
+  // The bar: one step every BOOT_BAR_PX_MS, exactly as the power-on sweep
+  // moves, until the comet has run off the right edge.
+  //
+  // One step per tick, never a catch-up burst. Catching up on the time the
+  // handover took was what made the bar lurch the moment the daemon spoke -
+  // and a head that jumps further than the tail's black end leaves the pixels
+  // between the two lit, which is where the trails came from.
+  if (!boBarDone && now - boBarLast >= BOOT_BAR_PX_MS) {
+    boBarLast  = now;
+    boBarHead += BOOT_BAR_PX_STEP;
+    if (boBarHead >= boBarX + BOOT_BAR_SPAN(boBarX)) {
+      boBarDone = true;
+      boot_barClear(boBarX);            // ending empty, whatever was mid-frame
+    } else {
+      boot_barDraw(boBarHead, boBarX);
     }
-    if (moved) { boot_barDraw(boBarHead, boBarX); drew = true; }
+    drew = true;
   }
 
   // The version: its grey steps from 15 down to 0 over BOOT_VERFADE_MS.

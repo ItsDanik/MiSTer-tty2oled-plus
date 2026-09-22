@@ -128,32 +128,29 @@ void busy_tick(void) {
   if (!busyActive) return;
   if (tfState != TF_IDLE) { busyLast = millis(); return; }   // after the transition
   unsigned long now = millis();
-  int moved = 0;
+  if (now - busyLast < BOOT_BAR_PX_MS) return;
 
-  // After a stall - a picture transfer holds loop() for a while - carry on
-  // from here rather than replaying every pixel that was missed.
-  if (now - busyLast > 4 * BOOT_BAR_PX_MS) busyLast = now - BOOT_BAR_PX_MS;
+  // One step per tick, whatever the clock says has been missed. A picture
+  // transfer holds loop() for a while, and catching up afterwards would both
+  // lurch and smear: a head that jumps further than the black end of its own
+  // tail leaves the pixels in between lit.
+  busyLast   = now;
+  busyHead  += BOOT_BAR_PX_STEP;
 
-  // Only the head's final position is drawn, however many pixels are due:
-  // every frame redraws the whole tail anyway, so the ones in between would
-  // be painted over without ever being sent to the panel.
-  while (busyActive && now - busyLast >= BOOT_BAR_PX_MS) {
-    busyLast += BOOT_BAR_PX_MS;
-    busyHead++;
-    moved++;
-    if (busyHead >= BOOT_BAR_SPAN(0)) {
-      if (busyStopping) {
-        // The comet has just drained off the right edge, so the band is
-        // already empty: stop on that rather than half way across.
-        busy_cancel();
-        oled.display();
-        return;
-      }
-      busyHead = 0;
+  if (busyHead >= BOOT_BAR_SPAN(0)) {
+    if (busyStopping) {
+      // Run over: the comet has drained off the right edge. Black the bar
+      // anyway, so a frame cut short by the stop cannot leave anything.
+      busy_cancel();
+      boot_barClear(0);
+      oled.display();
+      return;
     }
+    busyHead = 0;
   }
 
-  if (moved) { boot_barDraw(busyHead, 0); oled.display(); }
+  boot_barDraw(busyHead, 0);
+  oled.display();
 }
 
 #endif  // BUSYBAR_H

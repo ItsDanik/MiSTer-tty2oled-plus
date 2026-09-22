@@ -116,12 +116,21 @@
 // taken from the ini: nothing from the ini has arrived yet.
 #define BOOT_FADE_MS   800
 
-// One pixel of the sweep. The head moves a single pixel at a time - 320
-// frames across the panel where there used to be 32 - and 2ms keeps a whole
-// cycle at the 640ms it has always been. Only the bar's own rows are ever
-// drawn into, and the panel library sends just the rows that changed, so a
-// frame is about 1KB down the wire rather than the whole 8KB panel.
-#define BOOT_BAR_PX_MS 2
+// One frame of the sweep, and how far the head moves in it. Two pixels every
+// 2ms: 160 frames across the panel, a run in about a third of a second.
+//
+// Not one pixel every millisecond, which is the same speed on paper: a frame
+// costs about a millisecond of SPI even when only the bar's eight rows are
+// sent, so asking for one every 1ms would simply run as fast as the wire
+// allows - and then the bar's speed would be whatever the panel and the rest
+// of loop() left over, which is exactly the jerkiness this replaced. A step
+// of 2 with room to spare in the frame keeps the speed the same everywhere.
+//
+// BOOT_BAR_SEG is 4, so a step never exceeds the black segment at the end of
+// the tail: whatever the head leaves behind is covered by the tail's own
+// last level, and the comet cannot smear.
+#define BOOT_BAR_PX_MS   2
+#define BOOT_BAR_PX_STEP 2
 
 // How far the head travels in one cycle: across the panel, and then the
 // length of the tail again so the comet drains off the right edge instead of
