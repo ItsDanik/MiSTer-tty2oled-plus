@@ -25,7 +25,8 @@
 #   - flashes the firmware for the board the display reports, and only when
 #     the display is running a different version
 #   - adds the boot hook to /media/fat/linux/user-startup.sh
-#   - puts itself in /media/fat/Scripts as update_tty2oledplus.sh
+#   - puts itself in /media/fat/Scripts as update_tty2oledplus.sh, and the
+#     uninstaller beside it as uninstall_tty2oledplus.sh
 #   - refuses to run at all while upstream tty2oled is installed in
 #     /media/fat/tty2oled - tty2oled+ replaces it, the two are not made to run
 #     side by side - and never touches that install itself
@@ -279,6 +280,13 @@ main() {
             note "kept your $(basename "${f}")"
             continue
           fi ;;
+        # Belongs in the Scripts menu, not in the folder it removes.
+        uninstall_tty2oledplus.sh)
+          if [ -d "${FAT}/Scripts" ]; then
+            cp "${f}" "${FAT}/Scripts/uninstall_tty2oledplus.sh"
+            chmod +x "${FAT}/Scripts/uninstall_tty2oledplus.sh"
+          fi
+          continue ;;
       esac
       cp -r "${f}" "${INSTALL}/"
     done
@@ -326,7 +334,8 @@ main() {
     cp "${STAGE}/update_tty2oledplus.sh" "${FAT}/Scripts/.update_tty2oledplus.sh.new"
     chmod +x "${FAT}/Scripts/.update_tty2oledplus.sh.new"
     mv "${FAT}/Scripts/.update_tty2oledplus.sh.new" "${FAT}/Scripts/update_tty2oledplus.sh"
-    note "update_tty2oledplus is in the Scripts menu for next time."
+    note "update_tty2oledplus is in the Scripts menu for next time,"
+    note "and uninstall_tty2oledplus removes all of this again."
   fi
 
   # The one setting everyone misses. Without it MiSTer never says which game

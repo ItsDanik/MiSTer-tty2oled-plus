@@ -30,12 +30,20 @@ release's checksums before changing anything, and then:
   when the display runs a different version, and never by guessing
 - adds the start line to `/media/fat/linux/user-startup.sh`, so the display
   comes up on every boot, and starts it now
-- puts **update_tty2oledplus** in the Scripts menu and removes
-  TTY2OLEDplus_Installer, which has done its job
+- puts **update_tty2oledplus** and **uninstall_tty2oledplus** in the Scripts
+  menu, and removes TTY2OLEDplus_Installer, which has done its job
 
 **To update**, run **update_tty2oledplus** from the Scripts menu. Your
 `tty2oled-user.ini` and `coretypes.ini` are never overwritten, and the firmware
 is flashed only when the release carries a new one.
+
+**To uninstall**, run **uninstall_tty2oledplus** from the Scripts menu. It
+stops the display, removes `/media/fat/tty2oledplus`, the start line in
+`user-startup.sh` and both Scripts entries, clears any boot image stored on the
+display, and removes itself - `--keep-settings` saves your two ini files beside
+the install first, and `--dry-run` only lists what would go. The firmware stays
+on the display: it is the display's own flash, and an ESP32 with none shows
+nothing at all.
 
 **Coming from upstream tty2oled?** tty2oled+ replaces it - both would drive the
 same serial port - so the installer stops and says what to remove if it finds

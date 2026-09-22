@@ -25,3 +25,9 @@ MANIFEST_TOOLS="tools/tty2oled-diag.sh tools/flash-mister.sh tools/fw-segments.p
 
 # Installed only when the MiSTer has none, because the user edits them.
 MANIFEST_DEFAULTS="coretypes.ini tty2oled-user.ini"
+
+# Goes into /media/fat/Scripts, not the install folder: it must outlive the
+# folder it removes, and the Scripts menu is where a user looks for it. Both
+# installers put it there; the release carries it inside the scripts archive
+# like everything else.
+MANIFEST_MENU="tools/uninstall_tty2oledplus.sh"

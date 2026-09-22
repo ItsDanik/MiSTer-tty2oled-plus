@@ -335,6 +335,78 @@ starter "${TMP}/nowhere"; RC="${?}"
 ok "an unreachable release fails the starter" "${RC}" "1"
 ok "saying where it looked" "$(said 'Is the MiSTer online')" "1"
 
+section "uninstaller: leaving nothing behind"
+
+uninstall() {
+  : > "${CALLS}"
+  T2OP_FAT="${FAT}" T2OP_INIT="${TMP}/fake-init" \
+    bash "${FAT}/Scripts/uninstall_tty2oledplus.sh" --yes "$@" > "${TMP}/out" 2>&1 </dev/null
+}
+
+# A real install first, so the uninstaller has the real thing to remove.
+fresh_mister
+echo "# somebody else's line" >> "${FAT}/linux/user-startup.sh"
+T2OP_HWINF="HWLOLIN32;0.3.9b;" install
+ok "the installer leaves the uninstaller in the Scripts menu" \
+   "$(yesno test -x "${FAT}/Scripts/uninstall_tty2oledplus.sh")" "yes"
+ok "and not in the install folder, which it outlives" \
+   "$(yesno test -e "${INSTALL}/uninstall_tty2oledplus.sh")" "no"
+BEFORE="$(cat "${FAT}/linux/user-startup.sh")"
+
+uninstall --dry-run; RC="${?}"
+ok "a dry run succeeds" "${RC}" "0"
+ok "and changes nothing" "$(yesno test -d "${INSTALL}")" "yes"
+ok "nor the boot hook" "$(grep -c "${INSTALL}/S60tty2oled" "${FAT}/linux/user-startup.sh")" "1"
+ok "nor itself" "$(yesno test -e "${FAT}/Scripts/uninstall_tty2oledplus.sh")" "yes"
+ok "but says what would go" "$(grep -c "would remove ${INSTALL}\$" "${TMP}/out")" "1"
+
+echo running > "${STATE}"
+uninstall; RC="${?}"
+ok "the uninstall succeeds" "${RC}" "0"
+ok "the install folder is gone" "$(yesno test -e "${INSTALL}")" "no"
+ok "the daemon was stopped first" "$(grep -c 'init stop' "${CALLS}")" "1"
+ok "and not started again" "$(running)" "stopped"
+ok "the updater is gone from Scripts" "$(yesno test -e "${FAT}/Scripts/update_tty2oledplus.sh")" "no"
+ok "and the uninstaller removed itself" "$(yesno test -e "${FAT}/Scripts/uninstall_tty2oledplus.sh")" "no"
+ok "the boot hook is gone" "$(grep -c tty2oledplus "${FAT}/linux/user-startup.sh")" "0"
+ok "with the comment the installer wrote above it" "$(grep -c 'Startup tty2oled' "${FAT}/linux/user-startup.sh")" "0"
+ok "and everybody else's lines untouched" "$(grep -c "somebody else's line" "${FAT}/linux/user-startup.sh")" "1"
+ok "user-startup.sh keeps its shebang" "$(head -n1 "${FAT}/linux/user-startup.sh")" "#!/bin/sh"
+ok "and is still executable" "$(yesno test -x "${FAT}/linux/user-startup.sh")" "yes"
+ok "it says the firmware stays on the display" "$(said 'firmware stays')" "1"
+
+# Nothing left to remove: say so rather than half-run. Run from the repo,
+# since the installed copy has removed itself - and check that a copy run from
+# outside the Scripts menu does not delete itself.
+: > "${CALLS}"
+T2OP_FAT="${FAT}" T2OP_INIT="${TMP}/fake-init" \
+  bash "${ROOT}/tools/uninstall_tty2oledplus.sh" --yes > "${TMP}/out" 2>&1 </dev/null
+RC="${?}"
+ok "the repo's own copy is never deleted" "$(yesno test -e "${ROOT}/tools/uninstall_tty2oledplus.sh")" "yes"
+ok "a second run refuses" "${RC}" "1"
+ok "saying it is not installed" "$(said 'not installed')" "1"
+
+section "uninstaller: what it keeps when asked"
+
+fresh_mister
+T2OP_HWINF="HWLOLIN32;0.3.9b;" install
+echo 'TTYDEV="/dev/ttyUSB1"   # mine' > "${INSTALL}/tty2oled-user.ini"
+uninstall --keep-settings
+ok "--keep-settings saves your ini" "$(cat "${FAT}/tty2oledplus-tty2oled-user.ini.saved")" 'TTYDEV="/dev/ttyUSB1"   # mine'
+ok "and your core types" "$(yesno test -e "${FAT}/tty2oledplus-coretypes.ini.saved")" "yes"
+ok "while the install still goes" "$(yesno test -e "${INSTALL}")" "no"
+
+# Upstream's install is not ours to remove, whatever else we clean up.
+fresh_mister
+T2OP_HWINF="HWLOLIN32;0.3.9b;" install
+mkdir -p "${FAT}/tty2oled"; touch "${FAT}/tty2oled/S60tty2oled"
+uninstall
+ok "upstream's install is left alone" "$(yesno test -e "${FAT}/tty2oled/S60tty2oled")" "yes"
+ok "and its pid file, which may name its daemon" \
+   "$(grep -c 'removed /run/tty2oled-daemon.pid' "${TMP}/out")" "0"
+ok "and said so" "$(said 'is left alone')" "1"
+rm -rf "${FAT}/tty2oled"
+
 section "installer: reading the display's answer"
 
 T2OP_LIB=yes . "${ROOT}/tools/update_tty2oledplus.sh"

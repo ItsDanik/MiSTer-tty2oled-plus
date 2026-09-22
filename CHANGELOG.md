@@ -4,6 +4,19 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.4.3b — 2026-09-22
+
+- **An uninstaller.** `uninstall_tty2oledplus` in the Scripts menu removes
+  every trace of tty2oled+: the install folder, the start line in
+  `user-startup.sh`, both Scripts entries, the pid file and logs, and the boot
+  image stored in the display's own flash - then itself. `--keep-settings`
+  saves your `tty2oled-user.ini` and `coretypes.ini` beside the install first,
+  `--dry-run` only lists what would go. The firmware stays on the display: an
+  ESP32 with none shows nothing at all. Upstream's install, if you have one,
+  and `log_file_entry=1` in `MiSTer.ini` are left alone.
+- The installer and the deploy both put the uninstaller in the Scripts menu,
+  so an existing install gains it with the next update.
+
 ## 0.4.2b — 2026-09-22
 
 The first published release. Everything described under 0.4.1b and 0.4.0b is

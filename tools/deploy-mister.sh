@@ -84,7 +84,7 @@ for tool in ${NEED}; do
   command -v "${tool}" >/dev/null 2>&1 || die "'${tool}' is not installed on this machine."
 done
 
-for f in ${FILES} ${TOOLS} ${BOOTHOOK} ${MANIFEST_DEFAULTS}; do
+for f in ${FILES} ${TOOLS} ${BOOTHOOK} ${MANIFEST_MENU} ${MANIFEST_DEFAULTS}; do
   [ -f "${f}" ] || die "${f} is missing from the working copy."
 done
 
@@ -109,6 +109,7 @@ fi
 if [ "${DRY_RUN}" = "yes" ]; then
   say "Dry run - nothing will be copied to ${MISTER}:${REMOTE}"
   for f in ${FILES} ${TOOLS}; do echo "  copy     ${f}"; done
+  for f in ${MANIFEST_MENU}; do echo "  copy     ${f} -> /media/fat/Scripts/"; done
   for f in ${MANIFEST_DEFAULTS}; do echo "  if absent ${f}"; done
   [ -n "${BIN}" ]                 && echo "  copy     ${BIN}"
   [ "${WITH_INDEX}" = "yes" ]     && echo "  copy     titleindex/ ($(ls titleindex/*.idx | wc -l | tr -d ' ') cores)"
@@ -160,6 +161,13 @@ say "Copying scripts to ${MISTER}:${REMOTE}"
 ssh "${MISTER}" "mkdir -p ${REMOTE}"
 # shellcheck disable=SC2086
 scp -q ${FILES} ${TOOLS} "${MISTER}:${REMOTE}/"
+
+# The uninstaller goes to the Scripts menu instead: it has to outlive the
+# folder it removes, and that is where a user looks for it.
+# shellcheck disable=SC2086
+ssh "${MISTER}" "mkdir -p /media/fat/Scripts"
+# shellcheck disable=SC2086
+scp -q ${MANIFEST_MENU} "${MISTER}:/media/fat/Scripts/"
 
 # The files the user edits - their settings and the core-type mapping - go
 # over only when the MiSTer has none, so a deploy never undoes an edit. On a

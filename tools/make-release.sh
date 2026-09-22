@@ -95,7 +95,7 @@ say "Packing tty2oledplus.tar.gz"
 P="${STAGE}/tty2oledplus"
 mkdir -p "${P}/titleindex" "${P}/pics_pri/ICON"
 for f in ${MANIFEST_FILES} ${MANIFEST_DEFAULTS}; do cp -p "${f}" "${P}/"; done
-for f in ${MANIFEST_TOOLS}; do cp -p "${f}" "${P}/$(basename "${f}")"; done
+for f in ${MANIFEST_TOOLS} ${MANIFEST_MENU}; do cp -p "${f}" "${P}/$(basename "${f}")"; done
 cp -p "${INDEX}"/*.idx "${P}/titleindex/"
 cp -p pics_pri/ICON/*.gsc "${P}/pics_pri/ICON/"
 pack "${OUT}/tty2oledplus.tar.gz" tty2oledplus

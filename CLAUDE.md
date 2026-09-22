@@ -117,7 +117,10 @@ reasoning behind all of it is under [Versioning](#versioning) below.
 
 **tty2oled+** is a fork of
 [venice1200/MiSTer_tty2oled](https://github.com/venice1200/MiSTer_tty2oled),
-GPLv3 like upstream. Branch: `feature/game-metadata`, based on upstream `50c08ac`.
+GPLv3 like upstream. The work lives on `main`, which is upstream's `50c08ac`
+plus this fork; `feature/game-metadata` is where it was written and now points
+at the same commit. `main` is what the repository shows a visitor and what a
+clone gets, which is why the fork's own README had to be on it.
 
 The install folder **is** the fork's own: `/media/fat/tty2oledplus`, where
 upstream uses `/media/fat/tty2oled`, so neither updater can overwrite the
@@ -166,7 +169,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1248 checks, no hardware needed. |
+| `tests/` | 1278 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -179,6 +182,7 @@ with scrolling text and an icon panel.
 | `tools/tty2oled-boothook.sh` | Adds the boot hook to `user-startup.sh`. Fed to the MiSTer on stdin by the deploy. |
 | `tools/manifest.sh` | What an install is made of. Read by the deploy and the release, so they agree. |
 | `tools/make-release.sh` | Builds the release assets into `dist/`. CI runs it on a tag; so can you. |
+| `tools/uninstall_tty2oledplus.sh` | Removes the install, the boot hook, both Scripts entries and the stored boot image - and itself. Lives in `/media/fat/Scripts`. **On the MiSTer**. |
 | `tools/TTY2OLEDplus_Installer.sh` | The starter users drop in `/media/fat/Scripts`: fetches the latest installer, checks it, runs it, removes itself. **On the MiSTer**. |
 | `tools/update_tty2oledplus.sh` | Installs/updates from a GitHub release. **On the MiSTer**; `update_tty2oledplus` in its Scripts menu. |
 | `.github/workflows/ci.yml` | Tests and firmware on every push; the release on a `v*` tag. |
@@ -1261,6 +1265,18 @@ Main_MiSTer's `menu.cpp`). A prompt of our own there is a second prompt and a
 second keypress. With `fb_terminal=0` the script runs under `popen` with the
 OSD showing its output, has no terminal to read a key from, and returns to the
 menu when it exits. update_all.sh prompts in neither case, and nor do we.
+
+**The uninstaller lives in `/media/fat/Scripts`, not in the install folder**,
+because it has to outlive the folder it removes - `MANIFEST_MENU` is that one
+file, and both the installer and `deploy-mister.sh` put it there rather than
+into `${INSTALL}`. It removes what the install put anywhere else: the boot hook
+and the comment above it (only when that comment is directly above that line),
+both Scripts entries, the pid file and the logs, and the boot image **stored in
+the display's own flash**, which a reflash would not have cleared. It removes
+itself only when it is the copy in the Scripts folder, so running the repo's
+copy cannot delete it. What it leaves is deliberate: the firmware (the
+display's flash, and an ESP32 with none shows nothing), `log_file_entry=1` (MiSTer's
+own setting), upstream's `/media/fat/tty2oled` and upstream's pid file.
 
 **`TTY2OLEDplus_Installer.sh` is only a starter**, so the copy a user
 downloads never goes stale: it fetches `update_tty2oledplus.sh` and

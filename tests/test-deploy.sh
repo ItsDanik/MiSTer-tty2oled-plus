@@ -263,8 +263,17 @@ ok "its socket directory is cleaned up" "$(ls "${TMPDIR}" | wc -l | tr -d ' ')" 
 
 SENT="$(grep '^SCP' "${LOG}" | head -n1)"
 UNSENT=""
-for f in ${LIST}; do case "${SENT}" in *" ${f}"*) ;; *) UNSENT="${UNSENT} ${f}" ;; esac; done
+# The uninstaller is the one file that does not go into the install folder:
+# it has to outlive the folder it removes, so it goes to the Scripts menu.
+for f in ${LIST}; do
+  case "${f}" in */uninstall_tty2oledplus.sh) continue ;; esac
+  case "${SENT}" in *" ${f}"*) ;; *) UNSENT="${UNSENT} ${f}" ;; esac
+done
 ok "every script and tool is sent" "${UNSENT}" ""
+ok "the uninstaller goes to the Scripts menu" \
+   "$(grep -c '^SCP .*tools/uninstall_tty2oledplus.sh .*:/media/fat/Scripts/$' "${LOG}")" "1"
+ok "and not into the install folder" \
+   "$(grep '^SCP' "${LOG}" | grep -c 'uninstall_tty2oledplus.sh .*:/media/fat/tty2oledplus/')" "0"
 ok "the default coretypes.ini goes to a fresh MiSTer" "$(grep -c '^SCP.* coretypes.ini ' "${LOG}")" "1"
 # The daemon sources it, and a first deploy used to leave it missing.
 ok "and so does a default tty2oled-user.ini" "$(grep -c '^SCP.* tty2oled-user.ini ' "${LOG}")" "1"
