@@ -26,13 +26,27 @@ the only two places that need it as a literal.
 `CHANGELOG.md`, describing what changed for someone running it, not what was
 edited.
 
-**3. Prove it.** Both, every time - the version bump alone changes the
-firmware, so the binary is stale until it is rebuilt:
+**3. Prove it - all three boards, and the release itself.** The version bump
+alone changes the firmware, so the binary is stale until it is rebuilt; and
+CI builds every board against **today's** libraries, which is not what the
+workstation has:
 
 ```bash
+arduino-cli lib upgrade                                 # what CI will install
 ./tests/run-all.sh                                      # must be all green
-./tools/build-tty2oled.sh MiSTer_SSD1322_USB lolin32    # picks up BuildVersion
+for b in esp32de esp32s3 lolin32; do                    # lolin32 LAST
+  ./tools/build-tty2oled.sh MiSTer_SSD1322_USB "${b}"
+done
+./tools/make-release.sh --out /tmp/rel --tag "v$(cat VERSION)" --notes /tmp/rel.md
 ```
+
+Three boards because a build that only ever runs for lolin32 is a CI failure
+waiting on a tag - that is exactly how `v0.4.0b` was spent. **lolin32 last**
+because `deploy-mister.sh --firmware` flashes the newest `merged.bin` in any
+`build-out-*`, and the hardware here is a LOLIN32. `make-release.sh` with the
+real `--tag` and `--notes` is the whole release, built locally: it runs the
+checks CI runs, and the test suite it belongs to fails on any two assets whose
+names differ only in case, which is how `v0.4.1b` was spent.
 
 **4. Commit, tag, push.** The tag is what makes "which firmware is on the
 display" answerable from the repo.
@@ -57,16 +71,43 @@ tag it then builds the title index, runs `tools/make-release.sh` and publishes
 a GitHub release - which is what `update_tty2oledplus` on every MiSTer installs
 from. Watch it through: `gh run watch`. It refuses a tag that is not `VERSION`
 and a version with no `CHANGELOG.md` section, so steps 1 and 2 are enforced
-there too. `./tools/make-release.sh --out /tmp/rel` builds the same release
-locally, to look at before tagging.
+there too.
+
+Watch it through to the **Release** job, not just to green tests, and check
+that the assets are actually served before telling anyone it is out:
+
+```bash
+gh run watch "$(gh run list --branch "v$(cat VERSION)" --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status
+gh release view "v$(cat VERSION)" --json isDraft,isPrerelease,assets
+curl -fsSLI -o /dev/null -w '%{http_code}\n' \
+  https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/VERSION
+```
+
+**A tag CI rejects is spent.** Nothing was published, but the number is used:
+fix the fault, bump again (step 1), and let the failed tag stand. Do not move
+or delete a pushed tag. `0.4.0b` and `0.4.1b` are both in `CHANGELOG.md` as
+tagged-but-never-released for that reason, and `0.4.2b` was the first release
+anyone could install.
 
 **5. Flash, don't just deploy.** The firmware version moved with the scripts,
 so a script-only deploy leaves the display a version behind and the daemon
 will say so in `/tmp/tty2oled`:
 
 ```bash
-./tools/deploy-mister.sh --firmware --flash
+MISTER=root@192.168.1.206 ./tools/deploy-mister.sh --firmware --flash
 ```
+
+`MiSTer.local` does not resolve on this workstation. The deploy keeps working
+between releases exactly as before - it is only that the MiSTer then holds the
+released version, so `update_tty2oledplus` finds nothing to do until the next
+one (`--force` overrides that).
+
+**Skip this step when the user wants to test the install path themselves.**
+Then the display is *meant* to be a version behind, so that
+`TTY2OLEDplus_Installer` has a reason to flash it, and the MiSTer is wiped
+first (install folder, both Scripts entries, the `user-startup.sh` line, the
+daemon, `/tmp` and `/run` leftovers, and `tty2oled-bootimg.sh clear`) so the
+run is a genuine first install.
 
 `./tools/bump-version.sh --check` at any time says whether the three copies
 still agree; `tests/test-version.sh` fails the suite if they do not. The
@@ -1292,7 +1333,7 @@ install is moved or removed the line is harmless and the warning goes quiet.
 
 The procedure is at the top of this file; this is what is underneath it.
 
-`VERSION` at the repo root is the source of truth, `0.4.0b` at the time of
+`VERSION` at the repo root is the source of truth, `0.4.2b` at the time of
 writing: `major.minor.patch` with an optional one-letter pre-release mark.
 
 Two files need the number as a literal and cannot read `VERSION` at run time,
