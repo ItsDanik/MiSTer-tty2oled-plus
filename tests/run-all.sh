@@ -8,6 +8,12 @@
 #   test-meta.sh        metadata extraction from MiSTer's /tmp state and MRA files
 #   test-wire.sh        the exact bytes the daemon sends to the display
 #   test-index.sh       the libretro title-index builder and the CRC lookup
+#   test-version.sh     one version across the scripts and the firmware
+#   test-daemon.sh      the daemon loop's device recovery, and the init script
+#   test-deploy.sh      deploy-mister.sh against a fake MiSTer, and the boot hook
+#   test-png2gsc.py     the image converter, on both of its backends
+#   test-installer.sh   the release package, and the installer that unpacks it
+#   test-flash.sh       flashing: what is written, and what is kept
 #   test_meta_parse     the firmware's CMDMETA parser
 #   test_meta_layout    the firmware's layout code, under ASan/UBSan
 
@@ -29,6 +35,12 @@ run() {
 run "shell: metadata extraction" "${HERE}/test-meta.sh"
 run "shell: wire protocol"       "${HERE}/test-wire.sh"
 run "shell: title index"         "${HERE}/test-index.sh"
+run "shell: versioning"          "${HERE}/test-version.sh"
+run "shell: daemon lifecycle"    "${HERE}/test-daemon.sh"
+run "shell: deploy"              "${HERE}/test-deploy.sh"
+run "tools: png2gsc"             "${HERE}/test-png2gsc.py"
+run "release: installer"        "${HERE}/test-installer.sh"
+run "tools: flashing"            "${HERE}/test-flash.sh"
 
 # The firmware tests need a host C++ compiler. Skipped rather than failed when
 # one is unavailable, so the shell suite still runs anywhere.

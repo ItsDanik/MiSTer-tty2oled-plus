@@ -7,21 +7,26 @@
 # never starting.
 #
 #   ./tty2oled-bootimg.sh status          what is stored now
-#   ./tty2oled-bootimg.sh set boot.gsc    store a 256x64 .gsc
+#   ./tty2oled-bootimg.sh set boot.gsc    store a 256x54 .gsc
 #   ./tty2oled-bootimg.sh clear           revert to the built-in logo
 #
 # Make the .gsc on your workstation:
 #   ./tools/png2gsc.py --boot splash.png
 # then copy it over and run this.
 #
+# The image is 256x54, not the full 256x64: the bottom ten rows are where the
+# firmware runs its power-on sweep and then prints the build version, and it
+# does that whatever image is stored.
+#
 # The daemon holds the serial port, so it is stopped for the transfer and
 # started again afterwards, whatever happens.
 
 set -u
 
-T2O_DIR="${TTY2OLED_PATH:-/media/fat/tty2oled}"
+T2O_DIR="${TTY2OLED_PATH:-/media/fat/tty2oledplus}"
 INIT="${T2O_DIR}/S60tty2oled"
-BOOT_BYTES=8192
+BOOT_BYTES=6912          # 256x54 at 4bpp
+BOOT_LEGACY_BYTES=8192   # 256x64, what this script sent before the band
 
 die() { printf '\n*** %s\n' "$1" >&2; exit 1; }
 say() { printf '\n==> %s\n' "$1"; }
@@ -36,7 +41,9 @@ IMAGE="${2:-}"
 
 # --- Free the serial port ---------------------------------------------------
 DAEMON_WAS_RUNNING="no"
-[ -e /run/tty2oled-daemon.pid ] && DAEMON_WAS_RUNNING="yes"
+# Asked of the init script, not read off a pid file - see flash-mister.sh,
+# which had the same test and the same bug when the pid file moved.
+"${INIT}" status >/dev/null 2>&1 && DAEMON_WAS_RUNNING="yes"
 restore_daemon() {
   if [ "${DAEMON_WAS_RUNNING}" = "yes" ]; then
     say "Restarting the tty2oled daemon"
@@ -64,6 +71,13 @@ case "${ACTION}" in
     say "Asking the display"
     r="$(ask CMDBOOTINF)"
     echo "    ${r:-<no answer - is this tty2oled+ firmware?>}"
+    case "${r}" in
+      *legacy*)
+        echo "    That image is a full-screen 256x64 one, stored before the"
+        echo "    bottom ten rows were reserved. It still shows, cropped to"
+        echo "    its top 54 rows. Remake it at 256x54 to choose what goes."
+        ;;
+    esac
     ;;
 
   set)
@@ -71,11 +85,19 @@ case "${ACTION}" in
     [ -r "${IMAGE}" ] || die "Cannot read ${IMAGE}"
 
     # A .gsc is a 3-line header then hex; the firmware wants the raw bytes.
-    # Check the size BEFORE sending: the firmware reads exactly 8192 bytes and
+    # Check the size BEFORE sending: the firmware reads exactly BOOT_BYTES and
     # a short file would leave it waiting on a transfer that never finishes.
     got="$(tail -n +4 "${IMAGE}" | xxd -r -p | wc -c)"
+    if [ "${got}" -eq "${BOOT_LEGACY_BYTES}" ]; then
+      # Say what changed rather than just the number, or the obvious guess is
+      # that the file is corrupt.
+      die "${IMAGE} is a full-screen 256x64 .gsc.
+       Boot screens are 256x54 now - the bottom ten rows are the firmware's,
+       for the power-on animation and the version.
+       Remake it with:  ./tools/png2gsc.py --boot yourimage.png"
+    fi
     [ "${got}" -eq "${BOOT_BYTES}" ] \
-      || die "${IMAGE} is ${got} bytes, need ${BOOT_BYTES} (a 256x64 .gsc).
+      || die "${IMAGE} is ${got} bytes, need ${BOOT_BYTES} (a 256x54 .gsc).
        Make one with:  ./tools/png2gsc.py --boot yourimage.png"
 
     say "Sending ${IMAGE} (${got} bytes)"
@@ -95,7 +117,7 @@ case "${ACTION}" in
     ;;
 
   *)
-    sed -n '2,20p' "$0"
+    sed -n '2,22p' "$0"
     exit 1
     ;;
 esac

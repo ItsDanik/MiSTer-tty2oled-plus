@@ -70,9 +70,9 @@
 #
 #
 
-. /media/fat/tty2oled/tty2oled-system.ini
-. /media/fat/tty2oled/tty2oled-user.ini
-. /media/fat/tty2oled/tty2oled-meta.sh
+. /media/fat/tty2oledplus/tty2oled-system.ini
+. /media/fat/tty2oledplus/tty2oled-user.ini
+. /media/fat/tty2oledplus/tty2oled-meta.sh
 cd /tmp
 
 
@@ -87,12 +87,37 @@ dbug() {
   fi
 }
 
+# The wait after a single-line command, as opposed to after a picture header.
+# The firmware acknowledges a command after cDelay, which is 15ms; WAITSECS at
+# 0.2 was three times the round trip of everything in the startup handshake put
+# together. Falls back to WAITSECS when the ini predates the setting.
+cmdwait() { sleep "${CMDWAITSECS:-${WAITSECS}}"; }
+
+# How long the firmware takes over any brightness change. Sent before the first
+# CMDCON, so that one fades at the user's speed too rather than the firmware's
+# default.
+sendfade() {
+  [ "${USBMODE}" = "yes" ] || return 0
+  dbug "Sending: CMDFADE,${CONTRAST_FADE_MS:-800}"
+  echo "CMDFADE,${CONTRAST_FADE_MS:-800}" >${TTYDEV}
+  cmdwait
+}
+
+# The Fade transition's timings. Sent before the first picture, which may be
+# the first thing to use them.
+sendtfade() {
+  [ "${USBMODE}" = "yes" ] || return 0
+  dbug "Sending: CMDTFADE,${TRANSITION_FADE_MS:-800},${TRANSITION_BLANK_MS:-1000}"
+  echo "CMDTFADE,${TRANSITION_FADE_MS:-800},${TRANSITION_BLANK_MS:-1000}" >${TTYDEV}
+  cmdwait
+}
+
 # Send Contrast-Data function
 sendcontrast() {
   if [ "${USBMODE}" = "yes" ]; then # Check the tty2xxx mode
     dbug "Sending: CMDCON,${CONTRAST}"
     echo "CMDCON,${CONTRAST}" >${TTYDEV} # Send Contrast Command and Value
-    sleep ${WAITSECS}
+    cmdwait
   else
     echo "att" >${TTYDEV}       # Send an "att" to the MiSTer annoucing another Command
     sleep ${WAITSECS}           # sleep needed here ?!
@@ -122,7 +147,7 @@ sendscreensaver() {
     dbug "Sending: CMDSAVER,0,0,0"
     echo "CMDSAVER,0,0,0" >${TTYDEV} # Send Screensaver Command and Values
   fi
-  sleep ${WAITSECS}
+  cmdwait
 }
 
 # Rotate Display function
@@ -131,9 +156,14 @@ sendrotation() {
     if [ "${ROTATE}" = "yes" ]; then
       dbug "Sending: CMDROT,1"
       echo "CMDROT,1" >${TTYDEV} # Send Rotation if set to "yes"
-      sleep ${WAITSECS}
+      cmdwait
+      # The re-show used to be followed by "sleep 4" to let its animation run.
+      # It no longer needs one: the start screen now ends the moment the next
+      # command arrives, so the rotated boot screen stays up for exactly as
+      # long as it takes the first core picture to be ready, and not a second
+      # of it is spent waiting on a panel nobody is looking at any more.
       echo "CMDSORG" >${TTYDEV} # Show Start Screen rotated
-      sleep 4
+      cmdwait
     #else
     #  dbug "Sending: CMDROT,0" > ${TTYDEV}
     #  echo "CMDROT,0" > ${TTYDEV}						# No Rotation
@@ -155,6 +185,17 @@ senddata() {
     # before CMDCOR triggers the first paint of the split layout.
     if sendmeta "${newcore}" force; then
       sendicon "${META_ICON}"
+    fi
+
+    # The menu's picture is the boot screen, which lives on the display - so
+    # there is nothing to send but the request. At power-on the boot screen is
+    # already on the panel and the firmware leaves it there; later, returning
+    # to the menu transitions to it like any other core picture.
+    if [ "${BOOTSCREEN_AS_MENU:-yes}" = "yes" ] && [ "${newcore}" = "MENU" ]; then
+      dbug "Sending: CMDBOOTPIC,${newcore},${TRANSITION}"
+      echo "CMDBOOTPIC,${newcore},${TRANSITION}" >${TTYDEV}
+      cmdwait
+      return 0
     fi
 
     if [ -e "${picturefolder_pri}/${newcore}.gsc" ]; then # Check for _pri pictures
@@ -273,7 +314,13 @@ sendmeta() {
     payload="${payload}|$(metasanitize "${label}")=$(metasanitize "${value}")"
   done
 
-  wire="CMDMETA,${kindnum},${METADATA_INTERVAL},${payload}"
+  # The two counts go between the interval and the title: how many fields are
+  # pinned, and how many of them the arcade card pairs two to a row (0 for a
+  # console, which has one field per row by construction). metasanitize strips
+  # commas from the title and every value, so each extra comma is unambiguous
+  # and a firmware that predates either count simply reads the title from
+  # where that count starts.
+  wire="CMDMETA,${kindnum},${METADATA_INTERVAL},${META_PINNED_COUNT:-0},${META_COMPACT_COUNT:-0},${payload}"
 
   # The daemon now also wakes on game-state changes, and MiSTer rewrites those
   # files while the user is merely browsing. Resending an identical line would
@@ -328,11 +375,310 @@ sendicon() {
   return 0
 }
 
+# Tell the firmware how to dim and how often to swap sides. Both are firmware
+# behaviour running off its own clock, so they are sent once at startup rather
+# than driven from here.
+senddim() {
+  [ "${USBMODE}" = "yes" ] || return 0
+  # DIM_PERCENT was a share of CONTRAST; DIM_CONTRAST is a level of its own.
+  # The system ini no longer sets the old name, so if it is set at all it came
+  # from the user's own ini - and would otherwise be ignored without a word.
+  if [ -n "${DIM_PERCENT:-}" ]; then
+    echo "tty2oled: DIM_PERCENT is gone - set DIM_CONTRAST (0..255) in tty2oled-user.ini instead. Using ${DIM_CONTRAST:-80}."
+  fi
+  dbug "Sending: CMDDIM,${DIM_AFTER:-120},${DIM_CONTRAST:-80},${DIM_WAKE:--1},${DIM_FADE_MS:-6000}"
+  echo "CMDDIM,${DIM_AFTER:-120},${DIM_CONTRAST:-80},${DIM_WAKE:--1},${DIM_FADE_MS:-6000}" >${TTYDEV}
+  cmdwait
+}
+
+sendflip() {
+  [ "${USBMODE}" = "yes" ] || return 0
+  local secs=$(( ${FLIP_MINUTES:-5} * 60 ))
+  dbug "Sending: CMDFLIP,${secs}"
+  echo "CMDFLIP,${secs}" >${TTYDEV}
+  cmdwait
+}
+
+# The scripts and the firmware carry the same version and are meant to be
+# flashed together, so the first useful thing the log can say is whether they
+# actually are. The firmware answers CMDHWINF with "HW<board>;<version>;" and
+# acknowledges every other command with "ttyack;", so read ';'-delimited
+# tokens - upstream's own idiom - until the board id turns up.
+checkversion() {
+  [ "${USBMODE}" = "yes" ] || return 0
+  local tok="" fwver="" tries=0
+  exec 3<"${TTYDEV}" || { dbug "Cannot open ${TTYDEV} for reading"; return 0; }
+  echo "CMDHWINF" >${TTYDEV}
+  while [ "${tries}" -lt 8 ]; do
+    tries=$((tries + 1))
+    read -t 2 -d ';' tok <&3 || break
+    tok="${tok//[[:space:]]/}"
+    case "${tok}" in
+      HW*)
+        read -t 2 -d ';' fwver <&3 || true
+        fwver="${fwver//[[:space:]]/}"
+        break
+        ;;
+    esac
+  done
+  exec 3<&-
+
+  if [ -z "${fwver}" ]; then
+    echo "tty2oled+ ${TTY2OLED_VERSION:-unknown} (the display did not answer CMDHWINF)"
+    dbug "No CMDHWINF reply after ${tries} tokens"
+    return 0
+  fi
+
+  if [ "${fwver}" = "${TTY2OLED_VERSION:-}" ]; then
+    echo "tty2oled+ ${TTY2OLED_VERSION}, firmware ${fwver}"
+  else
+    echo "tty2oled+ ${TTY2OLED_VERSION:-unknown}, firmware ${fwver} - VERSIONS DIFFER"
+    echo "tty2oled: the two ship together. Reflash with:  ./tools/deploy-mister.sh --firmware --flash"
+  fi
+  dbug "Script version ${TTY2OLED_VERSION:-unknown}, firmware version ${fwver}"
+}
+
+# The rest of the startup handshake, run once the first core picture is on the
+# panel rather than in front of it. None of it changes what that picture looks
+# like: the version check is a log line, and the time, screensaver, dimming and
+# side-swap settings are all firmware behaviour on the firmware's own clock,
+# minutes away from mattering. Together they cost a second of sleeps, and
+# checkversion alone blocks for up to two more when the display is still
+# booting and cannot answer CMDHWINF yet.
+DEFERRED_DONE="no"
+deferred_setup() {
+  [ "${DEFERRED_DONE}" = "yes" ] && return 0
+  DEFERRED_DONE="yes"
+
+  checkversion												# Scripts and firmware in step?
+  sendtime													# Set time and date
+  sendscreensaver											# Set Screensaver
+  senddim													# Set idle dimming
+  sendflip													# Set console side swapping
+
+  # Metadata needs MiSTer to publish its state files. That is off by default,
+  # so say so once rather than silently showing core-level info forever.
+  if [ "${SHOW_METADATA}" = "yes" ] && [ "${METADATA_WARN}" = "yes" ]; then
+    check_mister_ini
+    if [ "${MISTER_LOGFILEENTRY}" = "no" ]; then
+      echo "tty2oled: game metadata is enabled but 'log_file_entry=1' is missing from ${MISTER_INI}."
+      echo "tty2oled: without it MiSTer does not publish the loaded game, so only core names will show."
+      dbug "log_file_entry not enabled - metadata limited to core level"
+    fi
+  fi
+  return 0
+}
+
 sendtime() {
   timeoffset=$(date +%:::z)
   localtime=$(date '-d now '${timeoffset}' hour' +%s)
   echo "CMDSETTIME,${localtime}" >${TTYDEV}
-  sleep ${WAITSECS}
+  cmdwait
+}
+
+# Bring the serial port up: line settings, the buffer-clearing first
+# transmission, and the two settings the first picture depends on. Factored out
+# of the main block because a display that is unplugged and put back needs
+# exactly this again - see serialready.
+serialinit() {
+  dbug "${TTYDEV} detected, setting Parameter: ${BAUDRATE} ${TTYPARAM}."
+  stty -F ${TTYDEV} ${BAUDRATE} ${TTYPARAM}     # set tty parameter
+  cmdwait
+  echo "QWERTZ" >${TTYDEV}                      # First Transmission to clear serial send buffer
+  dbug "Send QWERTZ as first transmission"
+  cmdwait
+
+  # Only what the first picture actually depends on runs before it. Contrast,
+  # because the artwork would otherwise be drawn at the boot screen's level and
+  # pop a moment later, and rotation, because it would arrive the wrong way up.
+  # Everything else waits (see deferred_setup): none of it changes what that
+  # picture looks like, and every second spent on it is a second of boot screen.
+  sendfade													# How brightness changes move
+  sendtfade													# ...and the Fade transition
+  sendcontrast												# Set Contrast
+  sendrotation												# Set Display Rotation
+}
+
+# Is the display still there, and if it has just come back, start it again.
+#
+# The device node goes away when the ESP is unplugged, when the USB bus re-
+# enumerates it, and when a flash resets the board. Every "echo >${TTYDEV}"
+# after that fails, silently, one per command: the loop carries on, the panel
+# keeps whatever was last drawn on it, and nothing recovers until somebody
+# restarts the daemon. The check used to run once, in front of the loop, so a
+# display that was fine at boot was assumed to be fine forever.
+#
+# Returns 1 when the caller should skip this pass - either the port is absent,
+# in which case this call is also the loop's only brake, or it has just been
+# re-opened and what the panel shows is no longer what we think we sent.
+TTYGONE="no"
+serialready() {
+  if ! [ -c "${TTYDEV}" ]; then
+    [ "${TTYGONE}" = "no" ] && dbug "${TTYDEV} has gone away, waiting for the display"
+    TTYGONE="yes"
+    sleep "${TTYWAIT:-2}"
+    return 1
+  fi
+
+  [ "${TTYGONE}" = "no" ] && return 0
+
+  # Back. A re-enumerated board has rebooted into its boot screen with the
+  # firmware's own defaults, and the line settings went with the old device
+  # node, so this is the startup handshake over again rather than a resume.
+  TTYGONE="no"
+  dbug "${TTYDEV} is back, re-initialising the display"
+  serialinit
+  # Nothing on the panel came from us any more. Clearing all three is what
+  # makes the next pass a full redraw: oldcore forces the core picture and its
+  # icon, META_WIRE_LAST defeats the identical-line check in sendmeta, and
+  # DEFERRED_DONE re-sends the time, screensaver, dimming and side swap, all of
+  # which lived in the RAM the reset cleared. The update_all screen and its
+  # busy bar went with it too, so they are shown again if it is still running.
+  oldcore=""
+  META_WIRE_LAST=""
+  DEFERRED_DONE="no"
+  UPDATEALL_SHOWN="no"
+  UPDATEALL_BUSY="no"
+  return 1
+}
+
+# Wait for MiSTer to publish /tmp/CORENAME.
+#
+# Every branch of the main loop ends in something that blocks - an inotifywait,
+# or the sleep above - because a loop that does not block is a loop that eats a
+# core. The branch for a missing CORENAME used to end in nothing at all, and
+# the file really can be missing: S60tty2oled waits for the serial device but
+# not for MiSTer's Main, so the daemon can reach the loop first. The spin then
+# lasted until Main wrote the file, and with debug="true" it wrote the same
+# line into /tmp for the whole of it.
+#
+# Watching the directory rather than the file is the point - inotifywait on a
+# path that does not exist returns immediately, which is the spin again.
+waitforcorename() {
+  local dir="" rc=0
+  [ -r "${corenamefile}" ] && return 0
+
+  dbug "File ${corenamefile} not found, waiting for it"
+  dir="$(dirname "${corenamefile}")"
+  if [ "${debug}" = "false" ]; then
+    inotifywait -qq -t "${CORENAME_WAIT:-5}" -e create,moved_to,modify "${dir}" 2>/dev/null
+  else
+    inotifywait -t "${CORENAME_WAIT:-5}" -e create,moved_to,modify "${dir}"
+  fi
+  rc=$?
+
+  # 0 is an event and 2 is the timeout; both have already waited. Anything else
+  # is inotifywait failing and returning at once - an unwatchable directory, or
+  # no inotify-tools at all - and that is the spin a third time.
+  [ "${rc}" -eq 0 ] || [ "${rc}" -eq 2 ] || sleep "${CORENAME_WAIT:-5}"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# update_all screen
+# ---------------------------------------------------------------------------
+
+# Is update_all running? It leaves no state file behind and does not touch
+# CORENAME - it can be started from the Scripts menu or from inside a frontend
+# core such as MiSTerZine - so the only reliable sign is the process itself.
+# One grep over every command line: update_all.sh, and the update_all.pyz it
+# hands over to, both carry the name. The bracket keeps grep's own command
+# line, which holds the pattern, from matching it.
+updateall_running() {
+  [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] || return 1
+  grep -qsa -e '[u]pdate_all' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null
+}
+
+# Is update_all's downloader running - the update itself, as opposed to the
+# settings screen in front of it? update_all copies the downloader to /tmp and
+# runs it from there, under one of three names depending on which build it
+# found: ua_downloader_bin, ua_downloader_latest.zip or ua_downloader_dd.pyz
+# (Update_All_MiSTer, downloader_service.py). The settings screen also runs it
+# for a moment with --list-dbs to see what is installed, which is a query and
+# not an update, so that one does not count.
+downloader_running() {
+  local f=""
+  for f in $(grep -lsa -e '[u]a_downloader' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
+    grep -qsa -e '--list-dbs' "${f}" || return 0
+  done
+  return 1
+}
+
+# The busy bar in the band under the update_all picture: the boot screen's
+# sweep, run by the firmware until told to stop.
+sendbusy() {
+  [ "${USBMODE}" = "yes" ] || return 0
+  dbug "Sending: CMDBUSY,${1}"
+  echo "CMDBUSY,${1}" >${TTYDEV}
+  cmdwait
+}
+
+# Show the update_all picture in place of whatever core is loaded, cropped to
+# the top 54 rows like a boot image so the band below is free for the busy
+# bar. Exact names only - the core lookup's prefix trimming would happily settle on some
+# unrelated arcade set starting with "upd". With no picture it falls back to
+# the name as text, which is what the firmware does with any line it does not
+# recognise - the same thing a missing core banner gets.
+sendupdateall() {
+  local name="update_all" pic="" f=""
+  if [ "${USBMODE}" = "yes" ]; then
+    # Out of the split layout / card first, or the card alternation would
+    # keep drawing the previous game over the picture.
+    if [ "${SHOW_METADATA}" = "yes" ]; then
+      dbug "Sending: CMDMETAOFF (update_all)"
+      echo "CMDMETAOFF" >${TTYDEV}
+      sleep ${WAITSECS}
+      META_WIRE_LAST="OFF"
+    fi
+    for f in "${picturefolder_pri}/${name}.gsc" "${picturefolder_pri}/${name}.xbm" \
+             "${picturefolder}/GSC/${name}.gsc" "${picturefolder}/XBM/${name}.xbm"; do
+      [ -e "${f}" ] && { pic="${f}"; break; }
+    done
+    if [ -n "${pic}" ]; then
+      dbug "Sending: CMDCOR,${name},${TRANSITION} (${pic})"
+      echo "CMDCOR,${name},${TRANSITION}" >${TTYDEV}
+      sleep ${WAITSECS}
+      # The first 6912 bytes are the top 54 rows; the band's 1280 are sent
+      # black. As one stream, so the firmware reads exactly 8192 bytes.
+      { tail -n +4 "${pic}" | xxd -r -p | head -c 6912; head -c 1280 /dev/zero; } >${TTYDEV}
+      return 0
+    fi
+  fi
+  dbug "Sending: ${name} (as text)"
+  echo "${name}" >${TTYDEV}
+}
+
+# One pass of the main loop while update_all runs: show its screen once, then
+# wait. Returns 1 when it is not running; the first such pass after it was
+# clears oldcore and the metadata line, so the core and game go out again in
+# full rather than being judged unchanged.
+updateall_pass() {
+  if updateall_running; then
+    if [ "${UPDATEALL_SHOWN:-no}" != "yes" ]; then
+      dbug "update_all is running"
+      sendupdateall
+      UPDATEALL_SHOWN="yes"
+      UPDATEALL_BUSY="no"
+    fi
+    # The bar follows the downloader, which update_all may run several times
+    # over - its own update, then the main run.
+    if downloader_running; then
+      [ "${UPDATEALL_BUSY:-no}" = "yes" ] || { sendbusy 1; UPDATEALL_BUSY="yes"; }
+    elif [ "${UPDATEALL_BUSY:-no}" = "yes" ]; then
+      sendbusy 0; UPDATEALL_BUSY="no"
+    fi
+    sleep "${UPDATE_ALL_POLL:-2}"
+    return 0
+  fi
+  if [ "${UPDATEALL_SHOWN:-no}" = "yes" ]; then
+    dbug "update_all finished, back to the core"
+    [ "${UPDATEALL_BUSY:-no}" = "yes" ] && sendbusy 0
+    UPDATEALL_SHOWN="no"
+    UPDATEALL_BUSY="no"
+    oldcore=""
+    META_WIRE_LAST=""
+  fi
+  return 1
 }
 
 # ** Main **
@@ -359,28 +705,12 @@ fi                                                        # end if command line 
 
 # Let's go
 if [ -c "${TTYDEV}" ]; then # check for tty device
-  dbug "${TTYDEV} detected, setting Parameter: ${BAUDRATE} ${TTYPARAM}."
-  stty -F ${TTYDEV} ${BAUDRATE} ${TTYPARAM} # set tty parameter
-  sleep ${WAITSECS}
-  echo "QWERTZ" >${TTYDEV} # First Transmission to clear serial send buffer
-  dbug "Send QWERTZ as first transmission"
-  sleep ${WAITSECS}
-  sendcontrast												# Set Contrast
-  sendrotation												# Set Display Rotation
-  sendtime													# Set time and date
-  sendscreensaver											# Set Screensaver
-
-  # Metadata needs MiSTer to publish its state files. That is off by default,
-  # so say so once rather than silently showing core-level info forever.
-  if [ "${SHOW_METADATA}" = "yes" ] && [ "${METADATA_WARN}" = "yes" ]; then
-    check_mister_ini
-    if [ "${MISTER_LOGFILEENTRY}" = "no" ]; then
-      echo "tty2oled: game metadata is enabled but 'log_file_entry=1' is missing from ${MISTER_INI}."
-      echo "tty2oled: without it MiSTer does not publish the loaded game, so only core names will show."
-      dbug "log_file_entry not enabled - metadata limited to core level"
-    fi
-  fi
+  serialinit													# Line settings, contrast, rotation
   while true; do											# main loop
+    # The display can be unplugged, re-enumerated or reset under a running
+    # daemon. Skipping the pass is how the loop waits for it to come back, and
+    # how the pass after it becomes a full redraw.
+    serialready || continue
     if [ -r ${corenamefile} ]; then							# proceed if file exists and is readable (-r)
       if [ -f ${SLEEPFILE} ]; then							# Sleepmode = Yes
         dbug "The tty2oled daemon is sleeping!"
@@ -392,6 +722,8 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
         sleep ${SLEEPMODEDELAY}
       fi
       if [ ! -f ${SLEEPFILE} ]; then				  # Sleepmode = No
+        # update_all takes the screen over whatever core is loaded.
+        updateall_pass && { deferred_setup; continue; }
         newcore=$(<${corenamefile})				  # get CORENAME
         if [ "${SHOW_METADATA}" = "yes" ] && [ "${USBMODE}" = "yes" ]; then
           # Metadata mode. Loading a ROM does not modify /tmp/CORENAME, so
@@ -409,6 +741,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
             refreshmeta "${newcore}"
           fi
           [ "${1}" = "tty2x" ] && exit 9
+          deferred_setup						  # the half of startup the picture did not need
           metawatch="$(metawatchlist)"
           # The timeout is what picks up a state file that did not exist when
           # the watch list was built - GAMEID only appears once a game with a
@@ -427,18 +760,31 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
             senddata "${newcore}" 				   # The "Magic"
             oldcore=$newcore
             [ "${1}" = "tty2x" ] && exit 9
-            if [ "${debug}" = "false" ]; then
-              inotifywait -qq -e modify "${corenamefile}"            # wait here for next change of corename, -qq for quietness
-            elif [ "${debug}" = "true" ]; then
-              inotifywait -e modify "${corenamefile}"                # but not -qq when debugging
-            fi
+            deferred_setup					   # the half of startup the picture did not need
+            # With the update_all screen on, the wait times out now and then
+            # to look for it; a timeout only redraws if update_all started.
+            # Anything but a timeout (an event, or inotifywait failing) ends
+            # the wait as it always did.
+            upwait=""
+            [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] && upwait="-t ${UPDATE_ALL_POLL:-2}"
+            while true; do
+              if [ "${debug}" = "false" ]; then
+                inotifywait -qq ${upwait} -e modify "${corenamefile}"  # wait here for next change of corename, -qq for quietness
+              else
+                inotifywait ${upwait} -e modify "${corenamefile}"      # but not -qq when debugging
+              fi
+              [ "$?" -eq 2 ] || break
+              updateall_running && break
+            done
 	  #else
           #  dbug "Core not changed!"
           #fi #newcore != oldcore
         fi
       fi
     else # CORENAME file not found
-      dbug "File ${corenamefile} not found!"
+      # Blocks until MiSTer writes it. Returning here without waiting is a
+      # spin, which is what this used to do.
+      waitforcorename
     fi # end if /tmp/CORENAME check
   done # end while
 else   # no tty detected

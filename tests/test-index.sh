@@ -239,10 +239,37 @@ PILEOF
   ok "icon wire bytes" \
      "$(tail -n +4 "${TMP}/icon.gsc" | xxd -r -p | wc -c)" "2752"
 
+  # 54 rows, not 64: the bottom ten belong to the firmware's power-on sweep
+  # and version line. See bootscreen.h.
   "${REPO}/tools/png2gsc.py" --boot --out "${TMP}/boot.gsc" "${TMP}/src.png" >/dev/null
-  ok "boot header width" "$(sed -n '1p' "${TMP}/boot.gsc")" "#define icon_width 256"
+  ok "boot header width"  "$(sed -n '1p' "${TMP}/boot.gsc")" "#define icon_width 256"
+  ok "boot header height" "$(sed -n '2p' "${TMP}/boot.gsc")" "#define icon_height 54"
   ok "boot wire bytes" \
-     "$(tail -n +4 "${TMP}/boot.gsc" | xxd -r -p | wc -c)" "8192"
+     "$(tail -n +4 "${TMP}/boot.gsc" | xxd -r -p | wc -c)" "6912"
+
+  # A core banner is the third size. It goes through the same
+  # `tail -n +4 | xxd -r -p` the daemon uses for the artwork pack, so it has to
+  # land on the same 8192 bytes an upstream .gsc does - the two files look
+  # nothing alike, but xxd reduces both to the same framebuffer.
+  "${REPO}/tools/png2gsc.py" --banner --out "${TMP}/banner.gsc" "${TMP}/src.png" >/dev/null
+  ok "banner header width"  "$(sed -n '1p' "${TMP}/banner.gsc")" "#define icon_width 256"
+  ok "banner header height" "$(sed -n '2p' "${TMP}/banner.gsc")" "#define icon_height 64"
+  ok "banner wire bytes" \
+     "$(tail -n +4 "${TMP}/banner.gsc" | xxd -r -p | wc -c)" "8192"
+  # The daemon hardcodes `tail -n +4`, so the header must be exactly 3 lines
+  # and line 4 must already be data. Upstream's files are shaped the same way.
+  ok "banner line 3 closes the header" \
+     "$(sed -n '3p' "${TMP}/banner.gsc")" "static unsigned char icon_bits[] = {"
+  ok "banner line 4 is already data" \
+     "$(sed -n '4p' "${TMP}/banner.gsc" | tr -d '0-9a-f\n' | wc -c)" "0"
+  if [ -f "${REPO}/pics/GSC/NES.gsc" ]; then
+    ok "upstream artwork reduces to the same size" \
+       "$(tail -n +4 "${REPO}/pics/GSC/NES.gsc" | xxd -r -p | wc -c)" "8192"
+  fi
+  ok "--boot and --banner are not the same size" \
+     "$( [ "$(tail -n +4 "${TMP}/boot.gsc" | xxd -r -p | wc -c)" \
+          -ne "$(tail -n +4 "${TMP}/banner.gsc" | xxd -r -p | wc -c)" ] \
+        && echo differ || echo same )" "differ"
 
   # Only 0-f may appear; a stray character would desynchronise xxd.
   ok "hex nibbles only" \
@@ -254,6 +281,43 @@ PILEOF
 else
   printf '  \033[33mskip\033[0m png2gsc: Pillow not installed\n'
 fi
+
+# ---------------------------------------------------------------------------
+section "boot image size agrees across the three files that name it"
+# ---------------------------------------------------------------------------
+# The generator, the installer and the firmware each hold the number as a
+# literal and none of them can read the others. They are only ever right
+# together: a mismatch means either a file the installer refuses or a transfer
+# the firmware waits forever to finish.
+PY_W="$(sed -n 's/^BOOT_W, BOOT_H = \([0-9]*\), \([0-9]*\)$/\1/p' "${REPO}/tools/png2gsc.py")"
+PY_H="$(sed -n 's/^BOOT_W, BOOT_H = \([0-9]*\), \([0-9]*\)$/\2/p' "${REPO}/tools/png2gsc.py")"
+SH_B="$(sed -n 's/^BOOT_BYTES=\([0-9]*\).*/\1/p'  "${REPO}/tools/tty2oled-bootimg.sh")"
+FW_H="$(sed -n 's/^#define BOOT_BAND_H  *\([0-9]*\).*/\1/p' "${REPO}/MiSTer_SSD1322_USB/bootscreen.h")"
+
+ok "png2gsc boot size"          "${PY_W}x${PY_H}" "256x54"
+ok "installer expects 4bpp of that" "${SH_B}" "$(( PY_W * PY_H / 2 ))"
+ok "firmware band leaves that"  "${FW_H}" "$(( 64 - PY_H ))"
+
+# ---------------------------------------------------------------------------
+section "transition effects read srcBin, not logoBin"
+# ---------------------------------------------------------------------------
+# meta_showCard composes the metadata card into metaBin and points srcBin at
+# it for the length of one transition. An effect that reaches for logoBin
+# instead therefore paints the core artwork over the card - which is what
+# effect 9 did: it drew particles from srcBin and then "finally overwrite the
+# Screen with full Size Picture" from logoBin. One transition in 23 is picked
+# at random, so an arcade core showed its artwork again instead of the info
+# card every so often, seemingly at random.
+INO="${REPO}/MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino"
+DRAWLOGO="$(awk '/^void oled_drawlogo\(uint8_t e\) \{/{f=1} f{print} f&&/^\}  \/\/ end sd2oled_drawlogo/{exit}' "${INO}")"
+
+ok "oled_drawlogo body was found" \
+   "$(printf '%s\n' "${DRAWLOGO}" | grep -c 'end switch (e)')" "1"
+ok "no effect reads logoBin directly" \
+   "$(printf '%s\n' "${DRAWLOGO}" | grep -c 'logoBin')" "0"
+ok "the effects do read srcBin" \
+   "$( [ "$(printf '%s\n' "${DRAWLOGO}" | grep -c 'srcBin')" -gt 0 ] \
+       && echo yes || echo no )" "yes"
 
 # ---------------------------------------------------------------------------
 section "_index_file - core name to index file"
@@ -407,7 +471,7 @@ ok "stale CRC is not used for the title" "${META_TITLE}" "10-Yard Fight"
 ok "stale CRC year is not shown"    "$(printf '%s
 ' "${META_FIELDS[@]}" | grep -c '^Year')" "1"
 ok "and the year is this game's"    "$(printf '%s
-' "${META_FIELDS[@]}" | grep '^Year' | cut -f2)" "1985"
+' "${META_FIELDS[@]}" | grep '^Year' | cut -f2)" "1985, Nintendo"
 
 # Once MiSTer writes the real CRC, GAMEID is no longer older than the
 # selection and the CRC path takes over again.
@@ -417,7 +481,7 @@ printf 'CRC32: 44AA3EEB
 METADATA_FIELDS="System Year Company" build_meta "NES"
 ok "fresh CRC is used"        "${META_SOURCE}" "index"
 ok "fresh CRC gives the year"    "$(printf '%s
-' "${META_FIELDS[@]}" | grep '^Year' | cut -f2)" "1985"
+' "${META_FIELDS[@]}" | grep '^Year' | cut -f2)" "1985, Nintendo"
 
 # A CRC that hits nothing must not leave the previous lookup's fields behind.
 sleep 0.01
@@ -431,7 +495,7 @@ printf 'CRC32: DEADBEEF
 METADATA_FIELDS="System Year Company" build_meta "NES"
 ok "unknown CRC falls back to the name" "${META_TITLE}" "The Legend of Zelda"
 ok "and gets that game's year"    "$(printf '%s
-' "${META_FIELDS[@]}" | grep '^Year' | cut -f2)" "1987"
+' "${META_FIELDS[@]}" | grep '^Year' | cut -f2)" "1987, Nintendo"
 ok "not the previous game's"    "$(printf '%s
 ' "${META_FIELDS[@]}" | grep -c '1985')" "0"
 
@@ -454,18 +518,23 @@ printf 'CRC32: 44AA3EEB\n' > "${TMP}/GAMEID"
 sleep 0.01
 touch "${TMP}/GAMEID"
 METADATA_FIELDS="" build_meta "NES"
-ok "default order, all seven present" \
+ok "pinned lead, then the default order" \
    "$(printf '%s\n' "${META_FIELDS[@]}" | cut -f1 | paste -sd, -)" \
-   "System,Region,Year,Company,Genre,Developer,Format"
+   "System,Year,Region,Genre,Developer,Format"
+ok "two fields pinned" "${META_PINNED_COUNT}" "2"
+ok "Company folded into Year, not emitted twice" \
+   "$(printf '%s\n' "${META_FIELDS[@]}" | grep -c '^Company')" "0"
 ok "index title won over the filename" "${META_TITLE}"  "10-Yard Fight"
 ok "source is the index"               "${META_SOURCE}" "index"
 
-METADATA_FIELDS="Year Company System" build_meta "NES"
-ok "ini order is honoured" \
+# Pinned names lead regardless of where METADATA_FIELDS puts them; the rest
+# keep the ini's order.
+METADATA_FIELDS="Genre Region Format System Year" build_meta "NES"
+ok "pinned lead, unpinned keep the ini order" \
    "$(printf '%s\n' "${META_FIELDS[@]}" | cut -f1 | paste -sd, -)" \
-   "Year,Company,System"
+   "System,Year,Genre,Region,Format"
 ok "unlisted fields dropped" \
-   "$(printf '%s\n' "${META_FIELDS[@]}" | grep -c Genre)" "0"
+   "$(printf '%s\n' "${META_FIELDS[@]}" | grep -c '^Developer')" "0"
 
 METADATA_FIELDS="Year Nonsense Genre" build_meta "NES"
 ok "unknown field name ignored" \
@@ -484,7 +553,7 @@ EOF
 printf '%s\n' "${TMP}/dk.mra" > "${TMP}/STARTPATH"
 METADATA_FIELDS="Year Company System" build_meta "dkong"
 ok "arcade is not filtered by METADATA_FIELDS" \
-   "$(printf '%s\n' "${META_FIELDS[@]}" | cut -f1 | grep -c Manufacturer)" "1"
+   "$(printf '%s\n' "${META_FIELDS[@]}" | cut -f1 | grep -c Manufctr)" "1"
 
 
 # Every stub must be a real .gsc the firmware will accept, not a placeholder
@@ -500,16 +569,22 @@ for f in "${REPO}"/pics_pri/ICON/*.gsc; do
 done
 ok "there are stubs"            "$([ "${count}" -gt 0 ] && echo yes || echo no)" "yes"
 ok "all are 2752 wire bytes"    "${bad}" "0"
-# Per file: tail -n +4 on a concatenation would skip only the first file's
-# header and count the other 46 headers as pixel data.
-nonblack=0
+# Only hex nibbles in the pixel data - a stray character desynchronises xxd
+# and the firmware drops the transfer as truncated. Checked per file: a
+# tail -n +4 over a concatenation would skip only the first header and count
+# the other 46 as pixel data.
+#
+# Deliberately NOT asserting the stubs are black. They start black, but the
+# whole point is that they get drawn over, and a test that fails the moment
+# someone draws an icon is testing the calendar, not the code.
+badhex=0
 for f in "${REPO}"/pics_pri/ICON/*.gsc; do
   [ -e "${f}" ] || continue
-  if tail -n +4 "${f}" | tr -d '\n0' | grep -q .; then
-    nonblack=$((nonblack + 1))
+  if tail -n +4 "${f}" | tr -d '\n' | tr -d '0-9a-f' | grep -q .; then
+    badhex=$((badhex + 1))
   fi
 done
-ok "all pixels black"           "${nonblack}" "0"
+ok "pixel data is hex only"     "${badhex}" "0"
 ok "header says 86 wide"        "$(head -1 "${REPO}/pics_pri/ICON/GBA.gsc")" "#define icon_width 86"
 
 # The names must be the ones CORENAME reports, or findicon looks for a file

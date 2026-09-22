@@ -110,12 +110,31 @@ printf '%s\n' "${FIX}/mra/dkong.mra" > "${TMP}/STARTPATH"
 sendmeta "dkong"
 out="$(captured)"
 ok "single command line" "$(sync_capture; wc -l < "${CAPTURE}")" "1"
-contains "kind 1, interval 12" "${out}" "CMDMETA,1,12,"
+# kind, interval, then the two counts: how many fields are pinned and how
+# many the card pairs two to a row.
+contains "kind 1, interval 12" "${out}" "CMDMETA,1,12,2,6,"
 contains "title"               "${out}" "Donkey Kong (US set 1)"
 contains "year field"          "${out}" "|Year=1981"
-contains "manufacturer field"  "${out}" "|Manufacturer=Nintendo of America"
-contains "category field"      "${out}" "|Category=Platform"
+contains "abbreviated label"   "${out}" "|Manufctr=Nintendo of America"
 contains "setname field"       "${out}" "|Set=dkong"
+
+# A full MRA puts eleven fields on one line - more than the card has rows,
+# which is the point: the firmware pages through them. It still has to be a
+# single command, and still comma-free after the header.
+reset_capture
+printf '%s\n' "${FIX}/mra/tmnt.mra" > "${TMP}/STARTPATH"
+sendmeta "tmnt"
+out="$(captured)"
+ok "still one command line" "$(sync_capture; wc -l < "${CAPTURE}")" "1"
+ok "eleven fields" "$(printf '%s' "${out}" | tr -cd '|' | wc -c)" "11"
+contains "eight paired, two pinned" "${out}" "CMDMETA,1,12,2,8,"
+contains "players"  "${out}" "|Players=4"
+contains "controls" "${out}" "|Controls=8-way"
+contains "buttons"  "${out}" "|Buttons=Attack/Jump"
+# Everything past the header is comma-free, which is what makes the two
+# counts in it unambiguous.
+ok "no comma past the header" \
+   "$(printf '%s' "${out}" | cut -d, -f6- | tr -cd ',' | wc -c)" "0"
 
 # ---------------------------------------------------------------------------
 section "console: CMDMETA plus icon transfer"
@@ -202,7 +221,7 @@ EOF
 printf '%s\n' "${TMP}/evil.mra" > "${TMP}/STARTPATH"
 sendmeta "evil"
 ok "still one line"        "$(sync_capture; wc -l < "${CAPTURE}")" "1"
-contains "separators neutralised" "$(captured)" "CMDMETA,1,12,Evil Game Name Here|"
+contains "separators neutralised" "$(captured)" ",Evil Game Name Here|"
 
 # ---------------------------------------------------------------------------
 section "master switch"
@@ -354,6 +373,120 @@ else
 fi
 contains "CMDMETAOFF sent" "$(captured)" "CMDMETAOFF"
 ok "no metadata card" "$(captured | grep -c 'CMDMETA,' || true)" "0"
+
+# ---------------------------------------------------------------------------
+section "brightness: the fade time goes ahead of the first contrast"
+# ---------------------------------------------------------------------------
+# The firmware fades every contrast change over CONTRAST_FADE_MS. That has to
+# arrive before the first CMDCON, or the daemon's very first change fades at
+# the firmware's built-in speed instead of the user's.
+reset_capture
+CONTRAST="255"; CONTRAST_FADE_MS="1200"; TRANSITION_FADE_MS="1500"; TRANSITION_BLANK_MS="700"
+stty() { :; }                        # a FIFO has no line settings to set
+ROTATE="no"; BAUDRATE="115200"; TTYPARAM="raw"
+serialinit
+ok "startup sends both fade settings, then the contrast" \
+   "$(captured | tr -d '\r' | grep -E '^CMD(FADE|TFADE|CON)' | tr '\n' ' ')" "CMDFADE,1200 CMDTFADE,1500,700 CMDCON,255 "
+unset -f stty
+
+reset_capture
+unset CONTRAST_FADE_MS
+sendfade
+ok "an ini without CONTRAST_FADE_MS still gets a fade time" "$(captured | tr -d '\r\n')" "CMDFADE,800"
+
+# ---------------------------------------------------------------------------
+section "dimming: DIM_CONTRAST is a level, DIM_PERCENT is gone"
+# ---------------------------------------------------------------------------
+reset_capture
+DIM_AFTER="90"; DIM_CONTRAST="80"; DIM_WAKE="-1"; DIM_FADE_MS="7000"; unset DIM_PERCENT
+OUT="$(senddim)"
+ok "CMDDIM carries the dim level and its own fade time" "$(captured | tr -d '\r\n')" "CMDDIM,90,80,-1,7000"
+ok "and nothing is said about the old setting" "${OUT}" ""
+
+reset_capture
+DIM_PERCENT="50"
+OUT="$(senddim)"
+ok "a leftover DIM_PERCENT is not sent" "$(captured | tr -d '\r\n')" "CMDDIM,90,80,-1,7000"
+contains "and the log says what replaced it" "${OUT}" "set DIM_CONTRAST (0..255)"
+unset DIM_PERCENT
+reset_capture
+unset DIM_FADE_MS
+senddim >/dev/null
+ok "an ini without DIM_FADE_MS still sends the 6s default" "$(captured | tr -d '\r\n')" "CMDDIM,90,80,-1,6000"
+
+# The shipped defaults: full brightness, dimming to 80 of 255.
+ok "CONTRAST defaults to full" "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${CONTRAST}")" "255"
+ok "DIM_CONTRAST defaults to 80" "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${DIM_CONTRAST}")" "80"
+ok "the system ini no longer sets DIM_PERCENT" "$(grep -c '^DIM_PERCENT=' "${ROOT}/tty2oled-system.ini")" "0"
+ok "going dim defaults to 6s" "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${DIM_FADE_MS}")" "6000"
+ok "TRANSITION ships as the Fade" "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${TRANSITION}")" "-2"
+ok "every other fade defaults to 0.8s" \
+   "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${CONTRAST_FADE_MS} ${TRANSITION_FADE_MS}")" "800 800"
+
+# ---------------------------------------------------------------------------
+section "transitions: -2 reaches the firmware, and the ini lists every effect"
+# ---------------------------------------------------------------------------
+reset_capture
+TRANSITION="-2"; USBMODE="yes"
+picturefolder="${TMP}/pics"; picturefolder_pri="${TMP}/pics_pri"
+USE_GSC_PICTURE="yes"; USE_US_PICTURE="no"; USE_TEXT_PICTURE="no"; USE_RANDOM_ALT="no"
+newcore="NES"; META_ICON=""
+mkdir -p "${TMP}/pics/GSC"
+printf '#\n#\n#\n00\n' > "${TMP}/pics/GSC/NES.gsc"
+senddata "NES" >/dev/null 2>&1
+contains "CMDCOR carries -2 as it is" "$(captured | grep -a '^CMDCOR')" "CMDCOR,NES,-2"
+rm -f "${TMP}/pics/GSC/NES.gsc"
+TRANSITION="-1"
+
+reset_capture
+unset TRANSITION_FADE_MS TRANSITION_BLANK_MS
+sendtfade
+ok "an ini without the Fade settings still sends the defaults" "$(captured | tr -d '\r\n')" "CMDTFADE,800,1000"
+
+# The list in the ini is what people read instead of the sketch, so it has to
+# name every effect the sketch has - no more, no fewer.
+SKETCH="${ROOT}/MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino"
+MAXEFFECT="$(sed -n 's/^const uint8_t minEffect=1, maxEffect=\([0-9]*\);.*/\1/p' "${SKETCH}")"
+CASES="$(awk '/^void oled_drawlogo\(uint8_t e\) *\{/{on=1} on && /^    case [0-9]+:/{n=$2; sub(":","",n); print n} on && /^    default:/{exit}' "${SKETCH}" | sort -n | tr '\n' ' ')"
+LISTED="$(sed -n '/^# How one picture replaces the last/,/^TRANSITION=/p' "${ROOT}/tty2oled-system.ini" \
+          | grep -oE '(^#|[[:space:]]) +-?[0-9]+  [A-Za-z]' | grep -oE -- '-?[0-9]+' | sort -n | tr '\n' ' ')"
+ok "the sketch's effects are 1..maxEffect" "${CASES}" "$(seq 1 "${MAXEFFECT}" | tr '\n' ' ')"
+ok "and the ini lists exactly those, plus -2, -1 and 0" "${LISTED}" "-2 -1 0 ${CASES}"
+
+# ---------------------------------------------------------------------------
+section "BOOTSCREEN_AS_MENU: the menu asks for the boot screen, and sends no picture"
+# ---------------------------------------------------------------------------
+picturefolder="${TMP}/pics"; picturefolder_pri="${TMP}/pics_pri"
+USE_GSC_PICTURE="yes"; USE_US_PICTURE="no"; USE_TEXT_PICTURE="no"; USE_RANDOM_ALT="no"
+META_ICON=""; TRANSITION="-2"
+mkdir -p "${TMP}/pics/GSC"
+printf '#\n#\n#\n00\n' > "${TMP}/pics/GSC/MENU.gsc"
+printf '#\n#\n#\n00\n' > "${TMP}/pics/GSC/NES.gsc"
+
+reset_capture
+BOOTSCREEN_AS_MENU="yes"
+senddata "MENU" >/dev/null 2>&1
+ok "the menu gets CMDBOOTPIC" "$(captured | grep -a '^CMDBOOTPIC' | tr -d '\r')" "CMDBOOTPIC,MENU,-2"
+ok "and no CMDCOR" "$(captured | grep -ac '^CMDCOR')" "0"
+ok "and no picture bytes" "$(captured | grep -avc '^CMD')" "0"
+
+reset_capture
+senddata "NES" >/dev/null 2>&1
+contains "any other core still sends its picture" "$(captured | grep -a '^CMDCOR')" "CMDCOR,NES,-2"
+
+reset_capture
+BOOTSCREEN_AS_MENU="no"
+senddata "MENU" >/dev/null 2>&1
+contains "with the setting off, the menu sends MENU.gsc" "$(captured | grep -a '^CMDCOR')" "CMDCOR,MENU,-2"
+ok "and no CMDBOOTPIC" "$(captured | grep -ac '^CMDBOOTPIC')" "0"
+
+reset_capture
+unset BOOTSCREEN_AS_MENU
+senddata "MENU" >/dev/null 2>&1
+ok "an ini without the setting gets it on" "$(captured | grep -ac '^CMDBOOTPIC')" "1"
+ok "and the shipped ini has it on" "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${BOOTSCREEN_AS_MENU}")" "yes"
+rm -f "${TMP}/pics/GSC/MENU.gsc" "${TMP}/pics/GSC/NES.gsc"
+TRANSITION="-1"
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n\n' "${PASS}" "${FAIL}"

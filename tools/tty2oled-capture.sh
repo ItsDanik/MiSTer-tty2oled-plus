@@ -6,12 +6,12 @@
 # Run it ON THE MISTER, leave it running, then load a game in each core you
 # want covered. Ctrl-C when done and send the file it names.
 #
-#   ssh root@MiSTer.local /media/fat/tty2oled/tty2oled-capture.sh
+#   ssh root@MiSTer.local /media/fat/tty2oledplus/tty2oled-capture.sh
 #
 # It only reads state; it does not talk to the display and does not disturb the
 # running daemon.
 
-TTY2OLED_PATH="${TTY2OLED_PATH:-/media/fat/tty2oled}"
+TTY2OLED_PATH="${TTY2OLED_PATH:-/media/fat/tty2oledplus}"
 OUT="${OUT:-/tmp/tty2oled-capture.txt}"
 
 if [ ! -r "${TTY2OLED_PATH}/tty2oled-system.ini" ]; then

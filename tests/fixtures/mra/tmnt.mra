@@ -1,0 +1,21 @@
+<misterromdescription>
+	<about author="jotego" webpage="https://patreon.com/topapate" source="https://github.com/jotego/jtcores"/>
+	<name>Teenage Mutant Ninja Turtles (World 4 Players)</name>
+	<setname>tmnt</setname>
+	<rbf>jttmnt</rbf>
+	<mameversion>0229</mameversion>
+	<year>1989</year>
+	<manufacturer>Konami</manufacturer>
+	<players>4</players>
+	<joystick>8-way</joystick>
+	<rotation>horizontal</rotation>
+	<region>World</region>
+	<platform>TMNT</platform>
+	<category>Fighter</category>
+	<catver>Fighter / 2.5D</catver>
+	<version>1.1</version>
+	<buttons names="Attack,Jump,-,Start,Coin,Pause" default="Y,B,-,Start,Select,-" count="2"/>
+	<rom index="0" zip="tmnt.zip" md5="none">
+		<part name="963-x23.j17" crc="a7f61195"/>
+	</rom>
+</misterromdescription>

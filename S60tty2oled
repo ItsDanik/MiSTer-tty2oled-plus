@@ -9,13 +9,93 @@
 # 2022-06-17 Redo/Rework of PID and inotify
 #
 
-! [ "$(dos2unix -ic /media/fat/tty2oled/*.ini)" = "" ] && dos2unix -k -q /media/fat/tty2oled/*.ini
-. /media/fat/tty2oled/tty2oled-system.ini
-. /media/fat/tty2oled/tty2oled-user.ini
+! [ "$(dos2unix -ic /media/fat/tty2oledplus/*.ini)" = "" ] && dos2unix -k -q /media/fat/tty2oledplus/*.ini
+. /media/fat/tty2oledplus/tty2oled-system.ini
+. /media/fat/tty2oledplus/tty2oled-user.ini
 cd /tmp
+
+PIDFILE="${PIDFILE:-/run/tty2oledplus-daemon.pid}"
+DAEMONLOG="${DAEMONLOG:-/tmp/tty2oled-daemon.log}"
+SETSID="$(command -v setsid)"
+# The path this script used before it had one of its own, which is also the
+# path upstream's copy uses. Swept as well as PIDFILE so a daemon started by an
+# earlier version of this script is still found. Safe to look at despite the
+# sharing, because daemonpid believes a pid only when the process behind it is
+# running this install's own daemon script.
+PIDFILE_LEGACY="/run/tty2oled-daemon.pid"
+
+# Find the running daemon. Sets DAEMON_PID to its pid and PIDFILE_FOUND to the
+# file that pid came out of, so stop() removes the file it actually acted on;
+# returns 1 with both empty when nothing of ours is running. Globals rather
+# than output, because "$(daemonpid)" would set them in a subshell and the
+# caller would never see them.
+#
+# A pid file on its own is not evidence on two counts. Pids are recycled, so a
+# file left behind by a daemon that died can name somebody else's process; and
+# this fork is built to sit beside an upstream install, which until now wrote
+# the same file, so the number can belong to a perfectly live daemon that is
+# not ours. Both end the same way - confirm the process is running *this*
+# install's script before believing it.
+DAEMON_PID=""
+PIDFILE_FOUND=""
+daemonpid() {
+  local f="" pid=""
+  DAEMON_PID=""; PIDFILE_FOUND=""
+  for f in "${PIDFILE}" "${PIDFILE_LEGACY}"; do
+    [ -e "${f}" ] || continue
+    pid="$(cat "${f}" 2>/dev/null)"
+    case "${pid}" in ''|*[!0-9]*) continue ;; esac
+    [ -d "/proc/${pid}" ] || continue
+    tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null | grep -qF "${DAEMONSCRIPT}" || continue
+    DAEMON_PID="${pid}"
+    PIDFILE_FOUND="${f}"
+    return 0
+  done
+  return 1
+}
+
+# The pids whose parent is $1, straight out of /proc.
+#
+# The daemon's inotifywait is the one that matters: it blocks in a syscall, so
+# it outlives a kill of its parent and sits there holding a watch. This used to
+# be found by grepping the output of ps for the string "tty2oled" and taking a
+# line by position, which on a machine running two installs could name either
+# of them - or, once the pipeline missed, nothing at all.
+children() {
+  local d="" ppid=""
+  for d in /proc/[0-9]*; do
+    # stat is "pid (comm) state ppid ..."; comm can contain spaces and
+    # brackets, so match to the last ")" and read the two fields after it.
+    ppid="$(sed -n 's/.*) [^ ] \([0-9]*\) .*/\1/p' "${d}/stat" 2>/dev/null)"
+    [ "${ppid}" = "${1}" ] && printf '%s\n' "${d#/proc/}"
+  done
+  return 0
+}
+
+# Upstream tty2oled, installed in its own folder. tty2oled+ replaces it rather
+# than running beside it: both drive the same serial port and neither knows
+# the other is there. Overridable for tests/test-daemon.sh.
+UPSTREAM_DIR="${UPSTREAM_DIR:-/media/fat/tty2oled}"
+upstream_installed() {
+  [ -e "${UPSTREAM_DIR}/tty2oled.sh" ] || [ -e "${UPSTREAM_DIR}/S60tty2oled" ]
+}
 
 # Start
 start() {
+    # Refused before anything else, and said where it will be read: at boot
+    # nobody sees stdout, so the daemon log gets it too.
+    if upstream_installed; then
+      local msg="Upstream tty2oled is installed in ${UPSTREAM_DIR}. tty2oled+ replaces it
+and the two are not made to run side by side, so ${DAEMONNAME} will not start.
+Remove it first:
+  ${UPSTREAM_DIR}/S60tty2oled stop
+  rm -rf ${UPSTREAM_DIR} /media/fat/Scripts/update_tty2oled.sh
+Its line in /media/fat/linux/user-startup.sh does nothing once the folder is gone."
+      echo "${msg}"
+      echo "${msg}" >>"${DAEMONLOG}" 2>/dev/null
+      exit 1
+    fi
+
     ### Wait for USB module and start tty2oled daemon
     WAITEND=$((SECONDS+10))
     while !  [ -c ${TTYDEV} ] && [ ${SECONDS} -lt ${WAITEND} ]; do
@@ -27,12 +107,35 @@ start() {
     fi
 
     if [[ -x ${DAEMONSCRIPT} ]]; then
-      if [ -e /run/tty2oled-daemon.pid ] && [ -d /proc/$(</run/tty2oled-daemon.pid) ]; then
+      if daemonpid; then
 	echo "${DAEMONNAME} already running"
 	exit 1
       else
 	echo "Starting ${DAEMONNAME}..."
-	${DAEMONSCRIPT} & echo $! > /run/tty2oled-daemon.pid
+	# Detached for real: its own session, and none of the caller's stdio.
+	#
+	# A bare "&" left the daemon in the caller's process group and on its
+	# terminal. Started over "ssh -t" - which is how deploy-mister.sh --flash
+	# runs flash-mister.sh, so esptool's progress shows - the daemon was then
+	# sent SIGHUP the moment the connection closed, and died. The display, just
+	# reset by the flash, sat in its boot animation waiting for a daemon that
+	# was no longer there; a cold reboot hid it, because the boot hook has no
+	# terminal to hang up. And holding the caller's stdout is what used to keep
+	# "ssh ... S60tty2oled start" from ever returning, which is why every
+	# caller learnt to add its own </dev/null >>log.
+	#
+	# setsid execs rather than forks here - a background job of a script is
+	# not a process group leader - so $! is still the daemon's own pid.
+	#
+	# SIGHUP is ignored around the fork, not just left to setsid: between the
+	# fork and setsid taking effect the child is still in the caller's group,
+	# and a caller that exits at once - flash-mister.sh does - can hang up
+	# inside that window. An ignored signal stays ignored across fork and
+	# exec, so the child is covered from its first instruction.
+	trap '' HUP
+	${SETSID:+"${SETSID}"} "${DAEMONSCRIPT}" </dev/null >>"${DAEMONLOG}" 2>&1 &
+	echo $! > "${PIDFILE}"
+	trap - HUP
       fi
     else
       echo "${DAEMONSCRIPT} not found!"
@@ -42,15 +145,36 @@ start() {
 # Stop
 stop() {
     echo "Stopping ${DAEMONNAME}..."
-    if [ -e /run/tty2oled-daemon.pid ]; then
-      PIDDAEMON=$(</run/tty2oled-daemon.pid)
-      PIDINOTIFY=$(ps -eo pid,ppid,args | grep $(ps | grep tty2oled | awk 'NR==1{print $1}') | tail -1 | awk '{print $1}')
-      #echo "PIDDAEMON = $PIDDAEMON"
-      #echo "PIDINOTIFY = $PIDINOTIFY"
+    local child=""
+    if ! daemonpid; then
+      # Nothing of ours is running. A pid file may still be sitting there from
+      # a daemon that died; one of ours is ours to clear, and the legacy path
+      # is left alone because it may belong to an upstream install.
+      rm -f "${PIDFILE}"
+      return 0
     fi
-    [ ${PIDDAEMON} ] && kill ${PIDDAEMON} &> /dev/null
-    [ ${PIDINOTIFY} ] && kill ${PIDINOTIFY} &> /dev/null
-    rm -f /run/tty2oled-daemon.pid
+
+    # Children first. The daemon spends nearly all of its time blocked in
+    # inotifywait, and killing the parent leaves that child running.
+    for child in $(children "${DAEMON_PID}"); do
+      kill "${child}" 2>/dev/null
+    done
+    kill "${DAEMON_PID}" 2>/dev/null
+    rm -f "${PIDFILE_FOUND}"
+}
+
+# Status: says whether our daemon is running, and exits 0 only when it is.
+# deploy-mister.sh asks this rather than reading a pid file itself, so which
+# file, and what makes a pid in it ours, is known here and nowhere else - the
+# deploy used to check the old path by hand, and would have gone on reporting a
+# healthy daemon as "did not start" the moment the path moved.
+status() {
+    if daemonpid; then
+      echo "${DAEMONNAME} running, pid ${DAEMON_PID}"
+    else
+      echo "${DAEMONNAME} not running"
+      return 1
+    fi
 }
 
 case "$1" in
@@ -64,11 +188,14 @@ case "$1" in
 	stop
 	start
 	;;
+  status)
+	status
+	;;
 #  reload)
 #	reload
 #	;;
   *)
 #	 echo "Usage: $0 {start|stop|restart|reload}"
-	echo "Usage: $0 {start|stop|restart}"
+	echo "Usage: $0 {start|stop|restart|status}"
 	exit 1
 esac

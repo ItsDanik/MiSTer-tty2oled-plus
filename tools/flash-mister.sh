@@ -16,7 +16,7 @@ set -u
 
 # Kept in its own variable because sourcing tty2oled-system.ini below sets
 # TTY2OLED_PATH itself, which would quietly undo an override given here.
-T2O_DIR="${TTY2OLED_PATH:-/media/fat/tty2oled}"
+T2O_DIR="${TTY2OLED_PATH:-/media/fat/tty2oledplus}"
 INIT="${T2O_DIR}/S60tty2oled"
 ESPTOOL="${T2O_DIR}/esptool.py"
 PYSERIAL_DIR="/lib/python3.9/site-packages"
@@ -50,8 +50,14 @@ say "Firmware: ${BIN} (${SIZE} bytes)"
 # --- Free the serial port ---------------------------------------------------
 # Restart the daemon whatever happens, so a failed flash does not leave the
 # display without its daemon.
+#
+# Asked of the init script rather than read off a pid file: which file, and
+# what makes a pid in it ours, is known there alone. This used to test the
+# path upstream shares, went on testing it after the init script moved to a
+# file of its own, and so concluded the daemon was never running - and a
+# successful flash left the display with no daemon at all.
 DAEMON_WAS_RUNNING="no"
-if [ -e /run/tty2oled-daemon.pid ]; then DAEMON_WAS_RUNNING="yes"; fi
+if "${INIT}" status >/dev/null 2>&1; then DAEMON_WAS_RUNNING="yes"; fi
 restore_daemon() {
   if [ "${DAEMON_WAS_RUNNING}" = "yes" ]; then
     say "Restarting the tty2oled daemon"
@@ -110,12 +116,44 @@ if ! python -c "import serial" 2>/dev/null; then
   echo "./pyserial-3.5-py3.9.egg" >> "${PYSERIAL_DIR}/easy-install.pth"
 fi
 
+# --- What to write ----------------------------------------------------------
+# Not the whole image, when that can be avoided. A merged image covers the
+# entire chip, and the settings store and the boot image's filesystem are
+# erased bytes in it - so writing all of it at ${OFFSET} erased both, and every
+# flash forgot the stored boot screen. fw-segments.py works out which parts
+# carry data, and says to write the lot whenever the display's partitions are
+# not laid out as the new firmware expects: reading the display's table first
+# is what makes keeping the rest safe.
+SEGDIR="$(mktemp -d /tmp/tty2oled-fw.XXXXXX)"
+trap 'restore_daemon; rm -rf "${SEGDIR}"' EXIT
+PARTS=("${OFFSET}" "${BIN}")
+if [ -r "${T2O_DIR}/fw-segments.py" ]; then
+  say "Reading the display's partition table"
+  python "${ESPTOOL}" --chip "${CHIP}" --port "${TTYDEV}" --baud "${DBAUD}" \
+    --before default_reset --after no_reset \
+    read_flash 0x8000 0xC00 "${SEGDIR}/table.bin" >/dev/null 2>&1 \
+    || rm -f "${SEGDIR}/table.bin"
+  PLAN=()
+  while read -r off file; do
+    [ -n "${off}" ] && PLAN+=("${off}" "${file}")
+  done < <(python "${T2O_DIR}/fw-segments.py" "${BIN}" "${SEGDIR}" "${SEGDIR}/table.bin")
+  [ "${#PLAN[@]}" -ge 2 ] && PARTS=("${PLAN[@]}")
+fi
+if [ "${#PARTS[@]}" -gt 2 ]; then
+  BYTES=0
+  for ((i = 1; i < ${#PARTS[@]}; i += 2)); do BYTES=$((BYTES + $(stat -c%s "${PARTS[i]}"))); done
+  echo "    writing $((${#PARTS[@]} / 2)) parts, ${BYTES} bytes - the stored boot"
+  echo "    screen and settings are kept"
+else
+  echo "    writing the whole image - the stored boot screen and settings are erased"
+fi
+
 # --- Flash ------------------------------------------------------------------
-say "Flashing ${CHIP} at ${OFFSET} via ${TTYDEV}"
+say "Flashing ${CHIP} via ${TTYDEV}"
 if ! python "${ESPTOOL}" --chip "${CHIP}" --port "${TTYDEV}" --baud "${DBAUD}" \
      --before default_reset --after hard_reset write_flash \
      --compress --flash_mode dio --flash_freq 80m --flash_size detect \
-     "${OFFSET}" "${BIN}"; then
+     "${PARTS[@]}"; then
   echo
   echo "Flash failed. Worth trying, in order:"
   echo "  1. A slower rate:  DBAUD=115200 $0 $*"

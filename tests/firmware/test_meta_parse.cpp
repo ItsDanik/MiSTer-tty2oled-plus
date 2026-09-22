@@ -120,10 +120,23 @@ int main() {
 
     section("more fields than storage");
     {
-        meta_parse("CMDMETA,1,10,Game|A=1|B=2|C=3|D=4|E=5|F=6|G=7|H=8|I=9");
+        // Built from the cap rather than written out, so raising
+        // META_MAX_FIELDS does not turn this into a test of nothing.
+        std::string cmd = "CMDMETA,1,10,Game";
+        for (int i = 0; i < META_MAX_FIELDS + 3; i++) {
+            char seg[32];
+            snprintf(seg, sizeof(seg), "|F%d=%d", i, i);
+            cmd += seg;
+        }
+
+        meta_parse(cmd.c_str());
+        char firstWanted[8], lastWanted[8];
+        snprintf(firstWanted, sizeof(firstWanted), "F0");
+        snprintf(lastWanted, sizeof(lastWanted), "F%d", META_MAX_FIELDS - 1);
+
         okInt("capped at META_MAX_FIELDS", metaFieldCount, META_MAX_FIELDS);
-        ok   ("first kept",  metaFields[0].label, "A");
-        ok   ("last kept",   metaFields[META_MAX_FIELDS - 1].label, "F");
+        ok   ("first kept",  metaFields[0].label, firstWanted);
+        ok   ("last kept",   metaFields[META_MAX_FIELDS - 1].label, lastWanted);
     }
 
     section("segments without '=' are skipped");

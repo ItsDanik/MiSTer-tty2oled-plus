@@ -15,6 +15,13 @@
 #include "stubs/arduino_stubs.h"
 #include <string>
 
+// Included before ESP32X is defined, so the ESP8266 branch compiles and no
+// LittleFS is needed. That is itself the point of the test below: the boot
+// screen's geometry lives outside the ESP32X guard, so the constants are the
+// same numbers whichever branch the sketch builds.
+#include "../../MiSTer_SSD1322_USB/bootscreen.h"
+#include "../../MiSTer_SSD1322_USB/bootlogo.h"
+
 unsigned long g_fakeMillis = 1000;
 
 // --- Globals the sketch owns, mirrored here ---------------------------------
@@ -27,10 +34,13 @@ int      logoBytes1bpp = 2048;
 int      logoBytes4bpp = 8192;
 uint8_t  logoBin[8192];
 uint8_t *srcBin = logoBin;
+// The sketch's contrast global: the waking brightness the dim logic scales.
+uint8_t contrast = 200;
 
 enum picType { NONE, XBM, GSC, TXT };
 int actPicType = NONE;
 const uint8_t minEffect = 1, maxEffect = 23;
+int tEffect = -1;                     // TRANSITION, as the last CMDCOR carried it
 
 // Sketch functions the display code calls. Recorded so tests can assert which
 // transition source was in effect at draw time.
@@ -38,11 +48,37 @@ static int   lastEffect   = -999;
 static void *lastSrcAtDraw = nullptr;
 static int   lastFontSet  = -1;
 
-void oled_drawlogo(uint8_t e) { lastEffect = e; lastSrcAtDraw = srcBin; }
-void oled_setfont(int font)   { lastFontSet = font; u8g2.charW = (font == 0) ? 5 : 8; }
-
 #define ESP32X 1
 #include "../../MiSTer_SSD1322_USB/metadisplay.h"
+#include "../../MiSTer_SSD1322_USB/bootoutro.h"
+#include "../../MiSTer_SSD1322_USB/busybar.h"
+
+// The sketch's version line, as the outro redraws it at each grey.
+void boot_printVersion(void) { u8g2.setCursor(BOOT_VER_X, BOOT_VER_Y); u8g2.print("0.4.0b"); }
+
+// Defined after the include so they can name the layout constants; the header
+// declares both, which is how the real sketch reaches them too.
+// The sketch's render and plain draw, as the sketch has them: rendering fills
+// the framebuffer and shows nothing; effect 0 renders and then sends the frame
+// to the panel. Both really copy the picture - the Fade transition reads the
+// framebuffer back to fade it in, and the panel's shownPeak is how a test
+// catches a frame that reached the panel when it should not have.
+void oled_renderlogo(void) {
+    lastEffect = 0; lastSrcAtDraw = srcBin;
+    if (srcBin && actPicType == GSC) memcpy(oled.buf, srcBin, sizeof(oled.buf));
+}
+void oled_drawlogo(uint8_t e) {
+    lastEffect = e; lastSrcAtDraw = srcBin;
+    if (e == 0) { oled_renderlogo(); oled.display(); }
+}
+
+// Three widths, so a test can tell the fonts apart by what they measure: the
+// 5x7 field font, the smaller face the arcade title drops to when it will not
+// fit, and everything else.
+void oled_setfont(int font)   {
+    lastFontSet = font;
+    u8g2.charW = (font == 0) ? 5 : (font == CARD_TITLE_ALT ? 6 : 8);
+}
 
 // --- Harness ----------------------------------------------------------------
 static int passed = 0, failed = 0;
@@ -242,6 +278,262 @@ int main() {
         okBool("long title starts at x=0",    u8g2.minLeft >= 0, true);
     }
 
+    section("arcade card layout spacing");
+    {
+        // Same convention as the console block below: every gap is derived
+        // back out of the constants, so a change to one number cannot quietly
+        // close a gap or overlap two elements.
+        okInt("blank rows between title and rule",
+              CARD_RULE_Y - CARD_TITLE_Y - 1, CARD_GAP_TITLE);
+        okInt("blank rows between rule and first field",
+              (CARD_FIELD_Y0 - CARD_FIELD_ASCENT) - CARD_RULE_Y - 1, CARD_GAP_RULE);
+        okBool("every field row is on the panel",
+               CARD_FIELD_Y0 + (CARD_FIELD_ROWS - 1) * CARD_FIELD_PITCH
+                   <= (int)DispHeight - 1, true);
+        okBool("field rows do not overlap", CARD_FIELD_PITCH > CARD_FIELD_ASCENT, true);
+        okBool("pips clear the rule",       CARD_PIP_Y + CON_PIP_H <= CARD_RULE_Y, true);
+        okInt ("four field rows",           CARD_FIELD_ROWS, 4);
+
+        // Two columns and a gutter, filling the width between the margins.
+        okInt("columns fill the width",
+              meta_cardColX(1) + CARD_COL_W, (int)DispWidth - CARD_MARGIN_X);
+        okInt("gutter between the columns",
+              meta_cardColX(1) - (meta_cardColX(0) + CARD_COL_W), CARD_COL_GAP);
+    }
+
+    section("the arcade card: a grid page, then a wide page under the pinned row");
+    {
+        // The shape asked for. Eight short values pair up on page 0; the
+        // three long ones get a row each on page 1, under a repeat of the
+        // pinned Year/Manufctr row.
+        meta_parse("CMDMETA,1,12,2,8,NBA Jam (rev 3.01 04/07/93)"
+                   "|Year=1993|Manufctr=Midway|Region=World|Orient=Horizontal"
+                   "|Core=blahmid_tunit|Author=rejectedcoins|Set=nbajam|MAME=0289"
+                   "|Players=4|Controls=8-way|Buttons=Turbo/Shoot / Block/Pass / Steal");
+
+        okInt("fields",      metaFieldCount, 11);
+        okInt("paired",      meta_cardGridCount(), 8);
+        okInt("pinned",      meta_cardPinned(), 2);
+        okInt("grid pages",  meta_cardGridPages(), 1);
+        okInt("wide pages",  meta_cardWidePages(), 1);
+        okInt("two pages in all", meta_cardPageCount(), 2);
+
+        // --- page 0: four rows of two -------------------------------------
+        cardPage = 0;
+        u8g2.resetProbe();
+        meta_renderCard();
+
+        okInt("eight labels and eight values", u8g2.printCalls, 1 + 16);
+
+        okInt("Year is row 0, left",      u8g2.xOf("Year"),     meta_cardColX(0));
+        okInt("Manufctr is row 0, right", u8g2.xOf("Manufctr"), meta_cardColX(1));
+        okInt("Set is row 3, left",       u8g2.xOf("Set"),      meta_cardColX(0));
+        okInt("MAME is row 3, right",     u8g2.xOf("MAME"),     meta_cardColX(1));
+        // Row-major: the pairs read across, not down, so the third field
+        // starts the second row rather than continuing the first column.
+        int regionY = -1;
+        for (size_t i = 0; i < u8g2.draws.size(); i++)
+            if (u8g2.draws[i].text == "Region") regionY = u8g2.draws[i].y;
+        okInt("Region is on the row below Year",
+              regionY, CARD_FIELD_Y0 + CARD_FIELD_PITCH);
+        okBool("nothing runs off the panel", u8g2.maxRight <= (int)DispWidth, true);
+        okBool("nothing on a fifth row",
+               u8g2.draws.back().y <= CARD_FIELD_Y0 + 3 * CARD_FIELD_PITCH, true);
+        okBool("page 0 has none of the long values",
+               u8g2.printLog.find("Buttons") == std::string::npos, true);
+
+        // --- page 1: the pinned pair, then one field per row ---------------
+        cardPage = 1;
+        u8g2.resetProbe();
+        meta_renderCard();
+
+        okBool("pinned Year repeats",     u8g2.printLog.find("Year")     != std::string::npos, true);
+        okBool("pinned Manufctr repeats", u8g2.printLog.find("Manufctr") != std::string::npos, true);
+        okInt ("the pinned pair is still a grid row",
+               u8g2.xOf("Manufctr"), meta_cardColX(1));
+        okBool("Players is on its own row",  u8g2.printLog.find("Players")  != std::string::npos, true);
+        okBool("Controls is on its own row", u8g2.printLog.find("Controls") != std::string::npos, true);
+        okBool("Buttons is on its own row",  u8g2.printLog.find("Buttons")  != std::string::npos, true);
+        okBool("the long value survives whole",
+               u8g2.printLog.find("Turbo/Shoot / Block/Pass / Steal") != std::string::npos, true);
+        okBool("no grid field bar the pinned pair",
+               u8g2.printLog.find("Core") == std::string::npos, true);
+
+        // Wide rows start in the left column, not the right one.
+        okInt("Buttons starts at the left margin", u8g2.xOf("Buttons"), CARD_MARGIN_X);
+        okBool("still nothing off the panel", u8g2.maxRight <= (int)DispWidth, true);
+
+        // Every value on the card starts at the same x, paired or not.
+        okBool("paired and wide values share a column",
+               u8g2.xOf("8-way") == u8g2.xOf("1993"), true);
+
+        cardPage = 0;
+    }
+
+    section("card pages: artwork, page 1, page 2, artwork");
+    {
+        meta_parse("CMDMETA,1,10,2,8,NBA Jam"
+                   "|Year=1993|Manufctr=Midway|Region=World|Orient=Horizontal"
+                   "|Core=blahmid_tunit|Author=rejectedcoins|Set=nbajam|MAME=0289"
+                   "|Players=4|Controls=8-way|Buttons=Turbo/Shoot");
+
+        g_fakeMillis    = 700000;
+        metaLastSwap    = g_fakeMillis;
+        metaShowingCard = false;
+        cardPage        = 0;
+
+        okBool("nothing before the interval", meta_tick(), false);
+
+        g_fakeMillis += 11000;
+        u8g2.resetProbe();
+        okBool("artwork -> page 1",   meta_tick(), true);
+        okBool("card is up",          metaShowingCard, true);
+        okInt ("on the grid page",    cardPage, 0);
+        okBool("grid page drawn",     u8g2.printLog.find("Core") != std::string::npos, true);
+
+        g_fakeMillis += 11000;
+        u8g2.resetProbe();
+        okBool("page 1 -> page 2",    meta_tick(), true);
+        okBool("card still up",       metaShowingCard, true);
+        okInt ("on the wide page",    cardPage, 1);
+        okBool("wide page drawn",     u8g2.printLog.find("Buttons") != std::string::npos, true);
+        okBool("drawn from metaBin",  lastSrcAtDraw == metaBin, true);
+
+        g_fakeMillis += 11000;
+        okBool("last page -> artwork", meta_tick(), true);
+        okBool("artwork is up",        metaShowingCard, false);
+        okBool("drawn from logoBin",   lastSrcAtDraw == logoBin, true);
+        okInt ("rewound to page 1",    cardPage, 0);
+
+        g_fakeMillis += 11000;
+        okBool("and round again", meta_tick(), true);
+        okBool("card is up",      metaShowingCard, true);
+        okInt ("from the top",    cardPage, 0);
+    }
+
+    section("a card with only grid fields is one page and does not page");
+    {
+        meta_parse("CMDMETA,1,12,2,4,Pong|Year=1972|Manufctr=Atari"
+                   "|Region=World|Orient=Horizontal");
+        okInt("one page", meta_cardPageCount(), 1);
+
+        u8g2.resetProbe();
+        oled.resetProbe();
+        meta_renderCard();
+        okInt("no page indicator", (int)oled.rects.size(), 0);
+
+        metaLastSwap    = g_fakeMillis;
+        metaShowingCard = true;
+        g_fakeMillis   += 13000;
+        okBool("swaps straight back to the artwork", meta_tick(), true);
+        okBool("artwork is up", metaShowingCard, false);
+        okInt ("page unmoved",  cardPage, 0);
+    }
+
+    section("a card the script sent no counts for still shows everything");
+    {
+        // An older script, or ARCADE_FIELDS left holding only wide names:
+        // no pairing, no pinning, one field per row, paged. The fields must
+        // still all reach the screen.
+        std::string cmd = "CMDMETA,1,12,Game";
+        const int nfields = 10;
+        for (int i = 0; i < nfields; i++) {
+            char seg[32];
+            snprintf(seg, sizeof(seg), "|L%02d=V%02d", i, i);  // L1 is no prefix of L10
+            cmd += seg;
+        }
+        meta_parse(cmd.c_str());
+
+        okInt("nothing paired", meta_cardGridCount(), 0);
+        okInt("no grid pages",  meta_cardGridPages(), 0);
+        okInt("three pages",    meta_cardPageCount(), 3);
+
+        int seen[nfields];
+        for (int i = 0; i < nfields; i++) seen[i] = 0;
+
+        for (int page = 0; page < meta_cardPageCount(); page++) {
+            cardPage = page;
+            u8g2.resetProbe();
+            meta_renderCard();
+            for (int i = 0; i < nfields; i++) {
+                char label[8];
+                snprintf(label, sizeof(label), "L%02d", i);
+                if (u8g2.printLog.find(label) != std::string::npos) seen[i]++;
+            }
+        }
+
+        bool everyFieldOnce = true;
+        for (int i = 0; i < nfields; i++) if (seen[i] != 1) everyFieldOnce = false;
+        okBool("every field appears exactly once", everyFieldOnce, true);
+
+        cardPage = 0;
+    }
+
+    section("card page indicator tracks the page and stays on the panel");
+    {
+        meta_parse("CMDMETA,1,12,2,8,Game"
+                   "|Year=1993|Manufctr=Midway|Region=World|Orient=Horizontal"
+                   "|Core=tunit|Author=someone|Set=nbajam|MAME=0289"
+                   "|Buttons=Turbo/Shoot");
+
+        cardPage = 1;
+        u8g2.resetProbe();
+        oled.resetProbe();
+        meta_renderCard();
+
+        okInt("one pip per page", (int)oled.rects.size(), meta_cardPageCount());
+
+        int lit = -1, leftmost = DispWidth, right = 0;
+        bool onPanel = true;
+        for (size_t i = 0; i < oled.rects.size(); i++) {
+            const FakeOled::Rect &r = oled.rects[i];
+            if (r.color == SSD1322_WHITE) lit = (int)i;
+            if (r.x < leftmost) leftmost = r.x;
+            if (r.x + r.w > right) right = r.x + r.w;
+            if (r.x < 0 || r.y < 0 || r.x + r.w > (int)DispWidth
+                || r.y + r.h > (int)DispHeight) onPanel = false;
+        }
+        okInt ("the current page is the lit pip", lit, 1);
+        okBool("pips are on the panel",           onPanel, true);
+        okBool("pips are right aligned",
+               right <= (int)DispWidth - CARD_MARGIN_X
+               && right >= (int)DispWidth - CARD_MARGIN_X - CON_PIP_STRIDE, true);
+
+        // The title is drawn first, and must be clipped short of the pips
+        // rather than run underneath them. Its width is what the stub font
+        // measured at the time, which is recorded with the draw.
+        const FakeU8g2::Draw &title = u8g2.draws[0];
+        okBool("title stops short of the pips",
+               title.x + (int)title.text.size() * title.charW <= leftmost, true);
+
+        cardPage = 0;
+    }
+
+    section("a long arcade title drops a font size before it is truncated");
+    {
+        // 34 characters is 272px at the 12px face - wider than the 248px the
+        // margins leave - and 204px at the smaller one, so dropping a size
+        // keeps the end of a name the larger face would have cut off.
+        std::string title(34, 'W');
+        std::string cmd = "CMDMETA,1,12," + title + "|Year=1989";
+        meta_parse(cmd.c_str());
+
+        u8g2.resetProbe();
+        meta_renderCard();
+
+        const FakeU8g2::Draw &drawn = u8g2.draws[0];
+        okInt ("dropped to the smaller face", drawn.charW, 6);
+        ok    ("whole title survived",        drawn.text, title);
+        okBool("still inside the panel",
+               drawn.x + (int)drawn.text.size() * drawn.charW <= (int)DispWidth, true);
+
+        // A title that fits keeps the larger face.
+        meta_parse("CMDMETA,1,12,Pong|Year=1972");
+        u8g2.resetProbe();
+        meta_renderCard();
+        okInt("short title keeps the big face", u8g2.draws[0].charW, 8);
+    }
+
     section("meta_showCard animates from metaBin then restores srcBin");
     {
         meta_parse("CMDMETA,1,12,Donkey Kong|Year=1981");
@@ -360,6 +652,1069 @@ int main() {
         g_fakeMillis += VSCROLL_MS + 1;
         meta_tick();
         okInt("wrapped back to page 0", fieldPage, 0);
+    }
+
+
+    section("layout spacing: one blank row at each break");
+    {
+        // The gaps are the numbers to tune on glass; these pin the arithmetic
+        // so a change to one constant cannot silently overlap two elements.
+        okInt("blank row between header and rule",
+              CON_RULE_Y - CON_HEADER_Y - 1, CON_GAP_HEADER);
+        okInt("blank row between rule and title top",
+              (CON_TITLE_Y - CON_TITLE_ASCENT) - CON_RULE_Y - 1, CON_GAP_RULE);
+        okInt("blank row between title and first field",
+              (CON_FIELD_Y0 - CON_FIELD_ASCENT) - (CON_TITLE_Y + CON_TITLE_DESC) - 1,
+              CON_GAP_TITLE);
+        okBool("every field row is on the panel",
+               CON_FIELD_Y0 + (CON_FIELD_ROWS - 1) * CON_FIELD_PITCH <= (int)DispHeight - 1,
+               true);
+        okBool("field rows do not overlap",
+               CON_FIELD_PITCH > CON_FIELD_ASCENT, true);
+        // Moving the pips off the bottom is what bought the fourth row.
+        okInt("four field rows", CON_FIELD_ROWS, 4);
+    }
+
+    section("page indicator sits by the header, not along the bottom");
+    {
+        meta_parse("CMDMETA,2,0,Game|A=1|B=2|C=3|D=4|E=5|F=6");   // 6 -> 2 pages
+        metaHasIcon = false;
+        u8g2.resetProbe();
+        meta_renderConsole();
+
+        // Nothing may be drawn on the bottom rows any more: that space is the
+        // fourth field row now.
+        okBool("pips are in the header band",
+               CON_PIP_Y + CON_PIP_H <= CON_RULE_Y, true);
+        okBool("pips stop short of the icon column",
+               TEXT_W + 2 <= ICON_X, true);
+        okBool("no draw past ICON_X", u8g2.maxRight <= ICON_X, true);
+    }
+
+    section("side flip mirrors the layout");
+    {
+        meta_parse("CMDMETA,2,0,Tetris|System=GAMEBOY");
+        metaHasIcon = false;
+        metaFlipped = false;
+        u8g2.resetProbe();
+        meta_renderConsole();
+        okBool("normal: text left of the icon", u8g2.maxRight <= ICON_X, true);
+        okBool("normal: text starts at the left edge", u8g2.minLeft < 40, true);
+
+        metaFlipped = true;
+        u8g2.resetProbe();
+        meta_renderConsole();
+        okBool("flipped: text clear of the icon panel",
+               u8g2.minLeft >= ICON_W, true);
+        okBool("flipped: text stays on the panel",
+               u8g2.maxRight <= (int)DispWidth, true);
+
+        // The icon must land on a byte boundary or the blit shears.
+        metaFlipped = false; okInt("normal icon x is even",  ICON_X % 2, 0);
+        metaFlipped = true;  okInt("flipped icon x is even", 0 % 2, 0);
+        metaFlipped = false;
+    }
+
+    section("the icon blits to whichever side is active");
+    {
+        meta_parse("CMDMETA,2,0,Game|A=1");
+        memset(iconBin, 0x77, sizeof(iconBin));
+        metaHasIcon = true;
+
+        metaFlipped = false;
+        memset(oled.buf, 0, sizeof(oled.buf));
+        meta_blitIcon();
+        const int rowBytes = DispWidth / 2;
+        okInt("normal: icon at byte 85", oled.buf[85], 0x77);
+        okInt("normal: nothing at byte 0", oled.buf[0], 0x00);
+
+        metaFlipped = true;
+        memset(oled.buf, 0, sizeof(oled.buf));
+        meta_blitIcon();
+        okInt("flipped: icon at byte 0",   oled.buf[0], 0x77);
+        okInt("flipped: nothing at byte 85", oled.buf[85], 0x00);
+        // ...and the last icon row lands where it should, not off the end.
+        okInt("flipped: last row present",
+              oled.buf[(ICON_H - 1) * rowBytes + ICON_STRIDE - 1], 0x77);
+
+        metaFlipped = false;
+        metaHasIcon = false;
+    }
+
+    section("side flip runs on its own timer");
+    {
+        meta_parse("CMDMETA,2,0,Game|A=1");
+        metaHasIcon = false;
+        metaFlipMs  = 60000;
+        metaFlipped = false;
+        metaLastFlip = g_fakeMillis;
+        meta_tick();                       // absorb the first draw
+
+        g_fakeMillis += 59000;
+        meta_tick();
+        okBool("not yet", metaFlipped, false);
+
+        g_fakeMillis += 2000;
+        okBool("tick reports the flip", meta_tick(), true);
+        okBool("flipped", metaFlipped, true);
+
+        g_fakeMillis += 61000;
+        meta_tick();
+        okBool("flips back", metaFlipped, false);
+
+        // 0 disables it.
+        metaFlipMs = 0;
+        metaLastFlip = g_fakeMillis;
+        g_fakeMillis += 600000;
+        meta_tick();
+        okBool("0 never flips", metaFlipped, false);
+        metaFlipMs = 300000;
+    }
+
+    section("idle dimming");
+    {
+        // Instant fades here, so each level can be read straight off the
+        // panel; the fade itself has a section of its own below.
+        fadeMs = 0;
+        metaDimFadeMs = 0;
+        contrast = 200;
+        contrast_jump(200);
+        meta_parse("CMDMETA,2,0,Game|A=1");
+        metaHasIcon = false;
+        metaDimAfterMs = 120000;
+        metaDimContrast = 80;
+        metaWakeContrast = -1;
+        metaFlipMs = 0;                    // keep the flip out of this
+        meta_tick();                       // absorb the pending first draw,
+        meta_activity();                   // which would itself reset the clock
+        oled.contrastCalls = 0;
+
+        g_fakeMillis += 119000;
+        meta_tick();
+        okBool("bright while active", metaDimmed, false);
+        okInt("contrast untouched", oled.contrastCalls, 0);
+
+        g_fakeMillis += 2000;
+        meta_tick();
+        okBool("dims once idle", metaDimmed, true);
+        // A level of its own now, not a share of CONTRAST: it used to be
+        // DIM_PERCENT, and "50" meant 100 here and 127 below.
+        okInt("dimmed to DIM_CONTRAST itself", (int)oled.contrastLevel, 80);
+
+        // Idle again: it must not keep calling setContrast.
+        oled.contrastCalls = 0;
+        g_fakeMillis += 120000;
+        meta_tick();
+        okInt("does not re-dim", oled.contrastCalls, 0);
+
+        // Anything drawn wakes it at full brightness.
+        meta_activity();
+        okBool("woken", metaDimmed, false);
+        okInt("back to the waking level", (int)oled.contrastLevel, 200);
+
+        // An explicit wake level overrides CONTRAST; the dim level does not
+        // depend on it.
+        metaWakeContrast = 255;
+        g_fakeMillis += 121000;
+        meta_tick();
+        okInt("the same dim level under an override", (int)oled.contrastLevel, 80);
+        meta_activity();
+        okInt("wakes to the override", (int)oled.contrastLevel, 255);
+        metaWakeContrast = -1;
+        meta_activity();
+
+        // A dim level above the waking level would make "dimming" brighten
+        // the panel after two idle minutes. It stops at the waking level.
+        contrast = 60;
+        contrast_jump(60);
+        metaDimContrast = 200;
+        g_fakeMillis += 121000;
+        meta_tick();
+        okInt("never dims above the waking level", (int)oled.contrastLevel, 60);
+        contrast = 200;
+        metaDimContrast = 80;
+        meta_activity();
+        contrast_jump(200);
+
+        // 0 disables dimming entirely.
+        metaDimAfterMs = 0;
+        g_fakeMillis += 600000;
+        meta_tick();
+        okBool("0 never dims", metaDimmed, false);
+
+        // Animation must NOT count as activity. The marquee redraws every
+        // 40ms and the pager every 2.5s, both through meta_showConsole; when
+        // those counted, a console game with a long title or a second page
+        // never went idle and the panel never dimmed at all.
+        metaDimAfterMs = 120000;
+        meta_activity();
+        g_fakeMillis += 121000;
+        meta_tick();
+        okBool("dimmed with a game on screen", metaDimmed, true);
+        meta_showConsole();
+        okBool("a redraw does not wake it", metaDimmed, true);
+        g_fakeMillis += 5000;
+        meta_tick();
+        okBool("and it stays dim", metaDimmed, true);
+
+        // Only new content does.
+        meta_activity();
+        okBool("new content wakes it", metaDimmed, false);
+        okInt("at the waking level", (int)oled.contrastLevel, 200);
+
+        metaDimAfterMs = 120000;
+        metaDimFadeMs = DIM_FADE_MS_DEFAULT;
+        metaFlipMs = 300000;
+    }
+
+    section("contrast fades rather than jumps");
+    {
+        auto at = [](unsigned long ms) { g_fakeMillis += ms; contrast_tick(); return (int)oled.contrastLevel; };
+
+        fadeMs = 500;
+        contrast_jump(200);
+        contrast_fadeTo(100);
+        okInt("nothing moves until time passes", at(0), 200);
+        okInt("halfway, halfway", at(250), 150);
+        okInt("there at the fade time", at(250), 100);
+        okBool("and finished", fadeActive, false);
+
+        // A new target mid-fade turns around from where the panel is, not
+        // from where the old fade began: waking while still dimming.
+        contrast_jump(200);
+        contrast_fadeTo(0);
+        okInt("dimming, halfway down", at(250), 100);
+        contrast_fadeTo(200);
+        okInt("turned around, not snapped back", at(0), 100);
+        okInt("rising from where it was", at(250), 150);
+        okInt("up again at the fade time", at(250), 200);
+
+        // The picture paths re-assert the contrast on every draw. A target
+        // already being faded to must not restart the clock, or a fade stalls
+        // for as long as pictures keep arriving.
+        contrast_jump(200);
+        contrast_fadeTo(100);
+        at(250);
+        contrast_fadeTo(100);
+        okInt("a re-assert does not restart the fade", at(250), 100);
+
+        // One panel write per level actually reached, not one per tick.
+        contrast_jump(200);
+        oled.contrastCalls = 0;
+        contrast_fadeTo(100);
+        for (int i = 0; i < 600; i++) at(1);
+        okBool("writes only when the level changes", oled.contrastCalls <= 100, true);
+        okInt("and lands exactly", (int)oled.contrastLevel, 100);
+
+        // The longest fade: it lands.
+        fadeMs = 4000;
+        contrast_jump(255);
+        contrast_fadeTo(0);
+        okInt("a 4s fade is halfway at 2s", at(2000), 128);    // 127.5, rounded toward the start
+        okInt("and down at 4s", at(2000), 0);
+        okInt("the default before CMDFADE is 0.8s", FADE_MS_DEFAULT, 800);
+
+        fadeMs = 0;
+        contrast_fadeTo(30);
+        okInt("CONTRAST_FADE_MS=0 jumps, as it used to", (int)oled.contrastLevel, 30);
+
+        // Idle dimming and waking both fade.
+        fadeMs = 500;
+        metaDimFadeMs = 500;
+        contrast = 200;
+        contrast_jump(200);
+        metaDimAfterMs = 120000;
+        metaDimContrast = 80;
+        metaFlipMs = 0;
+        meta_activity();
+        g_fakeMillis += 121000;
+        meta_tick();
+        okInt("going dim, it fades", at(250), 140);
+        meta_activity();
+        okInt("woken mid-fade, it turns around", at(250), 170);
+        okInt("and reaches the waking level", at(250), 200);
+
+        // Going dim is slow on purpose - burn-in protection nobody should see
+        // happen - and waking is not: something new has arrived.
+        fadeMs = 800;
+        metaDimFadeMs = DIM_FADE_MS_DEFAULT;
+        okInt("going dim takes 6s by default", (int)metaDimFadeMs, 6000);
+        meta_activity();
+        at(0);
+        g_fakeMillis += 121000;
+        meta_tick();
+        okInt("a second in, it has barely moved", at(1000), 180);
+        okInt("halfway at 3s", at(2000), 140);
+        okInt("dim at 6s", at(3000), 80);
+        meta_activity();
+        okInt("but wakes over CONTRAST_FADE_MS", at(400), 140);
+        okInt("fully awake at 0.8s", at(400), 200);
+
+        // Woken halfway down, it comes back quickly from where it got to.
+        g_fakeMillis += 121000;
+        meta_tick();
+        at(3000);
+        meta_activity();
+        okInt("woken mid-dim, from where it was", at(0), 140);
+        okInt("back up in 0.8s, not 6", at(800), 200);
+        metaDimFadeMs = DIM_FADE_MS_DEFAULT;
+        metaFlipMs = 300000;
+    }
+
+    section("CMDDIM");
+    {
+        metaDimFadeMs = DIM_FADE_MS_DEFAULT;
+        okBool("parsed", meta_parseDim("CMDDIM,90,60,-1,4500"), true);
+        okInt("after", (int)(metaDimAfterMs / 1000), 90);
+        okInt("to", metaDimContrast, 60);
+        okInt("over", (int)metaDimFadeMs, 4500);
+        meta_parseDim("CMDDIM,90,60,-1,20000");
+        okInt("the dim fade is capped at 10s", (int)metaDimFadeMs, 10000);
+        meta_parseDim("CMDDIM,90,60,-1,-3");
+        okInt("and floored at 0", (int)metaDimFadeMs, 0);
+        meta_parseDim("CMDDIM,90,60,-1,4500");
+        meta_parseDim("CMDDIM,120,80,-1");
+        okInt("a script that sends no fade time keeps the last one", (int)metaDimFadeMs, 4500);
+        okInt("while the rest still applies", metaDimContrast, 80);
+        okBool("junk is refused", meta_parseDim("CMDDIM,soon"), false);
+        metaDimFadeMs = DIM_FADE_MS_DEFAULT;
+        metaDimAfterMs = 120000;
+        metaDimContrast = 80;
+    }
+
+    section("CMDFADE");
+    {
+        fadeMs = 500;
+        okBool("parsed", contrast_parseFade("CMDFADE,1200"), true);
+        okInt("to that many ms", fadeMs, 1200);
+        contrast_parseFade("CMDFADE,-5");
+        okInt("negative is no fade", fadeMs, 0);
+        contrast_parseFade("CMDFADE,4000");
+        okInt("four seconds is allowed", fadeMs, 4000);
+        contrast_parseFade("CMDFADE,4001");
+        okInt("and is the most", fadeMs, 4000);
+        contrast_parseFade("CMDFADE,99999");
+        okInt("capped at FADE_MS_MAX", fadeMs, FADE_MS_MAX);
+        okBool("junk is refused", contrast_parseFade("CMDFADE,soon"), false);
+        okInt("and changes nothing", fadeMs, FADE_MS_MAX);
+        fadeMs = 0;
+    }
+
+    section("the power-on screen fades in, palette and contrast together");
+    {
+        auto at = [](unsigned long ms) { g_fakeMillis += ms; contrast_tick(); transition_tick();
+                                         return (int)oled.contrastLevel; };
+        auto px = [](int i) { return (int)oled.buf[i]; };
+        okInt("over 0.8 seconds", BOOT_FADE_MS, 800);
+        // The palette steps redraw the whole frame from a copy; overlapping
+        // the sweep would wipe its bar out. The fade has to be done first.
+        okBool("inside the hold, so it is done before the sweep", BOOT_FADE_MS <= BOOT_HOLD_MS, true);
+
+        // As setup() and oled_showStartScreen(true) do it: black the panel,
+        // compose the frame into the framebuffer, hand it to the fade-in.
+        fadeMs = 800;
+        veil_fadeOver(0, 0);
+        contrast_jump(255);
+        okInt("the panel starts black", (int)oled.contrastLevel, 0);
+        memset(oled.buf, 0xF8, sizeof(oled.buf));  // the composed boot screen
+        oled.shownPeak = 0;
+        transition_fadeIn(BOOT_FADE_MS);
+        okInt("the first frame the panel gets is fully dark", oled.shownPeak, 0);
+        okInt("at contrast 0", at(0), 0);
+        at(50);
+        okInt("one sixteenth in, still nothing above 0", px(0), 0x00);
+        at(350);
+        okInt("halfway, the greys are eight levels down", px(0), 0x70);
+        okInt("and the contrast halfway up", (int)oled.contrastLevel, 127);
+        at(400);
+        okInt("at 0.8s, the screen is itself", px(0), 0xF8);
+        okInt("at full contrast", (int)oled.contrastLevel, 255);
+        okBool("and the fade is over before the sweep's first bar", tfState == TF_IDLE, true);
+
+        // The daemon can speak mid-fade. Its CMDCON moves the base level; the
+        // fade carries on over it rather than being restarted or cut short.
+        veil_fadeOver(0, 0);
+        contrast_jump(255);
+        memset(oled.buf, 0xF8, sizeof(oled.buf));
+        transition_fadeIn(BOOT_FADE_MS);
+        at(400);
+        contrast_fadeTo(100);
+        okInt("a CMDCON mid-fade starts from where it got to", at(0), 127);
+        at(400);
+        okInt("the fade finishes", px(0), 0xF8);
+        at(400);
+        okInt("and settles on the CMDCON's level", (int)oled.contrastLevel, 100);
+        fadeMs = 0;
+        contrast = 200; contrast_jump(200);
+    }
+
+    section("TRANSITION=-2 fades out, holds black, fades in");
+    {
+        auto at = [](unsigned long ms) { g_fakeMillis += ms; contrast_tick(); transition_tick();
+                                         return (int)oled.contrastLevel; };
+        uint8_t picA[8192], picB[8192];
+        fadeMs = 0;
+        contrast = 200;
+        contrast_jump(200);
+        veil_fadeOver(255, 0);
+        tfFadeMs = 2000; tfBlankMs = 1000;
+        memset(oled.buf, 0x77, sizeof(oled.buf));
+
+        srcBin = picA; actPicType = GSC;
+        lastEffect = -999;
+        oled_transition(EFFECT_FADE);
+        okInt("nothing is drawn straight away", lastEffect, -999);
+        okInt("the old picture fades out", at(1000), 100);
+        okInt("to black", at(1000), 0);
+        at(0);
+        okBool("and the panel is cleared, not just dark", oled.buf[0] == 0 && oled.buf[8191] == 0, true);
+        okInt("still nothing drawn while black", (at(999), lastEffect), -999);
+        at(1);
+        okInt("then the new picture, drawn plainly", lastEffect, 0);
+        okBool("from the buffer asked for", lastSrcAtDraw == picA, true);
+        okInt("at black", (int)oled.contrastLevel, 0);
+        okInt("fading in", at(1000), 100);
+        okInt("to where it was", at(1000), 200);
+        at(0);
+        okBool("and done", tfState == TF_IDLE, true);
+
+        // On a dimmed panel it returns to the dim level, not to CONTRAST.
+        contrast_jump(80);
+        oled_transition(EFFECT_FADE);
+        at(2000); at(0); at(1000);
+        okInt("a dimmed panel fades back to its dim level", at(2000), 80);
+        at(0);
+        contrast_jump(200);
+
+        // The card alternation puts srcBin back the moment it returns; the
+        // picture shown seconds later must still be the one asked for.
+        srcBin = picB;
+        oled_transition(EFFECT_FADE);
+        srcBin = picA;
+        at(2000); at(0); at(1000);
+        okBool("the buffer is taken at the request", lastSrcAtDraw == picB, true);
+        okBool("and srcBin is left as it was", srcBin == picA, true);
+        at(2000); at(0);
+
+        // A second request while going dark: the newer picture wins and the
+        // clock carries on, rather than starting the fade-out again.
+        srcBin = picA;
+        oled_transition(EFFECT_FADE);
+        at(1000);
+        srcBin = picB;
+        oled_transition(EFFECT_FADE);
+        okInt("a request while fading out does not restart it", at(1000), 0);
+        at(0); at(1000);
+        okBool("and the newer picture is the one shown", lastSrcAtDraw == picB, true);
+
+        // While fading in: turn around from where it had got to.
+        at(1000);
+        int midway = (int)oled.contrastLevel;
+        oled_transition(EFFECT_FADE);
+        okInt("a request while fading in turns around", at(0), midway);
+        okBool("heading back down", at(500) < midway, true);
+        at(2000); at(0); at(1000); at(2000); at(0);
+
+        // Any other effect cancels a fade and draws at once, at full veil.
+        oled_transition(EFFECT_FADE);
+        at(1000);
+        oled_transition(7);
+        okInt("another effect cancels the fade", lastEffect, 7);
+        okInt("and the panel is back to its level at once", at(0), 200);
+        okBool("with nothing left running", tfState == TF_IDLE, true);
+
+        // -1 is still random, and never the fade.
+        oled_transition(EFFECT_RANDOM);
+        okBool("-1 picks a wipe", lastEffect >= minEffect && lastEffect <= maxEffect, true);
+        okBool("not a fade", tfState == TF_IDLE, true);
+
+        // Zero times: done within a few passes of the loop.
+        tfFadeMs = 0; tfBlankMs = 0;
+        lastEffect = -999;
+        oled_transition(EFFECT_FADE);
+        at(0); at(0); at(0);
+        okInt("0ms fade and blank still draw", lastEffect, 0);
+        okInt("and end at full", at(0), 200);
+
+        okBool("CMDTFADE parsed", transition_parse("CMDTFADE,1500,300"), true);
+        okInt("fade time", tfFadeMs, 1500);
+        okInt("blank time", tfBlankMs, 300);
+        transition_parse("CMDTFADE,9999,-4");
+        okInt("fade capped at 4000", tfFadeMs, 4000);
+        okInt("blank floored at 0", tfBlankMs, 0);
+        okBool("one number is not enough", transition_parse("CMDTFADE,500"), false);
+        tfFadeMs = TFADE_MS_DEFAULT; tfBlankMs = TBLANK_MS_DEFAULT;
+        okInt("defaults: 0.8s fades", TFADE_MS_DEFAULT, 800);
+        okInt("and 1s of black", TBLANK_MS_DEFAULT, 1000);
+    }
+
+
+    section("the Fade steps the picture's own greys down, then up");
+    {
+        auto at = [](unsigned long ms) { g_fakeMillis += ms; contrast_tick(); transition_tick();
+                                         return (int)oled.contrastLevel; };
+        auto px = [](int i) { return (int)oled.buf[i]; };
+        static uint8_t oldPic[8192], newPic[8192];
+        memset(oldPic, 0xF8, sizeof(oldPic)); oldPic[1] = 0x21;
+        memset(newPic, 0x5F, sizeof(newPic));
+        fadeMs = 0; contrast = 200; contrast_jump(200); veil_fadeOver(255, 0);
+        tfFadeMs = 1600; tfBlankMs = 500;          // 100ms a palette step
+
+        memcpy(oled.buf, oldPic, sizeof(oldPic)); // what the panel shows
+        srcBin = newPic; actPicType = GSC;
+        oled_transition(EFFECT_FADE);
+        at(99);
+        okInt("nothing moves before the first sixteenth", px(0), 0xF8);
+        at(1);
+        okInt("then every pixel is one level darker", px(0), 0xE7);
+        at(100);
+        okInt("floored at 0, never wrapped round to white", px(1), 0x00);
+        at(600);
+        okInt("halfway, eight levels down", px(0), 0x70);
+        okInt("with the contrast halfway down too", (int)oled.contrastLevel, 100);
+        at(700);
+        okInt("F is gone by the fifteenth step", px(0), 0x00);
+        at(100);
+        okInt("the sixteenth lands as the contrast reaches 0", (int)oled.contrastLevel, 0);
+        okBool("and the panel is held black", tfState == TF_BLANK, true);
+
+        // The flash: effect 0 used to draw the new picture and send it to the
+        // panel before it was darkened, so for one frame transfer it was up
+        // undarkened at contrast 0 - which on this panel is far from dark.
+        oled.shownPeak = 0;
+        at(500);
+        okBool("the new picture is drawn", lastSrcAtDraw == newPic, true);
+        okInt("but shown fully dark", px(0), 0x00);
+        okInt("and no frame of it reached the panel undarkened", oled.shownPeak, 0);
+        at(100);
+        okInt("one step in, still nothing above 0", px(0), 0x00);
+        at(100);
+        okInt("the brightest pixels come back first", px(0), 0x01);
+        at(600);
+        okInt("halfway up", px(0), 0x07);
+        at(800);
+        okInt("and it ends as itself", px(0), 0x5F);
+        okBool("every byte of it", memcmp(oled.buf, newPic, sizeof(newPic)) == 0, true);
+        okInt("at full contrast", (int)oled.contrastLevel, 200);
+        okBool("finished", tfState == TF_IDLE, true);
+
+        // CONTRAST and the palette are separate. With CONTRAST=120 the
+        // brightness runs 120 -> 0 -> 120, but the grey levels still step the
+        // full 0..F, sixteen of them - they are not scaled down to match.
+        contrast = 120; contrast_jump(120); veil_fadeOver(255, 0);
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        oled_transition(EFFECT_FADE);
+        okInt("CONTRAST=120 starts from 120", at(0), 120);
+        at(800);
+        okInt("is at 60 halfway out", (int)oled.contrastLevel, 60);
+        okInt("while the greys are eight levels down, not scaled", px(0), 0x70);
+        at(800);
+        okInt("reaches 0", (int)oled.contrastLevel, 0);
+        okInt("with the greys at 0 too", px(0), 0x00);
+        at(500); at(800);
+        okInt("halfway in, back at 60", (int)oled.contrastLevel, 60);
+        okInt("with the greys eight levels up", px(0), 0x07);
+        at(800);
+        okInt("and back to 120, never above it", (int)oled.contrastLevel, 120);
+        okBool("with the picture exactly itself", memcmp(oled.buf, newPic, sizeof(newPic)) == 0, true);
+        contrast = 200; contrast_jump(200);
+
+        // One panel write per palette step, not one per pass of the loop.
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        int before = oled.displayCalls;
+        oled_transition(EFFECT_FADE);
+        for (int i = 0; i < 1600; i++) at(1);
+        okInt("16 frames out, and one to clear", oled.displayCalls - before, 17);
+        at(500); for (int i = 0; i < 1600; i++) at(1);
+
+        // Turning around mid fade-in carries on from what is showing.
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        oled_transition(EFFECT_FADE);
+        at(1600); at(500); at(800);
+        okInt("fading in, halfway", px(0), 0x07);
+        oled_transition(EFFECT_FADE);
+        at(100);
+        okInt("turned around: one level down from there, no jump", px(0), 0x06);
+        at(800); at(0); at(500); at(1600);
+        okBool("and it still completes", tfState == TF_IDLE, true);
+
+        // The card renders the new card into the framebuffer before it asks
+        // for the transition. The fade must darken what was on the panel.
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        meta_parse("CMDMETA,1,12,Galaga|Year=1981");
+        meta_showCard(EFFECT_FADE);
+        at(100);
+        okInt("the card fades out the picture that was there, not itself", px(0), 0xE7);
+        at(1600); at(500); at(1600);
+        okBool("then fades itself in", lastSrcAtDraw == metaBin, true);
+        meta_reset();
+        srcBin = logoBin;
+        tfFadeMs = TFADE_MS_DEFAULT; tfBlankMs = TBLANK_MS_DEFAULT;
+    }
+
+    section("the card alternates with TRANSITION, not at random");
+    {
+        tfFadeMs = 0; tfBlankMs = 0;
+        meta_parse("CMDMETA,1,12,Galaga|Year=1981");
+        tEffect = 5;
+        lastEffect = -999;
+        g_fakeMillis += 13000;
+        meta_tick();
+        okInt("a TRANSITION of 5 wipes the card in with 5", lastEffect, 5);
+        tEffect = EFFECT_FADE;
+        lastEffect = -999;
+        g_fakeMillis += 13000;
+        meta_tick();
+        okBool("-2 fades the card in", tfState != TF_IDLE, true);
+        for (int i = 0; i < 5; i++) { contrast_tick(); transition_tick(); }
+        okInt("drawn plainly once dark", lastEffect, 0);
+        tEffect = -1;
+        tfFadeMs = TFADE_MS_DEFAULT; tfBlankMs = TBLANK_MS_DEFAULT;
+        meta_reset();
+    }
+
+
+    section("BOOTSCREEN_AS_MENU: what counts as drawing over the boot screen");
+    {
+        const char *quiet[] = { "QWERTZ", "CMDCON,255", "CMDFADE,800", "CMDTFADE,800,1000",
+                                "CMDDIM,120,80,-1,6000", "CMDFLIP,300", "CMDSAVER,0,0,0",
+                                "CMDSETTIME,1700000000", "CMDHWINF", "CMDMETAOFF",
+                                "CMDBOOTPIC,MENU,-2", "CMDBOOTINF" };
+        for (const char *c : quiet) {
+            bootHolding = true;
+            boot_noteCommand(c);
+            okBool((std::string("still holding after ") + c).c_str(), bootHolding, true);
+        }
+        // Anything not known to be quiet is assumed to draw - including
+        // commands the list has never heard of, and a prefix that only
+        // looks like a quiet one.
+        const char *drawing[] = { "CMDCOR,NES,-2", "CMDSPIC", "CMDTXT,1,15,0,0,20,Hi",
+                                  "CMDSORG", "CMDROT,1", "CMDMETA,1,12,Galaga", "CMDCONTRAST",
+                                  "NES", "CMDSOMETHINGNEW" };
+        for (const char *c : drawing) {
+            bootHolding = true;
+            boot_noteCommand(c);
+            okBool((std::string("released by ") + c).c_str(), bootHolding, false);
+        }
+    }
+
+    section("BOOTSCREEN_AS_MENU: the boot image as the menu's picture");
+    {
+        tfFadeMs = 800; tfBlankMs = 1000;
+        memset(logoBin, 0xAA, sizeof(logoBin));
+        actPicType = XBM;
+        bootHolding = true;
+        lastEffect = -999;
+        boot_showAsCore(EFFECT_FADE);
+        okBool("the boot image goes where core pictures go",
+               memcmp(logoBin, bootlogo_bits, BOOTIMG_BYTES) == 0, true);
+        bool bandBlack = true;
+        for (int i = BOOTIMG_BYTES; i < BOOT_PANEL_BYTES; i++) if (logoBin[i]) bandBlack = false;
+        okBool("with the band below it black", bandBlack, true);
+        okInt("as a 4bpp picture", actPicType, GSC);
+        okInt("at power-on, nothing is drawn", lastEffect, -999);
+        okBool("and nothing transitions", tfState == TF_IDLE, true);
+
+        bootHolding = false;
+        boot_showAsCore(5);
+        okInt("back to the menu later, it transitions like any picture", lastEffect, 5);
+        okBool("from the boot image", lastSrcAtDraw == logoBin, true);
+        boot_showAsCore(EFFECT_FADE);
+        okBool("the Fade included", tfState == TF_OUT, true);
+        transition_cancel();
+    }
+
+    section("BOOTSCREEN_AS_MENU: the power-on screen's outro");
+    {
+        auto tick = [](unsigned long ms) { g_fakeMillis += ms; contrast_tick(); transition_tick(); boot_outroTick(); };
+        auto barRects = []() {
+            std::string out;
+            for (const auto &r : oled.rects)
+                if (r.y == BOOT_BAR_Y) out += std::to_string(r.x) + (r.color ? "+ " : "- ");
+            return out;
+        };
+        const int barX = 32;
+        veil_fadeOver(255, 0);
+
+        // Interrupted mid-fill: fill on to the edge, clear back, stop.
+        bootHolding = true;
+        oled.resetProbe(); u8g2.draws.clear();
+        boot_outroStart(barX, 128, true);
+        for (int i = 0; i < 100; i++) tick(20);
+        ok("the fill finishes, then clears back across",
+              barRects(),
+              "128+ 144+ 160+ 176+ 192+ 208+ 224+ 240+ "
+              "32- 48- 64- 80- 96- 112- 128- 144- 160- 176- 192- 208- 224- 240- ");
+        bool greysRight = true;
+        for (const auto &r : oled.rects)
+            if (r.y == BOOT_BAR_Y && r.color && r.color != r.x / BOOT_BAR_STEP) greysRight = false;
+        okBool("each segment in its own grey, as the sweep draws it", greysRight, true);
+        okBool("and it is over", boActive, false);
+
+        // The version fades 15 -> 0 over a second, one grey at a time.
+        std::string greys;
+        for (const auto &d : u8g2.draws) if (d.text == "0.4.0b") greys += std::to_string(d.fg) + " ";
+        ok("the version steps down through every grey", greys, "14 13 12 11 10 9 8 7 6 5 4 3 2 1 ");
+        okBool("and is blacked out at the end", !oled.rects.empty() &&
+               oled.rects.back().x == 0 && oled.rects.back().y == BOOT_BAND_Y &&
+               oled.rects.back().color == SSD1322_BLACK, true);
+        okInt("leaving the text colour as it was", u8g2.fgColor, SSD1322_WHITE);
+
+        // Timing: the version takes BOOT_VERFADE_MS, the bar 20ms a segment.
+        bootHolding = true;
+        oled.resetProbe(); u8g2.draws.clear();
+        boot_outroStart(barX, 128, true);
+        tick(0);
+        tick(500);
+        okBool("half a second in, the version is still fading", boVerDone, false);
+        tick(500);
+        okBool("gone at one second", boVerDone, true);
+
+        // Interrupted while clearing: just finish clearing.
+        bootHolding = true;
+        oled.resetProbe();
+        boot_outroStart(barX, 176, false);
+        for (int i = 0; i < 100; i++) tick(20);
+        ok("interrupted clearing, it only finishes clearing", barRects(), "176- 192- 208- 224- 240- ");
+
+        // A fill that had just reached the edge still has its clear to do.
+        bootHolding = true;
+        oled.resetProbe();
+        boot_outroStart(barX, 256, true);
+        for (int i = 0; i < 100; i++) tick(20);
+        ok("a fill just at the edge clears back",
+              barRects(), "32- 48- 64- 80- 96- 112- 128- 144- 160- 176- 192- 208- 224- 240- ");
+
+        // The daemon spoke during the hold: no bar yet, only the version.
+        bootHolding = true;
+        oled.resetProbe(); u8g2.draws.clear();
+        boot_outroStart(barX, -1, true);
+        for (int i = 0; i < 100; i++) tick(20);
+        ok("spoken to during the hold, no bar is drawn", barRects(), "");
+        okBool("but the version still fades", u8g2.draws.size() >= 14, true);
+
+        // It waits for the power-on fade-in, which redraws the whole frame
+        // from a copy every step and would undo its drawing.
+        bootHolding = true;
+        oled.resetProbe(); u8g2.draws.clear();
+        transition_fadeIn(800);
+        boot_outroStart(barX, 128, true);
+        tick(20); tick(20);
+        ok("nothing while the fade-in is running", barRects(), "");
+        for (int i = 0; i < 40; i++) tick(20);
+        okBool("then it runs", barRects().size() > 0, true);
+
+        // Anything that takes the panel stops it on the spot.
+        bootHolding = true;
+        oled.resetProbe(); u8g2.draws.clear();
+        boot_outroStart(barX, 128, true);
+        tick(0); tick(20); tick(20);
+        size_t before = oled.rects.size(), drawsBefore = u8g2.draws.size();
+        boot_noteCommand("CMDCOR,NES,-2");
+        for (int i = 0; i < 100; i++) tick(20);
+        okBool("a picture arriving stops the bar", oled.rects.size() == before, true);
+        okBool("and the version fade", u8g2.draws.size() == drawsBefore, true);
+        okBool("for good", boActive, false);
+    }
+
+    section("pinned rows stay, the rest page under them");
+    {
+        // The shape asked for: System and Year fixed, Genre/Region on page 1,
+        // Format on page 2.
+        meta_parse("CMDMETA,2,0,2,Airwolf|System=NES|Year=1989, Acclaim"
+                   "|Genre=Shooter|Region=USA|Format=NES");
+        okInt("pinned count parsed", metaPinned, 2);
+        okInt("fields",              metaFieldCount, 5);
+        okInt("rows",                CON_FIELD_ROWS, 4);
+        okInt("slots left to page",  meta_pageSlots(), 2);
+        okInt("pages",               meta_pageCount(), 2);
+
+        metaHasIcon = false;
+        fieldPage = 0;
+        u8g2.resetProbe();
+        meta_renderConsole();
+        okBool("page 0 shows System", u8g2.printLog.find("System") != std::string::npos, true);
+        okBool("page 0 shows Year",   u8g2.printLog.find("Year")   != std::string::npos, true);
+        okBool("page 0 shows Genre",  u8g2.printLog.find("Genre")  != std::string::npos, true);
+        okBool("page 0 shows Region", u8g2.printLog.find("Region") != std::string::npos, true);
+        okBool("page 0 hides Format", u8g2.printLog.find("Format") == std::string::npos, true);
+
+        fieldPage = 1;
+        u8g2.resetProbe();
+        meta_renderConsole();
+        okBool("page 1 still shows System", u8g2.printLog.find("System") != std::string::npos, true);
+        okBool("page 1 still shows Year",   u8g2.printLog.find("Year")   != std::string::npos, true);
+        okBool("page 1 shows Format",       u8g2.printLog.find("Format") != std::string::npos, true);
+        okBool("page 1 hides Genre",        u8g2.printLog.find("Genre")  == std::string::npos, true);
+        fieldPage = 0;
+    }
+
+    section("a script that sends fewer counts still works");
+    {
+        // The title cannot contain a comma - metasanitize strips them - so a
+        // comma-terminated run of digits is the only thing that can be a
+        // count. A script that sends neither, or only the first, must still
+        // leave the title intact.
+        meta_parse("CMDMETA,2,12,Super Mario World|System=SNES");
+        okInt("no pinned count",  metaPinned, 0);
+        okInt("no compact count", metaCompact, 0);
+        ok   ("title intact",     metaTitle, "Super Mario World");
+
+        meta_parse("CMDMETA,2,12,2,Super Mario World|System=SNES|Year=1990");
+        okInt("pinned alone parsed",   metaPinned, 2);
+        okInt("compact defaults to 0", metaCompact, 0);
+        ok   ("title after one count", metaTitle, "Super Mario World");
+
+        meta_parse("CMDMETA,1,12,2,8,NBA Jam|Year=1993|Manufctr=Midway");
+        okInt("both counts parsed", metaPinned, 2);
+        // Clamped to what actually arrived - the script counts fields it
+        // emitted, and a field with an empty value is never emitted.
+        okInt("compact clamped to the fields", metaCompact, 2);
+        ok   ("title after both counts", metaTitle, "NBA Jam");
+
+        // ...and a title that happens to start with digits is not eaten,
+        // whichever count it lands after.
+        meta_parse("CMDMETA,2,12,1943 The Battle of Midway|System=NES");
+        okInt("digits are not a count", metaPinned, 0);
+        ok   ("numeric title intact",   metaTitle, "1943 The Battle of Midway");
+
+        meta_parse("CMDMETA,2,12,0,1943 The Battle of Midway|System=NES");
+        okInt("explicit zero",        metaPinned, 0);
+        ok   ("title after a zero",   metaTitle, "1943 The Battle of Midway");
+
+        meta_parse("CMDMETA,1,12,0,0,1943 The Battle of Midway|Year=1984");
+        okInt("two explicit zeros",    metaCompact, 0);
+        ok   ("title after two zeros", metaTitle, "1943 The Battle of Midway");
+    }
+
+    section("pinning cannot swallow the whole list");
+    {
+        meta_parse("CMDMETA,2,0,9,Game|A=1|B=2|C=3|D=4|E=5");
+        okBool("pinned capped below the row count",
+               meta_pinnedRows() <= CON_FIELD_ROWS - 1, true);
+        okBool("always a slot to page with", meta_pageSlots() >= 1, true);
+        okBool("page count is sane",         meta_pageCount() >= 1, true);
+
+        // Fewer fields than pinned asks for.
+        meta_parse("CMDMETA,2,0,3,Game|A=1");
+        okBool("pinned never exceeds the fields",
+               meta_pinnedRows() <= metaFieldCount, true);
+        okInt ("one page",                   meta_pageCount(), 1);
+    }
+
+    section("no pinning behaves as before");
+    {
+        meta_parse("CMDMETA,2,0,0,Game|A=1|B=2|C=3|D=4|E=5|F=6");
+        okInt("all four rows page", meta_pageSlots(), 4);
+        okInt("six fields, two pages", meta_pageCount(), 2);
+    }
+
+
+    section("pinned and paged rows share a column");
+    {
+        meta_parse("CMDMETA,2,0,2,Airwolf|System=NES|Year=1989, Acclaim"
+                   "|Genre=Shooter|Region=USA|Format=NES");
+        metaHasIcon = false;
+        fieldPage = 0;
+        u8g2.resetProbe();
+        meta_renderConsole();
+
+        int16_t xSystem = u8g2.xOf("System");
+        int16_t xYear   = u8g2.xOf("Year");
+        int16_t xGenre  = u8g2.xOf("Genre");
+        int16_t xRegion = u8g2.xOf("Region");
+
+        okInt("System label x", xSystem, meta_textX());
+        okInt("Year label x",   xYear,   meta_textX());
+        okInt("Genre label x",  xGenre,  meta_textX());
+        okInt("Region label x", xRegion, meta_textX());
+        okBool("pinned and paged labels share a column",
+               xSystem == xGenre && xYear == xRegion, true);
+
+        // Values share one column too. They used to start immediately after
+        // each label, so "Year" and "System" put theirs in different places
+        // and the rows read as misaligned.
+        int16_t vSystem = u8g2.xOf("NES");
+        int16_t vYear   = u8g2.xOf("1989");
+        int16_t vGenre  = u8g2.xOf("Shooter");
+        int16_t vRegion = u8g2.xOf("USA");
+        okBool("all four values share a column",
+               vSystem == vYear && vYear == vGenre && vGenre == vRegion, true);
+        okBool("the column clears the widest label",
+               vSystem >= meta_textX() + meta_textWidth("System"), true);
+
+        // ...and it does not move when the page turns.
+        fieldPage = 1;
+        u8g2.resetProbe();
+        meta_renderConsole();
+        okInt("column unchanged on page 2", u8g2.xOf("NES"), vSystem);
+        fieldPage = 0;
+    }
+
+    section("boot screen - the band the firmware keeps for itself");
+    {
+        // A user image is the panel above the band, and the band holds the
+        // power-on sweep and then the build version. Everything here is
+        // arithmetic over the constants, which is what quietly goes wrong when
+        // one of them is tuned: too small a band and the sweep is drawn over
+        // the picture, too large and the picture loses rows for nothing.
+        okInt ("band reaches the bottom of the panel",
+               BOOT_BAND_Y + BOOT_BAND_H, BOOT_PANEL_H);
+        okInt ("image plus band is the whole panel",
+               BOOTIMG_H + BOOT_BAND_H, BOOT_PANEL_H);
+        okInt ("image is 54 rows",   BOOTIMG_H, 54);
+        okInt ("image is 256 wide",  BOOTIMG_W, 256);
+        okInt ("image bytes at 4bpp", BOOTIMG_BYTES, 6912);
+        okInt ("legacy image bytes",  BOOTIMG_LEGACY_BYTES, 8192);
+
+        // oled_showStartScreen() blacks metaBin from BOOTIMG_BYTES to the end
+        // of the framebuffer before handing it to draw4bppBitmap(). That tail
+        // has to be the band exactly - short and the sweep runs over a strip
+        // of stale picture, long and it eats the bottom of the image.
+        okInt ("panel is a whole framebuffer", BOOT_PANEL_BYTES, 8192);
+        okInt ("blanked tail is exactly the band",
+               (BOOT_PANEL_BYTES - BOOTIMG_BYTES) / (BOOT_PANEL_W / 2),
+               BOOT_BAND_H);
+
+        // The built-in picture goes through the same buffer as a stored one,
+        // so it has to be exactly the same shape. Regenerated at the wrong
+        // size it would either leave a strip of stale buffer above the band or
+        // be copied over the band the sweep needs.
+        okInt ("built-in logo is the image size",
+               (int)sizeof(bootlogo_bits), BOOTIMG_BYTES);
+        okInt ("built-in logo width",  bootlogo_width,  BOOTIMG_W);
+        okInt ("built-in logo height", bootlogo_height, BOOTIMG_H);
+
+        okInt ("blank row above the sweep bar",
+               BOOT_BAR_Y - BOOT_BAND_Y, BOOT_GAP_BAND);
+        okInt ("sweep bar ends one row off the bottom",
+               BOOT_BAR_Y + BOOT_BAR_H - 1, BOOT_PANEL_H - 2);
+        okBool("sweep bar starts below the image",
+               BOOT_BAR_Y >= BOOTIMG_H, true);
+        okInt ("the sweep crosses the panel in whole steps",
+               BOOT_PANEL_W % BOOT_BAR_STEP, 0);
+        // The bar's grey is its step index, so the last step has to be a legal
+        // 4bpp level. Halve BOOT_BAR_STEP and the gradient would run to 31,
+        // whose low nibble - the only part the panel shows - is black again.
+        okBool("the brightest sweep step is a legal grey",
+               (BOOT_PANEL_W / BOOT_BAR_STEP) - 1 <= SSD1322_WHITE, true);
+        okBool("a re-show's sweep repeats at least once",
+               BOOT_SWEEP_REPEATS >= 1, true);
+        okBool("a sweep step takes time", BOOT_BAR_MS > 0, true);
+
+        okInt ("version sits on the last row", BOOT_VER_Y, BOOT_PANEL_H - 1);
+        okBool("version text stays below the image",
+               BOOT_VER_Y - BOOT_VER_H + 1 >= BOOTIMG_H, true);
+
+        // The picture and the version go up together and the bar starts a
+        // second later, which is long enough to register as a still frame and
+        // short enough that somebody watching sees it start.
+        okInt ("bar starts one second in", BOOT_HOLD_MS, 1000);
+
+        // The whole reason the bar has to be pushed right: the version is
+        // drawn first and stays up, and the two occupy the same rows. Nothing
+        // but the column reservation keeps the sweep off the glyphs.
+        okBool("version and sweep bar share rows",
+               BOOT_VER_Y - BOOT_VER_H + 1 <= BOOT_BAR_Y + BOOT_BAR_H - 1, true);
+
+        // boot_barStartX is the only thing that decides where the bar may
+        // start, so the invariants it has to hold are checked over the whole
+        // range of widths a version string could measure rather than for the
+        // one string this build happens to carry.
+        bool aligned = true, inRange = true, clearsText = true, keepsGap = true;
+        for (int w = 0; w < BOOT_BAR_X_MAX; w++) {
+            int x = boot_barStartX(w);
+            if (x % BOOT_BAR_STEP != 0)                  aligned    = false;
+            if (x < BOOT_BAR_STEP || x > BOOT_BAR_X_MAX) inRange    = false;
+            if (x <= w)                                  clearsText = false;
+            if (w <= BOOT_BAR_X_MAX - BOOT_VER_GAP &&
+                x < w + BOOT_VER_GAP)                    keepsGap   = false;
+        }
+        okBool("bar starts on a whole sweep step",   aligned,    true);
+        okBool("bar start stays inside the panel",   inRange,    true);
+        okBool("bar never starts on the version",    clearsText, true);
+        okBool("bar leaves the gap after the text",  keepsGap,   true);
+        okInt ("a wide version string is clamped",
+               boot_barStartX(BOOT_PANEL_W), BOOT_BAR_X_MAX);
+        // Both ends are multiples of the step, so the sweep still finishes
+        // exactly on the panel edge however far right it was pushed.
+        okInt ("the shortened sweep still ends on the edge",
+               (BOOT_PANEL_W - BOOT_BAR_X_MAX) % BOOT_BAR_STEP, 0);
+    }
+
+    section("busy bar: the boot sweep in the band while the downloader runs");
+    {
+        busy_cancel();
+        tfState = TF_IDLE;
+        oled.resetProbe();
+        busy_parse("CMDBUSY,1");
+        okBool("CMDBUSY,1 starts it", busyActive, true);
+        busy_tick();
+        okInt ("nothing before the first step", (long)oled.rects.size(), 0);
+
+        // One whole fill: every segment on the bar's rows, grey = position.
+        bool rows = true, grey = true;
+        for (int i = 0; i < BOOT_PANEL_W / BOOT_BAR_STEP; i++) {
+            g_fakeMillis += BOOT_BAR_MS; busy_tick();
+        }
+        okInt ("a fill is one rect per step", (long)oled.rects.size(), BOOT_PANEL_W / BOOT_BAR_STEP);
+        for (size_t i = 0; i < oled.rects.size(); i++) {
+            const FakeOled::Rect &r = oled.rects[i];
+            if (r.y != BOOT_BAR_Y || r.h != BOOT_BAR_H || r.w != BOOT_BAR_STEP) rows = false;
+            if (r.x != (int)i * BOOT_BAR_STEP || r.color != r.x / BOOT_BAR_STEP) grey = false;
+        }
+        okBool("on the boot bar's rows, nowhere above the band", rows, true);
+        okBool("full width, grey by position like the boot sweep", grey, true);
+        okBool("and it keeps going", busyActive, true);
+
+        // A stall - a picture arriving - does not come back as a burst.
+        oled.resetProbe();
+        g_fakeMillis += 5000; busy_tick();
+        okInt ("a stall resumes with one step, not a burst", (long)oled.rects.size(), 1);
+
+        // CMDBUSY,0 mid-clear: finishes clearing to the edge, then stops.
+        busy_parse("CMDBUSY,0");
+        okBool("CMDBUSY,0 lets it finish", busyActive, true);
+        oled.resetProbe();
+        for (int i = 0; i < 64; i++) { g_fakeMillis += BOOT_BAR_MS; busy_tick(); }
+        okBool("then it stops", busyActive, false);
+        bool black = !oled.rects.empty();
+        for (size_t i = 0; i < oled.rects.size(); i++) if (oled.rects[i].color != SSD1322_BLACK) black = false;
+        okBool("having only cleared - the band ends empty", black, true);
+        okInt ("up to the edge", oled.rects.back().x + BOOT_BAR_STEP, BOOT_PANEL_W);
+
+        // Stopped mid-fill: fills to the edge, then clears the whole bar.
+        busy_start();
+        for (int i = 0; i < 3; i++) { g_fakeMillis += BOOT_BAR_MS; busy_tick(); }
+        busy_stop();
+        oled.resetProbe();
+        for (int i = 0; i < 64; i++) { g_fakeMillis += BOOT_BAR_MS; busy_tick(); }
+        okInt ("stopped mid-fill: the rest of the fill and a whole clear",
+               (long)oled.rects.size(), BOOT_PANEL_W / BOOT_BAR_STEP - 3 + BOOT_PANEL_W / BOOT_BAR_STEP);
+        okInt ("ending black", oled.rects.back().color, SSD1322_BLACK);
+
+        // Something else taking the panel stops it at once; setup does not.
+        busy_start();
+        busy_noteCommand("CMDCON,120");
+        okBool("a quiet command leaves it running", busyActive, true);
+        busy_noteCommand("CMDBUSY,1");
+        okBool("and so does its own", busyActive, true);
+        busy_noteCommand("CMDCOR,nes,-2");
+        okBool("a picture stops it dead", busyActive, false);
+        oled.resetProbe();
+        g_fakeMillis += 10 * BOOT_BAR_MS; busy_tick();
+        okInt ("without another segment", (long)oled.rects.size(), 0);
+
+        // It waits out a Fade transition rather than draw into it.
+        busy_start();
+        tfState = TF_BLANK;
+        oled.resetProbe();
+        g_fakeMillis += 10 * BOOT_BAR_MS; busy_tick();
+        okInt ("nothing drawn during a Fade", (long)oled.rects.size(), 0);
+        tfState = TF_IDLE;
+        g_fakeMillis += BOOT_BAR_MS; busy_tick();
+        okInt ("and it starts after", (long)oled.rects.size(), 1);
+        busy_cancel();
     }
 
     section("meta_reset returns to plain picture display");

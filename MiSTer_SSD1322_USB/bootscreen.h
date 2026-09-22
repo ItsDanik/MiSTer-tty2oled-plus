@@ -4,21 +4,46 @@
   Part of the tty2oled game-metadata fork.
 
   Upstream's start screen is hardcoded: a 120x46 1bpp XBM drawn at x=82 with a
-  baked-in sweep animation. This module lets the user replace it with any
-  256x64 4bpp (GSC) image, stored in the ESP's own flash so it appears at
-  power-up - with the MiSTer switched off, the SD card removed, or the daemon
-  never starting.
+  baked-in sweep animation. This fork's built-in screen is a full-width 4bpp
+  picture instead (bootlogo.h, compiled in), and this module lets the user
+  replace it with any 256x54 4bpp (GSC) image of their own, stored in the ESP's
+  own flash so it appears at power-up - with the MiSTer switched off, the SD
+  card removed, or the daemon never starting.
+
+  Both are the same kind of thing and take the same path through
+  oled_showStartScreen(): a stored image is simply preferred to the built-in
+  one. Nothing else about the start screen changes either way.
+
+  ---------------------------------------------------------------------------
+  Why 256x54 and not 256x64
+  ---------------------------------------------------------------------------
+  The bottom BOOT_BAND_H rows of the panel belong to the firmware, not to the
+  picture. The power-on sweep animates there and the build version is printed
+  there when the sweep finishes, and both have to happen whatever image is
+  stored - a display that boots into somebody's artwork and never says which
+  firmware it is running cannot answer the one question the boot screen exists
+  to answer.
+
+  A full-screen image would leave nowhere for either, which is what the first
+  version of this module did: storing a picture switched the animation and the
+  version off entirely.
+
+  Ten rows is what the two elements actually need, measured off the stock
+  screen rather than guessed. The sweep is an 8-row bar on row 55 (rows
+  55..62); the version is the 5x7 font on baseline 63 (rows 57..63). Their
+  union is rows 55..63, and the tenth row is the blank one that keeps the
+  picture from sitting directly on the bar.
 
   ---------------------------------------------------------------------------
   Storage
   ---------------------------------------------------------------------------
   LittleFS rather than NVS/Preferences. The sketch already uses Preferences for
   the d.ti board revision, so NVS was the tempting option, but the default
-  ESP32 partition table gives NVS only 20KB total and an 8192-byte blob plus
+  ESP32 partition table gives NVS only 20KB total and a 6912-byte blob plus
   per-entry overhead leaves very little headroom - a partition scheme change or
   one more stored setting would start failing writes at runtime. The default
   "ESP32-S3 Dev Module" scheme already carries a ~1.5MB filesystem partition,
-  so LittleFS holds an 8KB image with room to spare and degrades cleanly.
+  so LittleFS holds a 7KB image with room to spare and degrades cleanly.
 
   If LittleFS is unavailable for any reason the module reports "no image" and
   the sketch falls back to the built-in logo. A corrupt or wrong-sized file is
@@ -27,7 +52,7 @@
   ---------------------------------------------------------------------------
   Wire protocol
   ---------------------------------------------------------------------------
-  CMDWRBOOT     followed by exactly 8192 raw bytes; stored and acknowledged
+  CMDWRBOOT     followed by exactly BOOTIMG_BYTES raw bytes; acknowledged
   CMDCLRBOOT    delete the stored image, revert to the built-in logo
   CMDBOOTINF    report whether a custom image is present
 */
@@ -35,16 +60,105 @@
 #ifndef BOOTSCREEN_H
 #define BOOTSCREEN_H
 
+// ---------------------------------------------------------------------------
+// Panel geometry
+// ---------------------------------------------------------------------------
+// Literals rather than the sketch's DispWidth/DispHeight globals because these
+// size a buffer and a Serial.readBytes() count, which are needed at compile
+// time. This fork is an SSD1322 256x64 throughout; see bitmaps.h.
+//
+// Each element below is placed off BOOT_BAND_Y so the band cannot be resized
+// without the bar and the version moving with it.
+#define BOOT_PANEL_W   256
+#define BOOT_PANEL_H   64
+
+#define BOOT_BAND_H    10                            // firmware's rows: 54..63
+#define BOOT_BAND_Y    (BOOT_PANEL_H - BOOT_BAND_H)  // 54, first reserved row
+#define BOOT_GAP_BAND  1                             // blank row above the bar
+#define BOOT_BAR_H     8                             // sweep bar height
+#define BOOT_BAR_Y     (BOOT_BAND_Y + BOOT_GAP_BAND) // 55, bar rows 55..62
+#define BOOT_BAR_STEP  16                            // bar segment width
+#define BOOT_VER_H     7                             // 5x7 font cell height
+#define BOOT_VER_Y     (BOOT_PANEL_H - 1)            // 63, version baseline
+
+// Where the version sits and how much room the sweep has to leave it. The
+// version is drawn with the picture and stays up for the whole animation, so
+// the bar can no longer use the full width of the band - it would erase the
+// glyphs on its way past. BOOT_VER_X is the left edge, BOOT_VER_GAP the blank
+// columns between the text and the first bar segment.
+#define BOOT_VER_X     0
+#define BOOT_VER_GAP   4
+
+// The bar never starts later than this, whatever the version string measures.
+// A pathological string would otherwise leave no bar at all; past this point
+// the text wins the columns instead, which only a testing build carrying every
+// marker could reach. Generous enough that it never does in practice.
+#define BOOT_BAR_X_MAX 96
+
+// How long the picture and version are shown before the bar starts moving.
+// Short: the picture is not the point any more - the panel now stays on this
+// screen for as long as the MiSTer takes to boot, and the animation is what
+// says the display is alive and waiting rather than hung.
+#define BOOT_HOLD_MS   1000
+// The power-on screen fades in from black to full over this long - palette
+// steps and contrast together, like a Fade transition - and the same 0.8s
+// every fade defaults to. It must fit inside the hold: the palette steps
+// redraw the whole frame from a copy, and would wipe out the sweep's bar if
+// they overlapped it (test_meta_layout checks). boot_waitOrCommand ticks it,
+// and if the daemon speaks first it finishes in loop(). Fixed rather than
+// taken from the ini: nothing from the ini has arrived yet.
+#define BOOT_FADE_MS   800
+
+// One step of the sweep.
+#define BOOT_BAR_MS    20
+
+// How many fill-then-erase cycles a *re-show* runs - CMDSORG, or the tilt
+// sensor flipping the panel while the daemon is connected and silent. The
+// power-on sweep does not use this: it repeats until the daemon says something
+// (see boot_waitOrCommand), which is the only honest definition of "until the
+// MiSTer is ready".
+#define BOOT_SWEEP_REPEATS 8
+
+// ---------------------------------------------------------------------------
+// boot_barStartX - the first column the sweep may use, given the width the
+// version text actually measured.
+//
+// Rounded up to a whole BOOT_BAR_STEP so every segment stays aligned to the
+// gradient: the bar's grey is its position (i/BOOT_BAR_STEP), and the last
+// segment still has to end exactly on the panel edge.
+// ---------------------------------------------------------------------------
+static inline int boot_barStartX(int verWidth) {
+  int x = (verWidth > 0 ? verWidth : 0) + BOOT_VER_GAP;
+  x = ((x + BOOT_BAR_STEP - 1) / BOOT_BAR_STEP) * BOOT_BAR_STEP;  // whole steps
+  if (x < BOOT_BAR_STEP) x = BOOT_BAR_STEP;
+  if (x > BOOT_BAR_X_MAX) x = BOOT_BAR_X_MAX;
+  return x;
+}
+
+// A whole framebuffer, which is what draw4bppBitmap() copies whatever the
+// picture is - so the rows past the image have to be blacked out by hand.
+#define BOOT_PANEL_BYTES (BOOT_PANEL_W * BOOT_PANEL_H / 2)   // 8192
+
+// What a user image is: the panel above the band.
+#define BOOTIMG_W      BOOT_PANEL_W
+#define BOOTIMG_H      BOOT_BAND_Y                   // 54
+#define BOOTIMG_BYTES  (BOOTIMG_W * BOOTIMG_H / 2)   // 6912, 4bpp
+
+// Images stored before the band existed are full-screen. They are still shown
+// - cropped to the top BOOTIMG_H rows - rather than discarded, so an update
+// does not silently blank a boot screen somebody already installed.
+#define BOOTIMG_LEGACY_BYTES BOOT_PANEL_BYTES        // 8192
+
 #ifdef ESP32X
 
 #include <FS.h>
 #include <LittleFS.h>
 
 #define BOOTIMG_PATH  "/boot.gsc"
-#define BOOTIMG_BYTES 8192
 
 bool bootFsReady   = false;
 bool bootImgExists = false;
+bool bootImgLegacy = false;      // stored full-screen, predates the band
 
 // ---------------------------------------------------------------------------
 // boot_begin - mount the filesystem and note whether a custom image is there.
@@ -61,18 +175,28 @@ void boot_begin(void) {
   }
   File f = LittleFS.open(BOOTIMG_PATH, "r");
   if (f) {
-    // Only accept an image that is exactly the framebuffer size. A truncated
-    // file from an interrupted upload must not be shown.
-    bootImgExists = (f.size() == BOOTIMG_BYTES);
+    // Only accept one of the two exact sizes. Anything else is a truncated
+    // upload and must not be shown: the reader takes a fixed byte count, so a
+    // short file would be drawn with whatever happened to follow it.
+    size_t sz    = f.size();
+    bootImgLegacy = (sz == BOOTIMG_LEGACY_BYTES);
+    bootImgExists = (sz == BOOTIMG_BYTES) || bootImgLegacy;
     f.close();
   } else {
     bootImgExists = false;
+    bootImgLegacy = false;
   }
 }
 
 // ---------------------------------------------------------------------------
 // boot_load - read the stored image into the supplied buffer.
 // Returns false if there is no valid image, leaving the buffer untouched.
+//
+// BOOTIMG_BYTES either way: a legacy full-screen image is simply read down to
+// the top of the band and the rest of the file ignored, which crops it rather
+// than scaling it. Cropping is the honest option - the band was carved out of
+// the bottom of the panel, so the rows that go are exactly the rows the
+// firmware now draws over.
 // ---------------------------------------------------------------------------
 bool boot_load(uint8_t *dst, size_t cap) {
   if (!bootFsReady || !bootImgExists || cap < BOOTIMG_BYTES) return false;
@@ -86,6 +210,7 @@ bool boot_load(uint8_t *dst, size_t cap) {
   if (got != BOOTIMG_BYTES) {
     // Short read means the file is damaged; stop trusting it.
     bootImgExists = false;
+    bootImgLegacy = false;
     return false;
   }
   return true;
@@ -121,6 +246,7 @@ bool boot_store(const uint8_t *src, size_t len) {
   }
 
   bootImgExists = true;
+  bootImgLegacy = false;
   return true;
 }
 
@@ -131,15 +257,19 @@ bool boot_clear(void) {
   if (!bootFsReady) return false;
   LittleFS.remove(BOOTIMG_PATH);
   bootImgExists = false;
+  bootImgLegacy = false;
   return true;
 }
 
 // ---------------------------------------------------------------------------
 // boot_info - one-line status for CMDBOOTINF / the hardware info screen.
 // ---------------------------------------------------------------------------
+// "legacy" is its own answer rather than "custom" so `tty2oled-bootimg.sh
+// status` can say the image is being cropped and a 256x54 one would not be.
 const char *boot_info(void) {
   if (!bootFsReady)   return "BOOTIMG,nofs";
   if (!bootImgExists) return "BOOTIMG,builtin";
+  if (bootImgLegacy)  return "BOOTIMG,legacy";
   return "BOOTIMG,custom";
 }
 
@@ -147,6 +277,7 @@ const char *boot_info(void) {
 
 bool bootFsReady   = false;
 bool bootImgExists = false;
+bool bootImgLegacy = false;
 
 void        boot_begin(void)                              { }
 bool        boot_load(uint8_t *d, size_t c)               { (void)d; (void)c; return false; }

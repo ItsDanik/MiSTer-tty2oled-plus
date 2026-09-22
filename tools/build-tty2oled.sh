@@ -6,7 +6,7 @@
 #
 # <board> must match the hardware. Ask the display itself if unsure - over SSH
 # on the MiSTer:
-#     . /media/fat/tty2oled/tty2oled-system.ini
+#     . /media/fat/tty2oledplus/tty2oled-system.ini
 #     stty -F ${TTYDEV} ${BAUDRATE} ${TTYPARAM}
 #     echo "CMDHWINF" > ${TTYDEV}; read -t5 R < ${TTYDEV}; echo "$R"
 #   HWLOLIN32  -> lolin32
@@ -69,7 +69,17 @@ arduino-cli config dump | grep -qF "${ESP32_INDEX}" || \
   arduino-cli config add board_manager.additional_urls "${ESP32_INDEX}"
 
 # --- Core and libraries -----------------------------------------------------
-if ! arduino-cli core list | grep -q '^esp32:esp32'; then
+# ESP32_CORE_VERSION pins the core, which is what makes a CI build the same
+# firmware as a local one - the core is most of the binary, and 3.x already
+# broke upstream's sketch once (the LEDC API). Unset, whatever core is
+# installed is used, and the newest is installed when there is none.
+if [ -n "${ESP32_CORE_VERSION:-}" ]; then
+  if ! arduino-cli core list | grep -qE "^esp32:esp32 +${ESP32_CORE_VERSION//./\\.} "; then
+    say "Installing ESP32 core ${ESP32_CORE_VERSION} (roughly 1GB)"
+    arduino-cli core update-index
+    arduino-cli core install "esp32:esp32@${ESP32_CORE_VERSION}"
+  fi
+elif ! arduino-cli core list | grep -q '^esp32:esp32'; then
   say "Installing the ESP32 core (roughly 1GB, first run only)"
   arduino-cli core update-index
   arduino-cli core install esp32:esp32
@@ -115,14 +125,14 @@ ls -la "${OUTDIR}"
 if [ -f "${MERGED}" ]; then
   cat <<EOM
 
-Copy this to the MiSTer (\\\\MISTER\\fat\\tty2oled\\):
+Copy this to the MiSTer (\\\\MISTER\\fat\\tty2oledplus\\):
   ${MERGED}
 
 Then flash it from the MiSTer over SSH, with the daemon stopped:
   python /tmp/esptool.py --chip ${CHIP} --port /dev/ttyUSB0 --baud 921600 \\
     --before default_reset --after hard_reset write_flash \\
     --compress --flash_mode dio --flash_freq 80m --flash_size detect \\
-    0x0 /media/fat/tty2oled/MiSTer_SSD1322_USB.ino.merged.bin
+    0x0 /media/fat/tty2oledplus/MiSTer_SSD1322_USB.ino.merged.bin
 EOM
 else
   warn "No merged.bin produced - core too old. Flash the parts separately:"

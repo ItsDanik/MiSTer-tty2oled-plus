@@ -1,7 +1,7 @@
 #!/bin/bash
 
-. /media/fat/tty2oled/tty2oled-system.ini
-. /media/fat/tty2oled/tty2oled-user.ini
+. /media/fat/tty2oledplus/tty2oled-system.ini
+. /media/fat/tty2oledplus/tty2oled-user.ini
 
 # Start
 start() {

@@ -5,10 +5,10 @@
 # Load a game first, then run this. MiSTer's state files persist, so what it
 # reads is exactly what the daemon saw.
 #
-#   chmod +x /media/fat/tty2oled/tty2oled-diag.sh
-#   /media/fat/tty2oled/tty2oled-diag.sh
+#   chmod +x /media/fat/tty2oledplus/tty2oled-diag.sh
+#   /media/fat/tty2oledplus/tty2oled-diag.sh
 
-TTY2OLED_PATH="${TTY2OLED_PATH:-/media/fat/tty2oled}"
+TTY2OLED_PATH="${TTY2OLED_PATH:-/media/fat/tty2oledplus}"
 
 # This reads MiSTer's /tmp state files, so it is only meaningful on the MiSTer.
 # Run from the repo on a workstation it used to print a screenful of MISSING
@@ -93,6 +93,36 @@ else
     printf 'FIELD  : %s\n' "${f//$'\t'/ = }"
   done
 fi
+
+hr
+echo "SETTINGS IN FORCE"
+hr
+echo "system ini : ${TTY2OLED_PATH}/tty2oled-system.ini   (shipped, overwritten on deploy)"
+if [ -r "${TTY2OLED_PATH}/tty2oled-user.ini" ]; then
+  echo "user ini   : ${TTY2OLED_PATH}/tty2oled-user.ini   ($(grep -cvE '^[[:space:]]*(#|$)' "${TTY2OLED_PATH}/tty2oled-user.ini") setting(s), read second, wins)"
+else
+  echo "user ini   : none - create it to override anything below"
+fi
+echo
+# Both inis are already sourced, so these are the values actually in use.
+for v in SHOW_METADATA METADATA_INTERVAL METADATA_FIELDS METADATA_PINNED \
+         ARCADE_FIELDS ARCADE_FIELDS_WIDE ARCADE_PINNED \
+         COMPACT_YEAR_COMPANY METADATA_POLL USE_NAMES_TXT CONTRAST \
+         DIM_AFTER DIM_CONTRAST DIM_WAKE CONTRAST_FADE_MS FLIP_MINUTES SCREENSAVER; do
+  eval "val=\${${v}:-<unset>}"
+  # Mark anything the user ini overrides, so it is obvious which file to edit.
+  src="system"
+  if [ -r "${TTY2OLED_PATH}/tty2oled-user.ini" ] &&
+     grep -qE "^[[:space:]]*${v}=" "${TTY2OLED_PATH}/tty2oled-user.ini"; then
+    src="USER"
+  fi
+  printf '  %-22s %-34s [%s]\n' "${v}" "${val}" "${src}"
+done
+echo
+echo "To change one, put it in the USER ini and restart - never edit the system"
+echo "one, a deploy overwrites it:"
+echo "    echo 'DIM_AFTER=\"60\"' >> ${TTY2OLED_PATH}/tty2oled-user.ini"
+echo "    ${TTY2OLED_PATH}/S60tty2oled restart"
 
 hr
 echo "TITLE INDEX"

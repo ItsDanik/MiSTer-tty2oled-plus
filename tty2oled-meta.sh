@@ -49,11 +49,11 @@
 # Searched in order, first hit wins; missing roots are skipped.
 : "${GAME_ROOTS:=/media/fat /media/usb0 /media/usb1 /media/usb2 /media/usb3 /media/usb4 /media/usb5 /media/fat/cifs}"
 
-: "${TITLE_INDEX_DIR:=/media/fat/tty2oled/titleindex}"
+: "${TITLE_INDEX_DIR:=/media/fat/tty2oledplus/titleindex}"
 
 # Legacy single-file index. Searched only when there is no per-core file, so an
 # existing hand-made index keeps working.
-: "${TITLE_INDEX:=/media/fat/tty2oled/titleindex.txt}"
+: "${TITLE_INDEX:=/media/fat/tty2oledplus/titleindex.txt}"
 
 # ---------------------------------------------------------------------------
 # Outputs. Cleared by meta_reset, populated by build_meta.
@@ -77,6 +77,11 @@ META_STALE_REF=""
 META_LAST_SELECTED=""
 
 meta_reset() {
+  # Reset here rather than in meta_addfields_ordered: the arcade path adds its
+  # fields directly and would otherwise inherit the last console game's count,
+  # pinning rows that are not there.
+  META_PINNED_COUNT=0
+  META_COMPACT_COUNT=0
   META_KIND=""
   META_TITLE=""
   META_FIELDS=()
@@ -251,56 +256,126 @@ classify_core() {
 # parse_mra - extract display metadata from an .mra file.
 #
 # MRA is small XML with the interesting fields at the top level. MiSTer itself
-# only reads <rbf>, <setname> and <rotation>; name/year/manufacturer/category
-# are present on disk and unused. Parsed with sed rather than a real XML
-# reader: these are single-line tags in every MRA in the wild, and this runs on
-# every core change.
+# only reads <rbf>, <setname> and <rotation>; everything else is present on
+# disk and unused - year, manufacturer, category, catver, players, joystick,
+# region, platform, the button names, who packaged the set. The arcade card
+# shows the lot, a page at a time.
 #
-# Sets: MRA_NAME MRA_YEAR MRA_MANUFACTURER MRA_CATEGORY MRA_SETNAME MRA_MAMEVER
+# Parsed with awk rather than a real XML reader: these are single-line tags in
+# every MRA in the wild. One pass over the file rather than one sed per tag,
+# because this runs on every arcade core change and a process per tag is what
+# a core switch would feel like.
+#
+# Sets: MRA_NAME MRA_YEAR MRA_MANUFACTURER MRA_CATEGORY MRA_CATVER MRA_SETNAME
+#       MRA_MAMEVER MRA_RBF MRA_PLAYERS MRA_JOYSTICK MRA_ROTATION MRA_REGION
+#       MRA_PLATFORM MRA_VERSION MRA_BUTTONS MRA_BUTTONCOUNT MRA_AUTHOR
 # ---------------------------------------------------------------------------
-MRA_NAME=""; MRA_YEAR=""; MRA_MANUFACTURER=""; MRA_CATEGORY=""
-MRA_SETNAME=""; MRA_MAMEVER=""
+MRA_NAME=""; MRA_YEAR=""; MRA_MANUFACTURER=""; MRA_CATEGORY=""; MRA_CATVER=""
+MRA_SETNAME=""; MRA_MAMEVER=""; MRA_RBF=""; MRA_PLAYERS=""; MRA_JOYSTICK=""
+MRA_ROTATION=""; MRA_REGION=""; MRA_PLATFORM=""; MRA_VERSION=""
+MRA_BUTTONS=""; MRA_BUTTONCOUNT=""; MRA_AUTHOR=""
 
-_xml_tag() {
-  # _xml_tag <file> <tag> -> first occurrence's text content, entities decoded.
+# The element text is wanted for most of it, but the button names and the
+# packager live in attributes: <buttons names="Shot,Jump" count="2"/> and
+# <about author="jotego" .../>.
+_MRA_TAGS="name setname rbf mameversion year manufacturer category catver players joystick rotation region platform version"
+
+_mra_scan() {
+  # _mra_scan <file> -> one "key<TAB>value" line per tag or attribute found,
+  # first occurrence only, XML entities decoded.
   #
-  # Entity decoding is done inside sed rather than with bash parameter
-  # substitution on purpose. Bash 5.2 made a bare "&" in the replacement of
-  # ${var//pat/repl} mean "the matched text" (patsub_replacement, on by
-  # default), so ${val//&amp;/&} silently becomes a no-op there while still
-  # working on the older bash MiSTer ships. sed's "\&" escape behaves the same
-  # on GNU sed and busybox sed, so it is the portable option.
-  #
-  # &amp; is decoded LAST so that an encoded entity such as "&amp;lt;" survives
-  # as the literal text "&lt;" instead of being decoded twice into "<".
-  local file="${1}" tag="${2}" val=""
-  val="$(sed -n \
-    -e "s|.*<${tag}>\(.*\)</${tag}>.*|\1|Ip" "${file}" 2>/dev/null \
-    | head -n1 \
-    | sed -e 's/&lt;/</g'   \
-          -e 's/&gt;/>/g'   \
-          -e 's/&quot;/"/g' \
-          -e "s/&apos;/'/g" \
-          -e 's/&#3[49];/'"'"'/g' \
-          -e 's/&amp;/\&/g')"
-  # Trim surrounding whitespace (MRA files are commonly tab-indented).
-  val="${val#"${val%%[![:space:]]*}"}"
-  val="${val%"${val##*[![:space:]]}"}"
-  printf '%s' "${val}"
+  # Decoding happens here rather than with bash parameter substitution because
+  # bash 5.2 made a bare "&" in the replacement of ${var//pat/repl} mean "the
+  # matched text" (patsub_replacement, on by default), so ${val//&amp;/&} is a
+  # silent no-op there while still working on the older bash MiSTer ships.
+  # awk has the same trap in gsub, and the same escape out of it: "\\&" is a
+  # literal ampersand on every awk. &amp; is decoded LAST so an encoded entity
+  # such as "&amp;lt;" survives as the text "&lt;" instead of decoding twice.
+  awk -v tags="${_MRA_TAGS}" '
+    function decode(s) {
+      gsub(/&lt;/,   "<",  s); gsub(/&gt;/,   ">",  s)
+      gsub(/&quot;/, "\"", s); gsub(/&#34;/,  "\"", s)
+      gsub(/&apos;/, "'"'"'",  s); gsub(/&#39;/,  "'"'"'",  s)
+      gsub(/&amp;/,  "\\&", s)
+      return s
+    }
+    function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+
+    # attr - the value of one double-quoted attribute of the first <tag ...>
+    # element on this line. line/low are the current line and its lowercased
+    # twin; tolower does not change any length, so a position found in one is
+    # the same position in the other.
+    function attr(tag, name,   a, e, el, q, st, en) {
+      a = index(low, "<" tag)
+      if (a == 0) return ""
+      e  = index(substr(low, a), ">")
+      el = (e > 0) ? substr(low, a, e) : substr(low, a)
+      q  = index(el, name "=\"")
+      if (q == 0) return ""
+      st = a + q - 1 + length(name) + 2
+      en = index(substr(low, st), "\"")
+      if (en == 0) return ""
+      return trim(decode(substr(line, st, en - 1)))
+    }
+
+    BEGIN { n = split(tags, T, " ") }
+    {
+      line = $0; low = tolower(line)
+
+      for (i = 1; i <= n; i++) {
+        t = T[i]
+        if (t in got) continue
+        a = index(low, "<" t ">")
+        if (a == 0) continue
+        a += length(t) + 2
+        b = index(substr(low, a), "</" t ">")
+        if (b == 0) continue
+        got[t] = 1
+        print t "\t" trim(decode(substr(line, a, b - 1)))
+      }
+
+      if (!("buttons" in got) && index(low, "<buttons")) {
+        v = attr("buttons", "names"); if (v != "") print "buttonnames\t" v
+        v = attr("buttons", "count"); if (v != "") print "buttoncount\t" v
+        got["buttons"] = 1
+      }
+      if (!("about" in got) && index(low, "<about")) {
+        v = attr("about", "author"); if (v != "") print "author\t" v
+        got["about"] = 1
+      }
+    }
+  ' "${1}" 2>/dev/null
 }
 
 parse_mra() {
-  local mra="${1}"
-  MRA_NAME=""; MRA_YEAR=""; MRA_MANUFACTURER=""; MRA_CATEGORY=""
-  MRA_SETNAME=""; MRA_MAMEVER=""
+  local mra="${1}" key="" val=""
+  MRA_NAME=""; MRA_YEAR=""; MRA_MANUFACTURER=""; MRA_CATEGORY=""; MRA_CATVER=""
+  MRA_SETNAME=""; MRA_MAMEVER=""; MRA_RBF=""; MRA_PLAYERS=""; MRA_JOYSTICK=""
+  MRA_ROTATION=""; MRA_REGION=""; MRA_PLATFORM=""; MRA_VERSION=""
+  MRA_BUTTONS=""; MRA_BUTTONCOUNT=""; MRA_AUTHOR=""
   [ -r "${mra}" ] || return 1
 
-  MRA_NAME="$(_xml_tag "${mra}" name)"
-  MRA_YEAR="$(_xml_tag "${mra}" year)"
-  MRA_MANUFACTURER="$(_xml_tag "${mra}" manufacturer)"
-  MRA_CATEGORY="$(_xml_tag "${mra}" category)"
-  MRA_SETNAME="$(_xml_tag "${mra}" setname)"
-  MRA_MAMEVER="$(_xml_tag "${mra}" mameversion)"
+  while IFS=$'\t' read -r key val; do
+    case "${key}" in
+      name)         MRA_NAME="${val}" ;;
+      setname)      MRA_SETNAME="${val}" ;;
+      rbf)          MRA_RBF="${val}" ;;
+      mameversion)  MRA_MAMEVER="${val}" ;;
+      year)         MRA_YEAR="${val}" ;;
+      manufacturer) MRA_MANUFACTURER="${val}" ;;
+      category)     MRA_CATEGORY="${val}" ;;
+      catver)       MRA_CATVER="${val}" ;;
+      players)      MRA_PLAYERS="${val}" ;;
+      joystick)     MRA_JOYSTICK="${val}" ;;
+      rotation)     MRA_ROTATION="${val}" ;;
+      region)       MRA_REGION="${val}" ;;
+      platform)     MRA_PLATFORM="${val}" ;;
+      version)      MRA_VERSION="${val}" ;;
+      buttonnames)  MRA_BUTTONS="${val}" ;;
+      buttoncount)  MRA_BUTTONCOUNT="${val}" ;;
+      author)       MRA_AUTHOR="${val}" ;;
+    esac
+  done < <(_mra_scan "${mra}")
 
   # An MRA with no <name> is malformed; fall back to the filename.
   if [ -z "${MRA_NAME}" ]; then
@@ -570,6 +645,87 @@ lookup_crc() {
 # The order used when METADATA_FIELDS is not set.
 _FIELD_ORDER_DEFAULT="System Region Year Company Genre Developer Format"
 
+# The arcade card draws from the MRA, which has a vocabulary of its own - an
+# arcade board has players, a joystick and named buttons where a console game
+# has a region and a file format.
+#
+# The card is two lists rather than one, because the values are two shapes.
+# Eight short ones pair up two to a row and fill a page:
+#
+#     Year     1993          Manufctr  Midway
+#     Region   World         Orient    Horizontal
+#     Core     blahmid_tunit Author    rejectedcoins
+#     Set      nbajam        MAME      0289
+#
+# and the long ones - "Turbo/Shoot / Block/Pass / Steal" is 32 characters -
+# get a row each on the page after it, under a repeat of the pinned row:
+#
+#     Year     1993          Manufctr  Midway
+#     Players  4
+#     Controls 8-way
+#     Buttons  Turbo/Shoot / Block/Pass / Steal
+#
+# Genre, Platform and Version are known but unlisted: name them in either ini
+# list to show them. Genre belongs in the wide list - "Fighter / 2.5D" does
+# not fit half a row.
+_ARCADE_ORDER_DEFAULT="Year Manufacturer Region Orientation Core Author Set MAME"
+_ARCADE_WIDE_DEFAULT="Players Controls Buttons"
+
+# Every name either list accepts. A name absent from both is simply not shown.
+_ARCADE_KNOWN="Year Manufacturer Genre Players Controls Buttons Region Platform Orientation Set Core MAME Version Author"
+
+# The grid row repeated above each wide page, so a page of controls is still
+# labelled with the game's year and maker. These must be in ARCADE_FIELDS -
+# only a paired field can pin, a wide one is a whole row.
+: "${ARCADE_PINNED=Year Manufacturer}"
+
+# A column is about fifteen characters wide, which two of the names are not.
+_arcade_display_label() {
+  case "${1}" in
+    Manufacturer) printf 'Manufctr' ;;
+    Orientation)  printf 'Orient'   ;;
+    *)            printf '%s' "${1}" ;;
+  esac
+}
+
+# Fields that stay put while the rest page. The layout has four rows, so
+# pinning two leaves two cycling underneath. A name here must also appear in
+# METADATA_FIELDS to be shown at all.
+: "${METADATA_PINNED:=System Year}"
+
+# Fold the publisher into the year - "1990, Acclaim" on one row instead of
+# two. Worth it on four rows; "no" keeps them separate.
+: "${COMPACT_YEAR_COMPANY:=yes}"
+
+# How many of the emitted fields are pinned, and - on an arcade card - how
+# many of them are paired two to a row. Counted as they are emitted, because a
+# field with an empty value is not emitted at all and must not reserve a row
+# it will never use.
+META_PINNED_COUNT=0
+META_COMPACT_COUNT=0
+
+# Canonical spelling of a field name, or failure if it is not one we know.
+# The two layouts have separate vocabularies, so each looks its names up in
+# its own list and a console name in ARCADE_FIELDS is simply ignored.
+_canon_label() {
+  local want="${1}" list="${2}" label=""
+  for label in ${list}; do
+    if [ "${label,,}" = "${want,,}" ]; then printf '%s' "${label}"; return 0; fi
+  done
+  return 1
+}
+
+_field_label()  { _canon_label "${1}" "${_FIELD_ORDER_DEFAULT}"; }
+_arcade_label() { _canon_label "${1}" "${_ARCADE_KNOWN}"; }
+
+_field_in_list() {
+  local want="${1}" list="${2}" f=""
+  for f in ${list}; do
+    [ "${f,,}" = "${want,,}" ] && return 0
+  done
+  return 1
+}
+
 meta_addfield() {
   local label="${1}" value="${2}"
   [ -n "${value}" ] || return 0
@@ -582,14 +738,128 @@ meta_addfield() {
 declare -A META_AVAIL=()
 meta_addfields_ordered() {
   local order="${METADATA_FIELDS:-${_FIELD_ORDER_DEFAULT}}"
-  local want="" label=""
+  local want="" label="" before=0
+
+  META_PINNED_COUNT=0
+
+  # Pinned first, in the order METADATA_PINNED gives them. The firmware then
+  # only needs "the first N are pinned" and never has to know their names.
+  for want in ${METADATA_PINNED}; do
+    label="$(_field_label "${want}")" || continue
+    _field_in_list "${want}" "${order}" || continue
+    before="${#META_FIELDS[@]}"
+    meta_addfield "${label}" "${META_AVAIL[${label}]:-}"
+    [ "${#META_FIELDS[@]}" -gt "${before}" ] && META_PINNED_COUNT=$((META_PINNED_COUNT + 1))
+  done
+
+  # Then everything else, skipping whatever was already pinned.
   for want in ${order}; do
-    for label in ${_FIELD_ORDER_DEFAULT}; do
-      if [ "${label,,}" = "${want,,}" ]; then
-        meta_addfield "${label}" "${META_AVAIL[${label}]:-}"
-        break
-      fi
-    done
+    label="$(_field_label "${want}")" || continue
+    _field_in_list "${want}" "${METADATA_PINNED}" && continue
+    meta_addfield "${label}" "${META_AVAIL[${label}]:-}"
+  done
+}
+
+# Turn the MRA tags into the values the card shows.
+#
+# Commas are deliberately absent from everything built here. metasanitize
+# replaces them with spaces on the wire - it has to, because the optional
+# pinned count in CMDMETA is recognised by being digits followed by a comma -
+# so a value that joins its parts with ", " arrives with a hole in it. "/"
+# and " " survive the trip.
+arcade_avail_from_mra() {
+  local corename="${1}" count="" part="" out="" n=0
+
+  ARCADE_AVAIL=()
+  ARCADE_AVAIL[Year]="${MRA_YEAR}"
+  ARCADE_AVAIL[Manufacturer]="${MRA_MANUFACTURER}"
+  # catver is the finer-grained of the two - "Platform / Run Jump" against
+  # "Platform" - so it wins where the MRA carries it.
+  ARCADE_AVAIL[Genre]="${MRA_CATVER:-${MRA_CATEGORY}}"
+  ARCADE_AVAIL[Players]="${MRA_PLAYERS}"
+  ARCADE_AVAIL[Controls]="${MRA_JOYSTICK}"
+  ARCADE_AVAIL[Region]="${MRA_REGION}"
+  ARCADE_AVAIL[Platform]="${MRA_PLATFORM}"
+  ARCADE_AVAIL[Set]="${MRA_SETNAME:-${corename}}"
+  ARCADE_AVAIL[Core]="${MRA_RBF}"
+  ARCADE_AVAIL[MAME]="${MRA_MAMEVER}"
+  ARCADE_AVAIL[Version]="${MRA_VERSION}"
+  ARCADE_AVAIL[Author]="${MRA_AUTHOR}"
+
+  # <rotation>vertical</rotation> reads as a value, not a sentence.
+  [ -n "${MRA_ROTATION}" ] && ARCADE_AVAIL[Orientation]="${MRA_ROTATION^}"
+
+  count="${MRA_BUTTONCOUNT}"
+  case "${count}" in ""|*[!0-9]*) count=0 ;; esac
+
+  # <buttons names="Shot,Jump,Start 1P,Coin,Pause" count="2"/> - the names
+  # past "count" are the cabinet's own (start, coin, pause) and say nothing
+  # about the game. Placeholders are written "-" and dropped.
+  if [ -n "${MRA_BUTTONS}" ]; then
+    # Split on the commas by turning them into newlines rather than by
+    # setting IFS: a local IFS that has to be unset again to restore the
+    # global one is a trap, and a here-string keeps the loop in this shell so
+    # the result survives it.
+    while IFS= read -r part; do
+      part="${part#"${part%%[![:space:]]*}"}"
+      part="${part%"${part##*[![:space:]]}"}"
+      [ -z "${part}" ] && continue
+      [ "${part}" = "-" ] && continue
+      n=$((n + 1))
+      [ "${count}" -gt 0 ] && [ "${n}" -gt "${count}" ] && break
+      out="${out}${out:+/}${part}"
+    done <<< "${MRA_BUTTONS//,/$'\n'}"
+    ARCADE_AVAIL[Buttons]="${out}"
+  fi
+
+  # A board with no joystick still has a control panel worth describing.
+  if [ -z "${ARCADE_AVAIL[Controls]}" ] && [ "${count}" -gt 0 ]; then
+    if [ "${count}" -eq 1 ]; then
+      ARCADE_AVAIL[Controls]="1 button"
+    else
+      ARCADE_AVAIL[Controls]="${count} buttons"
+    fi
+  fi
+}
+
+# Emit the arcade fields held in ARCADE_AVAIL: the paired ones first, then the
+# wide ones, each list honouring its ini setting for both membership and order.
+#
+# The firmware never learns a field's name. It is told how many leading fields
+# to pair up (META_COMPACT_COUNT) and how many of those to repeat above the
+# wide pages (META_PINNED_COUNT), and counts from there - so which field goes
+# where is a script-side change, exactly as it is for the console layout.
+#
+# Both counts are counted as the fields are emitted, because a field whose MRA
+# tag is missing is never emitted at all and must not reserve a place.
+declare -A ARCADE_AVAIL=()
+arcade_addfields_ordered() {
+  local order="${ARCADE_FIELDS-${_ARCADE_ORDER_DEFAULT}}"
+  local wide="${ARCADE_FIELDS_WIDE-${_ARCADE_WIDE_DEFAULT}}"
+  local want="" name="" label="" before=0
+
+  META_COMPACT_COUNT=0
+  META_PINNED_COUNT=0
+
+  for want in ${order}; do
+    name="$(_arcade_label "${want}")" || continue
+    label="$(_arcade_display_label "${name}")"
+    before="${#META_FIELDS[@]}"
+    meta_addfield "${label}" "${ARCADE_AVAIL[${name}]:-}"
+    [ "${#META_FIELDS[@]}" -gt "${before}" ] || continue
+    META_COMPACT_COUNT=$((META_COMPACT_COUNT + 1))
+    # Pinned rows repeat above the wide pages, so they have to be the FIRST
+    # fields emitted, not merely present: a gap would pin the wrong ones.
+    if [ "${META_PINNED_COUNT}" -eq $((META_COMPACT_COUNT - 1)) ] &&
+       _field_in_list "${name}" "${ARCADE_PINNED}"; then
+      META_PINNED_COUNT=$((META_PINNED_COUNT + 1))
+    fi
+  done
+
+  for want in ${wide}; do
+    name="$(_arcade_label "${want}")" || continue
+    label="$(_arcade_display_label "${name}")"
+    meta_addfield "${label}" "${ARCADE_AVAIL[${name}]:-}"
   done
 }
 
@@ -618,11 +888,8 @@ build_meta() {
         META_TITLE="${MRA_NAME}"
         META_SOURCE="mra"
         META_GAME="yes"
-        meta_addfield "Year"         "${MRA_YEAR}"
-        meta_addfield "Manufacturer" "${MRA_MANUFACTURER}"
-        meta_addfield "Category"     "${MRA_CATEGORY}"
-        meta_addfield "Set"          "${MRA_SETNAME:-${corename}}"
-        meta_addfield "MAME"         "${MRA_MAMEVER}"
+        arcade_avail_from_mra "${corename}"
+        arcade_addfields_ordered
       else
         # STARTPATH missing (log_file_entry off) - fall back to the corename,
         # which for arcade is already the MRA setname. Not names.txt: that is
@@ -796,11 +1063,20 @@ build_meta() {
           [ -n "${IDX_REGION}" ] && ROM_REGION="${IDX_REGION}"
         fi
 
+        # "1990, Acclaim" on one row rather than two. Either half on its own
+        # still shows under its own label.
+        local _year="${IDX_YEAR}" _company="${IDX_PUBLISHER}"
+        if [ "${COMPACT_YEAR_COMPANY}" = "yes" ] &&
+           [ -n "${_year}" ] && [ -n "${_company}" ]; then
+          _year="${_year}, ${_company}"
+          _company=""
+        fi
+
         META_AVAIL=(
           [System]="${DISPLAY_CORENAME}"
           [Region]="${ROM_REGION}"
-          [Year]="${IDX_YEAR}"
-          [Company]="${IDX_PUBLISHER}"
+          [Year]="${_year}"
+          [Company]="${_company}"
           [Genre]="${IDX_GENRE}"
           [Developer]="${IDX_DEVELOPER}"
           [Format]="${ROM_EXT^^}"

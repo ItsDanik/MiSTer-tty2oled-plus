@@ -16,3 +16,8 @@ titleindex/
 # The .gsc is the artefact and is committed; the PNG beside it is the source
 # you draw in, and is yours rather than the repo's.
 pics_pri/ICON/*.png
+# Assembled by tools/make-release.sh - release assets, not source.
+dist/
+
+# Python bytecode from running tools/*.py.
+__pycache__/

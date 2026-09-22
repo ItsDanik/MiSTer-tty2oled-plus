@@ -24,29 +24,3 @@ const unsigned char _bits[8192] PROGMEM = {
 Done.
 ------------------------ ------ ------------------------
 ![image2lcd settings](https://github.com/venice1200/MiSTer_tty2oled/blob/main/Pictures/image2lcd.png?raw=true)
------------------------- ------ ------------------------
-
------------------------- GERMAN ------------------------
-
-Ein Banner o.ä. suchen, welches sich Pi\*Daumen auf ca. 256\*64 Pixel skalieren
-lässt. Hatt man denn eines gefunden, ist die weitere Vorgehensweise wie folgt:
-
-- Falls eine transparente Ebene vorhanden ist: /Ebene/Transparenz/Alphakanal
-  entfernen
-- /Farben/Entsättigen/Grau einfärben
-~~- /Farben/Invertieren~~ Besser durch image2lcd invertieren lassen
-- /Bild/Modus/Indiziert/Optimale Palette (16 Farben)
-- /Bild/Bild skalieren/256\*64 sofern möglich. Manchmal reicht es auch, einfach
-  nicht-proportional zu skalieren. Ansonsten auf 256\*Y oder X\*64 skalieren und
-- per /Bild/Leinwandgröße das ganze zurecht rücken, so dass es passt
-- /Datei/Exportieren nach/ als BMP oder GIF speichern
-- Das exportierte Bild in image2lcd laden, *Reverse color* anhaken und als \*.C wieder speichern
-  (ohne "head data")
-- Im \*.C Export die Zeile "const unsigned char gImage_x[8192]" entfernen und
-  durch ersetzen durch:
-
-//  
-//  
-const unsigned char _bits[8192] PROGMEM = {
-
-Fertig.

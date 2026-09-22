@@ -77,6 +77,27 @@ ok "missing <name> falls back to filename" "${MRA_NAME}" "noname"
 parse_mra "${FIX}/mra/does-not-exist.mra"
 ok "absent file returns empty" "${MRA_NAME}" ""
 
+# A full jotego-style MRA: everything the arcade card can show is in there.
+parse_mra "${FIX}/mra/tmnt.mra"
+ok "players"      "${MRA_PLAYERS}"     "4"
+ok "joystick"     "${MRA_JOYSTICK}"    "8-way"
+ok "rotation"     "${MRA_ROTATION}"    "horizontal"
+ok "region"       "${MRA_REGION}"      "World"
+ok "platform"     "${MRA_PLATFORM}"    "TMNT"
+ok "catver"       "${MRA_CATVER}"      "Fighter / 2.5D"
+ok "version"      "${MRA_VERSION}"     "1.1"
+ok "rbf"          "${MRA_RBF}"         "jttmnt"
+# Attributes, not element text: <buttons names=... count=...> and <about author=...>.
+ok "button names" "${MRA_BUTTONS}"     "Attack,Jump,-,Start,Coin,Pause"
+ok "button count" "${MRA_BUTTONCOUNT}" "2"
+ok "about author" "${MRA_AUTHOR}"      "jotego"
+
+# Tags absent from an MRA must not carry over from the one parsed before it.
+parse_mra "${FIX}/mra/dkong.mra"
+ok "players not inherited" "${MRA_PLAYERS}" ""
+ok "author not inherited"  "${MRA_AUTHOR}"  ""
+ok "catver not inherited"  "${MRA_CATVER}"  ""
+
 # ---------------------------------------------------------------------------
 section "clean_romname"
 # ---------------------------------------------------------------------------
@@ -171,9 +192,56 @@ build_meta "dkong"
 ok "kind"        "${META_KIND}"   "arcade"
 ok "title"       "${META_TITLE}"  "Donkey Kong (US set 1)"
 ok "source"      "${META_SOURCE}" "mra"
-ok "field count" "${#META_FIELDS[@]}" "5"
+# Only what this MRA carries: no players, buttons, region or author in it,
+# and a field with nothing behind it is never emitted.
+ok "field count" "${#META_FIELDS[@]}" "6"
 ok "field 1"     "${META_FIELDS[0]}" "$(printf 'Year\t1981')"
-ok "field 2"     "${META_FIELDS[1]}" "$(printf 'Manufacturer\tNintendo of America')"
+# Labels are abbreviated to fit half a row.
+ok "field 2"     "${META_FIELDS[1]}" "$(printf 'Manufctr\tNintendo of America')"
+ok "orientation cased" "${META_FIELDS[2]}" "$(printf 'Orient\tVertical')"
+ok "all six pair up"   "${META_COMPACT_COUNT}" "6"
+ok "two pinned"        "${META_PINNED_COUNT}"  "2"
+
+# The full MRA: the paired fields in ARCADE_FIELDS order, then the wide ones.
+clear_state
+printf '%s\n' "${FIX}/mra/tmnt.mra" > "${TMP}/STARTPATH"
+build_meta "tmnt"
+ok "all fields"  "${#META_FIELDS[@]}"    "11"
+ok "paired"      "${META_COMPACT_COUNT}" "8"
+ok "pinned"      "${META_PINNED_COUNT}"  "2"
+ok "grid row 1"  "${META_FIELDS[0]}"  "$(printf 'Year\t1989')"
+ok "grid row 1 right" "${META_FIELDS[1]}" "$(printf 'Manufctr\tKonami')"
+ok "grid row 4 right" "${META_FIELDS[7]}" "$(printf 'MAME\t0229')"
+# The wide list follows the paired one, in its own order.
+ok "wide 1"      "${META_FIELDS[8]}"  "$(printf 'Players\t4')"
+ok "wide 2"      "${META_FIELDS[9]}"  "$(printf 'Controls\t8-way')"
+# Only the first <buttons count> names are the game's; "Start", "Coin" and
+# "Pause" belong to the cabinet, and "-" is a placeholder. "/" rather than ","
+# because metasanitize turns a comma into a space on the wire.
+ok "wide 3"      "${META_FIELDS[10]}" "$(printf 'Buttons\tAttack/Jump')"
+# Genre is known but not in either default list.
+ok "genre not shown by default" \
+   "$(printf '%s\n' "${META_FIELDS[@]}" | grep -c '^Genre')" "0"
+
+# Both lists pick and order their own fields, as METADATA_FIELDS does for the
+# console layout. A name neither list knows is ignored.
+ARCADE_FIELDS="Genre year Format" ARCADE_FIELDS_WIDE="Players" build_meta "tmnt"
+ok "lists are honoured"  "${#META_FIELDS[@]}"    "3"
+ok "paired counted"      "${META_COMPACT_COUNT}" "2"
+ok "unlisted name ignored" "${META_FIELDS[1]}"   "$(printf 'Year\t1989')"
+ok "genre on request"    "${META_FIELDS[0]}"     "$(printf 'Genre\tFighter / 2.5D')"
+ok "wide list honoured"  "${META_FIELDS[2]}"     "$(printf 'Players\t4')"
+# Year is pinned but is no longer first, so nothing may be pinned: the pinned
+# row is the top of the grid, and it cannot start halfway down the list.
+ok "pinning needs the first fields" "${META_PINNED_COUNT}" "0"
+
+# A pinned name that is never shown - Version is in neither list - must not
+# reserve a place, but must not stop the ones that are shown from pinning
+# either: Year is still the first field on the grid.
+ARCADE_PINNED="Version Year" build_meta "tmnt"
+ok "unshown pinned name skipped" "${META_PINNED_COUNT}" "1"
+
+unset ARCADE_FIELDS ARCADE_FIELDS_WIDE ARCADE_PINNED
 
 # Arcade with log_file_entry off: no STARTPATH, must still work.
 clear_state

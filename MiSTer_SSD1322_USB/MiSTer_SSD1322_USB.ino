@@ -40,7 +40,11 @@
 */
 
 // Set Version
-#define BuildVersion "230702"                    // "T" for Testing
+// tty2oled+ carries one version across the scripts and the firmware; this line
+// is written by tools/bump-version.sh from the VERSION file at the repo root.
+// The trailing letter is this fork's pre-release mark ("b" for beta), not
+// upstream's "T" for Testing - that one still switches runsTesting on below.
+#define BuildVersion "0.4.0b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -234,7 +238,12 @@ Bounce RotationDebouncer = Bounce();     // Create Bounce class
 String newCommand = "";                // Received Text, from MiSTer without "\n" currently (2021-01-11)
 String prevCommand = "";
 String actCorename = "No Core loaded"; // Actual Received Corename
-uint8_t contrast = 5;                  // Contrast (brightness) of display, range: 0 (no contrast) to 255 (maximum)
+// Contrast (brightness) of display, range: 0 (no contrast) to 255 (maximum).
+// Full brightness until the daemon's CMDCON replaces it with the user's stored
+// level. Upstream started at 5, which is almost off: the whole boot screen -
+// picture, sweep and version - happens before any CMDCON can arrive, so it was
+// the one part of the session nobody could read.
+uint8_t contrast = 255;
 int tEffect = 0;                       // Run this Effect
 //char *newCommandChar;
 
@@ -272,7 +281,12 @@ const uint8_t minEffect=1, maxEffect=23;      // Min/Max Effects for Random
 // Included here, after the display objects and picture buffers they use, in
 // the same style the sketch already uses for bitmaps.h and fonts.h.
 #include "bootscreen.h"                       // Flash-backed power-on screen
+#include "bootlogo.h"                         // The built-in 256x54 boot picture
+#include "contrastfade.h"                     // Every contrast change fades
+#include "fadetransition.h"                   // TRANSITION=-2: fade out, black, fade in
 #include "metadisplay.h"                      // Arcade card / console split layout
+#include "bootoutro.h"                        // The boot screen as the menu picture, and its outro
+#include "busybar.h"                          // The boot sweep as a busy bar (update_all)
 
 // Blinker 500ms Interval
 const long interval = 500;                    // Interval for Blink (milliseconds)
@@ -355,7 +369,8 @@ bool hasPLED=false;                           // tty2oled has a PowerLED (d.ti B
 // ========================================== FUNCTION PROTOTYPES ==============================================
 // =============================================================================================================
 
-void oled_showStartScreen(void);
+static bool boot_waitOrCommand(unsigned long ms);
+void oled_showStartScreen(bool waitForHost = false);
 void oled_setTime(void);
 void oled_setcdelay(void);
 void oled_showcdelay(void);
@@ -404,6 +419,9 @@ inline void oled_drawEightPixelXY(int x, int y) { oled_drawEightPixelXY(x,y,x,y)
 // Game metadata command handlers (fork additions)
 void oled_readmeta(void);
 void oled_readicon(void);
+void oled_readdim(void);
+void oled_readbootpic(void);
+void oled_readflip(void);
 void oled_showmeta(void);
 void oled_readbootimage(void);
 
@@ -435,7 +453,8 @@ void setup(void) {
   oled.begin();
   oled.clearDisplay();
   oled.setRotation(0);
-  oled.setContrast(contrast);                       // Set contrast of display
+  veil_fadeOver(0, 0);                              // Black: the boot screen fades itself in,
+  contrast_jump(255);                               // lifting the veil over the base level
   oled.setTextSize(1);
   oled.setTextColor(SSD1322_WHITE, SSD1322_BLACK);  // White foreground, black background
   //oled.setFont(&FreeSans9pt7b);                   // Set Standard Font (available in 9/12/18/24 Pixel)
@@ -612,11 +631,19 @@ void setup(void) {
   boot_begin();
 
 // Go...
-  oled_showStartScreen();                                  // OLED Startup
-
+// "ttyrdy;" goes out before the start screen, not after it. Everything above
+// this line is the display actually becoming usable; the start screen is time
+// spent waiting for the MiSTer, and announcing readiness only once the
+// animation had finished made the signal mean "the boot screen is over"
+// rather than "the display will answer you".
   delay(cDelay);                                           // Command Response Delay
-  Serial.print("ttyrdy;");                                 // Send "ttyrdy;" after setup is done.
+  Serial.print("ttyrdy;");                                 // Send "ttyrdy;" once the hardware is up.
   //Serial.println("ttyrdy;");                             // Send "ttyrdy;" with "\n" after setup is done.
+
+// true: this is the power-on screen, so the sweep repeats until the daemon
+// speaks rather than for a fixed count. Re-shows (CMDSORG, tilt) take the
+// default and stop on their own.
+  oled_showStartScreen(true);                              // OLED Startup
 }
 
 // =============================================================================================================
@@ -624,6 +651,11 @@ void setup(void) {
 // =============================================================================================================
 void loop(void) {
   unsigned long currentMillis = millis();
+
+  contrast_tick();                                                // Advance a contrast fade, if one is running
+  transition_tick();                                              // ...and a Fade transition
+  boot_outroTick();                                               // ...and the power-on screen's outro
+  busy_tick();                                                    // ...and the busy bar
 
   // Tilt Sensor/Auto-Rotation
   RotationDebouncer.update();                                     // Update the Bounce instance
@@ -704,7 +736,15 @@ void loop(void) {
 #endif
   }  // end serial available
     
+#ifdef HAS_METADISPLAY
+  // A command arriving is activity: the MiSTer is being used even if this
+  // particular command draws nothing, so wake the panel before handling it.
+  if (updateDisplay) meta_activity();
+#endif
+
   if (updateDisplay) {                                                                                 // Proceed only if it's allowed because of new data from serial
+    boot_noteCommand(newCommand.c_str());                                                              // Does this one draw over the boot screen?
+    busy_noteCommand(newCommand.c_str());                                                              // ...or over the busy bar?
     if (startScreenActive && newCommand.startsWith("CMD") && !newCommand.startsWith("CMDTZONE")) {     // If any Command is processed the StartScreen isn't shown any more
       startScreenActive=false;                                                                         // This variable should prevent "side effects" with Commands and is used to disable automatic drawings
     }
@@ -782,12 +822,7 @@ void loop(void) {
 
     else if (newCommand.startsWith("CMDSPIC")) {                            // Show actual loaded Picture with(without Transition
       oled_showpic();
-      if (tEffect==-1) {                                                    // Send without Effect Parameter or Parameter = -1
-        oled_drawlogo(random(minEffect,maxEffect+1));                       // ...and show them on the OLED with Transition Effect 1..MaxEffect
-      } 
-      else {                                                                // Send with Effect "CMDSPIC,15"
-        oled_drawlogo(tEffect);
-      }
+      oled_transition(tEffect);                                             // -2 fade, -1 random, else that effect
     }
 
     else if (newCommand=="CMDSSCP") {                                       // Show actual loaded Core Picture but in 1/4 size
@@ -830,12 +865,7 @@ void loop(void) {
         }
         else
 #endif
-        if (tEffect==-1) {                                                  // Send without Effect Parameter or with Effect Parameter -1
-          oled_drawlogo(random(minEffect,maxEffect+1));                     // ...and show them on the OLED with Transition Effect 1..MaxEffect
-        }
-        else {                                                              // Send with Effect "CMDCOR,llander,15"
-          oled_drawlogo(tEffect);
-        }
+        oled_transition(tEffect);                                           // -2 fade, -1 random, else that effect ("CMDCOR,llander,15")
       }
     }
 
@@ -928,6 +958,30 @@ void loop(void) {
       oled_showmeta();
     }
 
+    else if (newCommand.startsWith("CMDBOOTPIC")) {                         // The boot image as this core's picture
+      oled_readbootpic();
+    }
+
+    else if (newCommand.startsWith("CMDBUSY,")) {                           // Busy bar in the bottom band on/off
+      busy_parse(newCommand.c_str());
+    }
+
+    else if (newCommand.startsWith("CMDTFADE,")) {                          // Fade transition timings
+      transition_parse(newCommand.c_str());
+    }
+
+    else if (newCommand.startsWith("CMDFADE,")) {                           // Contrast fade time
+      contrast_parseFade(newCommand.c_str());
+    }
+
+    else if (newCommand.startsWith("CMDDIM,")) {                            // Idle dimming
+      oled_readdim();
+    }
+
+    else if (newCommand.startsWith("CMDFLIP,")) {                           // Console side swap
+      oled_readflip();
+    }
+
     else if (newCommand=="CMDWRBOOT") {                                     // Receive and store a boot image
       oled_readbootimage();
     }
@@ -966,8 +1020,11 @@ void loop(void) {
 // ---------- ScreenSaver if Active -----------------
 // ---------------------------------------------------
   // ScreenSaver Logo-Timer
-  if (ScreenSaverEnabled && !ScreenSaverActive && blinkpos) ScreenSaverLogoTimer++;
+  // Not while the busy bar runs: something is visibly happening, and the bar
+  // is the one thing on the panel worth watching.
+  if (ScreenSaverEnabled && !ScreenSaverActive && !busyActive && blinkpos) ScreenSaverLogoTimer++;
   ScreenSaverActive = (ScreenSaverLogoTimer>=ScreenSaverLogoTime) && ScreenSaverEnabled;
+  if (ScreenSaverActive) { bootHolding = false; busy_cancel(); }   // it draws over whatever was there
   
   // ScreenSaver Timer
   if (ScreenSaverActive && blinkpos) ScreenSaverTimer++;
@@ -1002,54 +1059,149 @@ void loop(void) {
 // --------------------------------------------------------------
 // -------------------- Show Start-Up Text ----------------------
 // --------------------------------------------------------------
-void oled_showStartScreen(void) {
-  uint8_t color = 0;
+// The picture and the build version go up together and stay up; after
+// BOOT_HOLD_MS the sweep starts moving in the reserved band at the bottom of
+// the panel, and it keeps cycling until the MiSTer's daemon says something.
+//
+// That is the whole point of the animation: it fills the wait, so the wait is
+// what should end it. It used to run a fixed BOOT_SWEEP_REPEATS cycles with
+// the serial port unattended - loop() does not run until setup() returns - so
+// the display ignored the daemon for the best part of eight seconds even when
+// the MiSTer was ready in two. Now the first byte the daemon sends ends the
+// animation wherever it is, and a MiSTer that never comes up gets a panel that
+// animates instead of one that looks hung.
+//
+// The version is drawn with the picture rather than after the sweep. It is the
+// one question the boot screen exists to answer, and on a slow boot this
+// screen is what somebody is looking at for ten seconds - answering only at
+// the end of that is answering too late. The bar therefore starts clear of the
+// text (boot_barStartX) instead of using the full width: it would otherwise
+// erase the glyphs on its way past.
+//
+// Only the picture changes when a boot image is stored. The sweep and the
+// version are the firmware's, they live in rows the image is not allowed to
+// occupy (see bootscreen.h), and they run whatever is above them - a display
+// that boots into somebody's artwork still has to be able to say which
+// firmware it is running.
+//
+// Upstream drew a 120x46 1bpp XBM at x=82. This fork's built-in picture is a
+// full-width 4bpp one (bootlogo.h), the same shape as a stored image, so both
+// take one path: a 16-grey MiSTer wordmark reads as artwork on this panel in a
+// way a monochrome bitmap does not.
 
+// Wait up to ms, cut short the moment the host has something to say. delay(1)
+// rather than a busy loop so the ESP8266 keeps feeding its watchdog and the
+// ESP32 keeps servicing its UART.
+static bool boot_waitOrCommand(unsigned long ms) {
+  unsigned long t0 = millis();
+  for (;;) {
+    contrast_tick();                           // loop() is not running yet: the boot fade needs these
+    transition_tick();
+    if (Serial.available()) return true;
+    if (millis() - t0 >= ms) return false;
+    delay(1);
+  }
+}
+
+// The build version, bottom left of the boot band, in u8g2's current
+// foreground colour - which is how the outro fades it (bootoutro.h).
+void boot_printVersion(void) {
+  u8g2.setFont(u8g2_font_5x7_mf);               // 6 Pixel Font
+  u8g2.setCursor(BOOT_VER_X,BOOT_VER_Y);
+  u8g2.print(BuildVersion);
+  if (runsTesting) {
+    if (hasMIC) u8g2.print("M");
+    if (hasPCA) u8g2.print("P");
+    if (dtiv>10) u8g2.print(dtiv);
+    if (usePREFS) u8g2.print("E");
+  }
+}
+
+void oled_showStartScreen(bool waitForHost) {
+  bootHolding = false;                          // set again below, for the power-on screen only
 #ifdef XDEBUG
   Serial.println("Show Startscreen");
 #endif
 
+  // A picture buffer to compose in. metaBin where there is one - it is idle at
+  // power-up and idle on CMDSORG - and logoBin on the ESP8266, which is the
+  // only framebuffer that build has.
 #ifdef HAS_METADISPLAY
-  // A user boot image replaces the built-in logo and its sweep animation
-  // entirely: it is a full 256x64 picture, so there is no empty strip left to
-  // animate in. boot_load() only succeeds for an image of exactly the right
-  // size, so a truncated upload falls through to the stock screen below.
-  if (boot_load(metaBin, sizeof(metaBin))) {
-    oled.clearDisplay();
-    oled.draw4bppBitmap(metaBin);
-    oled.display();
-    startScreenActive = true;
-    delay(2000);
-    return;
-  }
+  uint8_t *pic = metaBin;
+#else
+  uint8_t *pic = logoBin;
 #endif
 
+  // The stored image wins; the built-in one is the fallback, not the other way
+  // round. memcpy_P because bootlogo_bits is PROGMEM - a no-op indirection on
+  // the ESP32, where flash is memory-mapped, and load instructions on the 8266.
+  if (!boot_load(pic, BOOT_PANEL_BYTES))
+    memcpy_P(pic, bootlogo_bits, BOOTIMG_BYTES);
+
+  // draw4bppBitmap() copies a whole framebuffer whatever the picture is, so
+  // the band has to be blacked out here rather than left as whatever the
+  // buffer last held - which, on a re-show, is the previous metadata card.
+  memset(pic + BOOTIMG_BYTES, 0, BOOT_PANEL_BYTES - BOOTIMG_BYTES);
+
   oled.clearDisplay();
-  oled.drawXBitmap(82, 0, tty2oled_logo, tty2oled_logo_width, tty2oled_logo_height, SSD1322_WHITE);
-  oled.display();
-  delay(1000);
-  for (int i=0; i<DispWidth; i+=16) {            // Some Animation
-    oled.fillRect(i,55,16,8,color);
-    color++;
-    oled.display();
+  oled.draw4bppBitmap(pic);
+
+  // Version first, in the same frame as the picture.
+  boot_printVersion();
+
+  // Power-on only: fade the frame in - palette steps and contrast together,
+  // the same fade-in a Fade transition does - rather than sending it to the
+  // panel as it is. A re-show (CMDSORG, the tilt sensor) happens on a lit
+  // panel, and blacking it first would read as a flicker. The fade runs inside
+  // the hold (BOOT_FADE_MS <= BOOT_HOLD_MS), so it is finished before the
+  // sweep draws anything; if the daemon speaks first, it finishes in loop(),
+  // and a CMDCON meanwhile moves the base level under it.
+  if (waitForHost) transition_fadeIn(BOOT_FADE_MS);
+  else             oled.display();
+
+  // Measured, not assumed: the testing markers make the string longer, and the
+  // bar has to clear whatever was actually drawn.
+  const int barX = boot_barStartX(u8g2.getCursorX() - BOOT_VER_X);
+
+  bool aborted = boot_waitOrCommand(BOOT_HOLD_MS);
+
+  // The bar's grey is its position (i/BOOT_BAR_STEP, 0..15) rather than a
+  // counter incremented per step: a counter would carry over into the next
+  // repeat and run past 15, where the low nibble the panel actually shows
+  // wraps back to black. Starting at barX simply skips the darkest steps.
+  // Where the sweep is when the daemon speaks - the next segment it would
+  // draw, and whether it was filling or clearing - so the outro can finish
+  // the cycle rather than stop it mid-bar. -1: still in the hold, no cycle.
+  int  sweepPos     = -1;
+  bool sweepFilling = true;
+
+  for (unsigned int rep=0; !aborted; rep++) {
+    if (!waitForHost && rep >= (unsigned int)BOOT_SWEEP_REPEATS) break;
+
+    for (int i=barX; i<DispWidth && !aborted; i+=BOOT_BAR_STEP) { // Some Animation
+      sweepPos = i + BOOT_BAR_STEP; sweepFilling = true;
+      oled.fillRect(i,BOOT_BAR_Y,BOOT_BAR_STEP,BOOT_BAR_H,i/BOOT_BAR_STEP);
+      oled.display();
 #ifdef USE_ESP32XDEV
-    if (dtiv>=12) {                              // Let the RGB LED light up
-      wsleds[0] = CHSV(i,255,255);
-      FastLED.show();
-    }
+      if (dtiv>=12) {                              // Let the RGB LED light up
+        wsleds[0] = CHSV(i,255,255);
+        FastLED.show();
+      }
 #endif
-    delay(20);
-  }
-  for (int i=0; i<DispWidth; i+=16) {            // Remove Animation Line
-    oled.fillRect(i,55,16,8,SSD1322_BLACK);
-    oled.display();
+      aborted = boot_waitOrCommand(BOOT_BAR_MS);
+    }
+    for (int i=barX; i<DispWidth && !aborted; i+=BOOT_BAR_STEP) { // Remove Animation Line
+      sweepPos = i + BOOT_BAR_STEP; sweepFilling = false;
+      oled.fillRect(i,BOOT_BAR_Y,BOOT_BAR_STEP,BOOT_BAR_H,SSD1322_BLACK);
+      oled.display();
 #ifdef USE_ESP32XDEV
-    if (dtiv>=12) {                              // Let the RGB LED light up
-      wsleds[0] = CHSV(255-i,255,255);
-      FastLED.show();
-    }
+      if (dtiv>=12) {                              // Let the RGB LED light up
+        wsleds[0] = CHSV(255-i,255,255);
+        FastLED.show();
+      }
 #endif
-    delay(20);
+      aborted = boot_waitOrCommand(BOOT_BAR_MS);
+    }
   }
 #ifdef USE_ESP32XDEV
   if (dtiv>=12) {
@@ -1058,21 +1210,30 @@ void oled_showStartScreen(void) {
     FastLED.show();
   }
 #endif
-  delay(500);
-  u8g2.setFont(u8g2_font_5x7_mf);               // 6 Pixel Font
-  u8g2.setCursor(0,63);
-  u8g2.print(BuildVersion);
+
+  // Power-on: the daemon has spoken, and the rest - finishing the sweep's
+  // cycle, fading the version out - runs from loop() (bootoutro.h), because
+  // staying in here would stop the port being read. A fill that had just
+  // reached the edge still has its clearing half to do.
+  if (waitForHost) {
+    bootHolding = true;
+    boot_outroStart(barX, sweepPos, sweepFilling);
+    startScreenActive=true;
+    return;
+  }
+
+  // Leave the band clean. An aborted sweep stops wherever the daemon spoke, and
+  // a half-drawn bar would otherwise sit there under whatever comes next. Only
+  // the bar's own columns are cleared, so the version survives untouched.
+  oled.fillRect(barX,BOOT_BAR_Y,DispWidth-barX,BOOT_BAR_H,SSD1322_BLACK);
+
   if (runsTesting) {
-    if (hasMIC) u8g2.print("M");
-    if (hasPCA) u8g2.print("P");
-    if (dtiv>10) u8g2.print(dtiv);
-    if (usePREFS) u8g2.print("E");
     oled.drawXBitmap(DispWidth-usb_icon_width, DispHeight-usb_icon_height, usb_icon, usb_icon_width, usb_icon_height, SSD1322_WHITE);
   }
 
 #ifdef USE_ESP32XDEV
   if (hasMIC) {
-    u8g2.setCursor(111,63);
+    u8g2.setCursor(111,BOOT_VER_Y);
     u8g2.print(tSensor.getTemp());    // Show Temperature if Sensor available
     u8g2.print("\xb0");
     u8g2.print("C");
@@ -1316,7 +1477,7 @@ void oled_readnsetscreensaver(void) {
 void oled_showScreenSaverPicture(void) {
   int l,x,y;
   String actTime="";
-  oled.setContrast(ScreenSaverContrast);                        // Set Contrast for ScreenSaver Mode
+  contrast_fadeTo(ScreenSaverContrast);                         // Set Contrast for ScreenSaver Mode
 
   l=ScreenSaverActiveScreens[random(ScreenSaverCountScreens)];  // Get random Screen out of the Active-Screens-Array[0..x]
 #ifdef XDEBUG
@@ -1604,7 +1765,7 @@ void oled_showcorename() {
 
   //ScreenSaverTimer=0;                        // Reset ScreenSaver-Timer
   //ScreenSaverLogoTimer=0;                    // Reset ScreenSaverLogo-Timer
-  oled.setContrast(contrast);
+  contrast_fadeTo(contrast);
   oled_showcenterredtext(actCorename,9);
 }
 
@@ -1660,7 +1821,7 @@ void oled_readnsetcontrast(void) {
   Serial.printf("\nReceived Text: %s\n", (char*)cT.c_str());
 #endif
   contrast=cT.toInt();                   // Convert Value
-  oled.setContrast(contrast);            // Read and Set contrast  
+  contrast_fadeTo(contrast);             // Fade to it, from wherever the panel is
 }
 
 // --------------------------------------------------------------
@@ -1849,11 +2010,11 @@ void oled_showpic(void) {
 
   ScreenSaverTimer=0;                        // Reset ScreenSaver-Timer
   ScreenSaverLogoTimer=0;                    // Reset ScreenSaverLogo-Timer
-  oled.setContrast(contrast);
+  contrast_fadeTo(contrast);
 
   if (newCommand.length()>7) {                       // Parameter added?
     tEffect=newCommand.substring(8).toInt();         // Get Effect from Command String (is set to 0 if not convertable)
-    if (tEffect<-1) tEffect=-1;                      // Check Effect minimum
+    if (tEffect<EFFECT_FADE) tEffect=EFFECT_RANDOM;  // Check Effect minimum: -2 is Fade
     if (tEffect>maxEffect) tEffect=maxEffect;        // Check Effect maximum
   }
   else {
@@ -1884,7 +2045,7 @@ int oled_readlogo() {
   else {                                             // "," found = Effect Parameter given
     actCorename=TextIn.substring(0, d1);             // Extract Corename from Command String
     tEffect=TextIn.substring(d1+1).toInt();          // Get Effect from Command String (set to 0 if not convertable)
-    if (tEffect<-1) tEffect=-1;                      // Check Effect minimum
+    if (tEffect<EFFECT_FADE) tEffect=EFFECT_RANDOM;  // Check Effect minimum: -2 is Fade
     if (tEffect>maxEffect) tEffect=maxEffect;        // Check Effect maximum
 #ifdef XDEBUG
     Serial.printf("\nReceived Text: %s, Transition T:%i \n", (char*)actCorename.c_str(),tEffect);
@@ -1932,6 +2093,12 @@ int oled_readlogo() {
 // --------------------------------------------------------------
 // ----------------------- Draw Logo ----------------------------
 // --------------------------------------------------------------
+// Every effect reads its pixels from srcBin, never from logoBin directly.
+// They are normally the same buffer, but meta_showCard points srcBin at the
+// composed metadata card for the length of one transition - so an effect that
+// reads logoBin ends up painting the core artwork over the card it was asked
+// to animate towards. tests/test-index.sh greps this function for exactly
+// that.
 void oled_drawlogo(uint8_t e) {
   int w,x,y,x2=0,y2=0;
   //unsigned char logoByteValue;
@@ -1947,7 +2114,7 @@ void oled_drawlogo(uint8_t e) {
 #ifdef ESP32X  
   ShowAnimatedScreenSaverNo=random(MinAnimatedScreenSaver, MaxAnimatedScreenSaver+1);
 #endif
-  oled.setContrast(contrast);
+  contrast_fadeTo(contrast);
 
   switch (e) {
     case 1:                                  // Left to Right
@@ -2084,8 +2251,8 @@ void oled_drawlogo(uint8_t e) {
       }
       // Finally overwrite the Screen with full Size Picture
       oled.clearDisplay();
-      if (actPicType==XBM) oled.drawXBitmap(0, 0, logoBin, DispWidth, DispHeight, SSD1322_WHITE);
-      if (actPicType==GSC) oled.draw4bppBitmap(logoBin);
+      if (actPicType==XBM) oled.drawXBitmap(0, 0, srcBin, DispWidth, DispHeight, SSD1322_WHITE);
+      if (actPicType==GSC) oled.draw4bppBitmap(srcBin);
       oled.display();
     break;  // 9
 
@@ -2314,9 +2481,6 @@ void oled_drawlogo(uint8_t e) {
         oled.display();
         delay(1000);
 #endif
-        oled.clearDisplay();
-        oled.drawXBitmap(0, 0, logoBin, DispWidth, DispHeight, SSD1322_WHITE);
-        oled.display();
       }
       if (actPicType == GSC) {
 #ifdef XDEBUG
@@ -2326,13 +2490,27 @@ void oled_drawlogo(uint8_t e) {
         oled.display();
         delay(1000);
 #endif
-        oled.clearDisplay();
-        oled.draw4bppBitmap(logoBin);
-        oled.display();
-      }    
+      }
+      oled_renderlogo();
+      oled.display();
     break;
   } // end switch (e)
 }  // end sd2oled_drawlogo
+
+// Draw srcBin into the framebuffer as it is - XBM or GSC - without sending it
+// to the panel, and count it as a picture shown. The plain draw (effect 0) is
+// this and a display(). The Fade transition uses it on its own: it has to
+// darken the new picture before the panel sees any of it, and drawing it with
+// effect 0 put it on the panel undarkened for as long as one frame transfer
+// takes - at contrast 0, which on this panel is nowhere near dark enough to
+// hide it, so it flashed just before every fade-in.
+void oled_renderlogo(void) {
+  ScreenSaverTimer=0;                        // Reset ScreenSaver-Timer
+  ScreenSaverLogoTimer=0;                    // Reset ScreenSaverLogo-Timer
+  oled.clearDisplay();
+  if (actPicType == XBM) oled.drawXBitmap(0, 0, srcBin, DispWidth, DispHeight, SSD1322_WHITE);
+  if (actPicType == GSC) oled.draw4bppBitmap(srcBin);
+}
 
 
 // --------------- Draw 8 Pixel to Display Buffer ----------------------
@@ -3070,6 +3248,52 @@ void oled_readicon(void) {
 }
 
 
+// CMDBOOTPIC,<core>,<effect> - show the boot image as <core>'s picture, with
+// the usual transition, or with none at all if the power-on screen is still
+// up (bootoutro.h). What BOOTSCREEN_AS_MENU sends for the MENU core.
+void oled_readbootpic(void) {
+  String args = newCommand.substring(11);            // after "CMDBOOTPIC,"
+  int comma = args.indexOf(',');
+  int effect = EFFECT_RANDOM;
+  if (comma >= 0) {
+    actCorename = args.substring(0, comma);
+    effect = args.substring(comma + 1).toInt();
+    if (effect < EFFECT_FADE) effect = EFFECT_RANDOM;
+    if (effect > maxEffect)   effect = maxEffect;
+  } else {
+    actCorename = args;
+  }
+  boot_showAsCore(effect);
+}
+
+// CMDDIM,<seconds>,<contrast>,<wake>[,<dim fade ms>] - see meta_parseDim.
+void oled_readdim(void) {
+#ifdef HAS_METADISPLAY
+  meta_parseDim(newCommand.c_str());         // in metadisplay.h, where the tests can reach it
+#endif
+}
+
+
+// CMDFLIP,<seconds>
+// Swap the console layout's sides every <seconds> so no region of the panel
+// keeps the same lit pixels. 0 disables and returns to the normal side.
+void oled_readflip(void) {
+#ifdef HAS_METADISPLAY
+  int secs = 0;
+  if (sscanf(newCommand.c_str(), "CMDFLIP,%d", &secs) == 1) {
+    if (secs < 0) secs = 0;
+    if (secs > 36000) secs = 36000;
+    metaFlipMs   = (unsigned long)secs * 1000UL;
+    metaLastFlip = millis();
+    if (secs == 0 && metaFlipped) {
+      metaFlipped = false;
+      if (metaKind == MKIND_CONSOLE) meta_showConsole();
+    }
+  }
+#endif
+}
+
+
 // CMDSHMETA - force the metadata view immediately, ignoring the timer.
 void oled_showmeta(void) {
 #ifdef HAS_METADISPLAY
@@ -3079,16 +3303,17 @@ void oled_showmeta(void) {
 }
 
 
-// CMDWRBOOT followed by 8192 raw bytes.
+// CMDWRBOOT followed by exactly BOOTIMG_BYTES raw bytes (256x54, 4bpp).
 // Persists a user boot image to the ESP's own flash so it appears at power-up
-// even with the MiSTer switched off.
+// even with the MiSTer switched off. The bottom BOOT_BAND_H rows of the panel
+// are not part of it - see bootscreen.h.
 void oled_readbootimage(void) {
 #ifdef XDEBUG
   Serial.println("Called Command CMDWRBOOT");
 #endif
 
 #ifdef HAS_METADISPLAY
-  // Reuse metaBin as the receive buffer - the boot image is exactly one
+  // Reuse metaBin as the receive buffer - the boot image is smaller than one
   // framebuffer and metaBin is not in use while a transfer is in flight.
   size_t got = Serial.readBytes((char*)metaBin, BOOTIMG_BYTES);
 

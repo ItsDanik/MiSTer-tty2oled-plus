@@ -103,6 +103,10 @@ const uint8_t PROGMEM tty2oled_logo32[] = {
    0xff, 0x7f, 0x00, 0x00, 0x00, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
    0x3f, 0x00, 0x00, 0x00 };
 
+// Upstream's start screen logo. Unused in this fork - oled_showStartScreen()
+// draws the full-width 4bpp picture in bootlogo.h instead - and kept only so
+// the asset is still here. tty2oled_logo32 below is a different bitmap and is
+// still used, by the screensaver.
 #define tty2oled_logo_width 120
 #define tty2oled_logo_height 46
 const uint8_t PROGMEM tty2oled_logo[] = {

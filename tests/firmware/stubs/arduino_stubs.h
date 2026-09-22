@@ -32,6 +32,7 @@
 #define ARDUINO_STUBS_H
 
 #include <string>
+#include <vector>
 
 #include <cstdint>
 #include <cstring>
@@ -49,6 +50,10 @@ inline long random(long howsmall, long howbig) {
 #define SSD1322_BLACK 0
 #define SSD1322_WHITE 15
 
+// Flash-resident data is ordinary memory on the host, as it is on the ESP32.
+#define PROGMEM
+#define memcpy_P memcpy
+
 // --- Display ----------------------------------------------------------------
 // Backed by a real 256x64 4bpp buffer so the geometry in meta_blitIcon can be
 // checked for out-of-bounds writes under ASan.
@@ -60,17 +65,39 @@ public:
     FakeOled() { memset(buf, 0, sizeof(buf)); }
 
     void     clearDisplay(void)                     { memset(buf, 0, sizeof(buf)); }
-    void     display(void)                          { displayCalls++; }
-    void     setContrast(uint8_t level)             { (void)level; }
+    // Remembers the brightest grey ever sent to the panel since shownPeak was
+    // last reset - what someone watching would have seen flash, however
+    // briefly.
+    void     display(void) {
+        displayCalls++;
+        for (size_t i = 0; i < sizeof(buf); i++) {
+            int hi = buf[i] >> 4, lo = buf[i] & 0x0F;
+            if (hi > shownPeak) shownPeak = hi;
+            if (lo > shownPeak) shownPeak = lo;
+        }
+    }
+    int      shownPeak = 0;
+    void     setContrast(uint8_t level)             { contrastLevel = level; contrastCalls++; }
+    uint8_t  contrastLevel = 200;
+    int      contrastCalls = 0;
     uint8_t *getBuffer(void)                        { return buf; }
     void     draw4bppBitmap(uint8_t *bitmap)        { memcpy(buf, bitmap, sizeof(buf)); }
     void     drawPixel(int16_t x, int16_t y, uint16_t color) { (void)x; (void)y; (void)color; }
+    // Recorded rather than rasterised: the page indicator is a handful of
+    // fillRects, and a test wants to know where they landed and which one is
+    // lit, not which pixels changed.
+    struct Rect { int16_t x, y, w, h; uint16_t color; };
+    struct HLine { int16_t x, y, w; uint16_t color; };
+    std::vector<Rect>  rects;
+    std::vector<HLine> hlines;
+
     void     drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
-        (void)x; (void)y; (void)w; (void)color;
+        hlines.push_back({x, y, w, color});
     }
     void     fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-        (void)x; (void)y; (void)w; (void)h; (void)color;
+        rects.push_back({x, y, w, h, color});
     }
+    void     resetProbe(void) { rects.clear(); hlines.clear(); displayCalls = 0; }
     int16_t  width(void)  { return W; }
     int16_t  height(void) { return H; }
 
@@ -78,8 +105,9 @@ public:
 };
 
 // --- U8g2 text layer --------------------------------------------------------
-// getUTF8Width returns a deterministic 6px-per-character width so layout and
-// clipping maths can be asserted exactly in tests.
+// getUTF8Width returns a deterministic width per character, set by the
+// harness's oled_setfont, so layout and clipping maths can be asserted
+// exactly in tests.
 class FakeU8g2 {
 public:
     void    setCursor(int16_t x, int16_t y)     { curX = x; curY = y; }
@@ -93,6 +121,9 @@ public:
         printLog += s;
         printLog += "\n";
         printCalls++;
+        // Every draw with the x and y it happened at, so a test can assert
+        // that two rows share a column rather than just that both appeared.
+        draws.push_back({std::string(s), curX, curY, charW, fgColor});
         // Record the right-most pixel any draw would touch, so tests can prove
         // nothing is drawn outside its column.
         int16_t right = (int16_t)(curX + getUTF8Width(s));
@@ -109,8 +140,23 @@ public:
     int16_t maxRight = -32768;
     int16_t minLeft  = 32767;
 
+    // charW is recorded with each draw so a test can tell which font size was
+    // in force when a string was drawn - the arcade title drops a size rather
+    // than lose its end, and that is otherwise invisible from the outside.
+    struct Draw { std::string text; int16_t x, y; int charW; uint16_t fg; };
+    std::vector<Draw> draws;
+
+    // x of the first draw whose text starts with `prefix`, or -1.
+    int16_t xOf(const char *prefix) const {
+        for (const auto &d : draws) {
+            if (d.text.rfind(prefix, 0) == 0) return d.x;
+        }
+        return -1;
+    }
+
     void resetProbe() {
         maxRight = -32768; minLeft = 32767; printCalls = 0; printLog.clear();
+        draws.clear();
     }
 };
 
