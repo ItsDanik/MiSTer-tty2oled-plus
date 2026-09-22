@@ -169,7 +169,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1278 checks, no hardware needed. |
+| `tests/` | 1313 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -204,6 +204,17 @@ composes it.
 | `computer` | untouched - full-screen artwork, as upstream |
 | `unknown` | as `computer`; metadata off |
 
+**This fork's own updater overrides even that.** `update_tty2oledplus` stops
+the daemon within seconds of starting - it wants the serial port for the
+display's version and the flash - so `selfupdate_pass` is the one chance to
+say what is happening: `CMDMETAOFF`, then `CMDBUSY,1,<SELF_UPDATE_TEXT>`, and
+no banner, because the banner may be replaced mid-run. The message then stays
+up precisely *because* the daemon is gone - nothing else writes to the panel
+until the flash resets the board. `oldcore` is cleared so everything goes out
+again when the daemon returns. The **uninstaller** is deliberately not
+matched: it stops the daemon too, and a display saying "Updating" about
+software being removed would be a lie. `SELF_UPDATE_SCREEN="no"` turns it off.
+
 **update_all overrides all of it.** While a process whose command line names
 `update_all` exists, the daemon sends `CMDMETAOFF` and `update_all.gsc` (exact
 name; `pics_pri`, then `pics/GSC`, then `.xbm`), or the bare name as text when
@@ -215,8 +226,11 @@ core), so the process is the only signal: `updateall_pass` greps
 `inotifywait` gained a timeout for it. `UPDATE_ALL_SCREEN="no"` turns it off.
 
 The picture is cropped to 54 rows (the daemon sends 6912 bytes of it and 1280
-of black), which frees the boot band for the **busy bar**: `CMDBUSY,1` while
-update_all's downloader runs, `CMDBUSY,0` after. update_all runs the
+of black), which frees the boot band for the **busy bar**:
+`CMDBUSY,1,UPDATING` while update_all's downloader runs, `CMDBUSY,0` after -
+and the banner is sent again then, because the label blacked it out. The
+download is the part that takes minutes, so it gets the whole panel:
+`UPDATE_ALL_TEXT` above the bar and nothing else. update_all runs the
 downloader from `/tmp/ua_downloader_{bin,latest.zip,dd.pyz}`, so that is what
 `downloader_running` matches - except with `--list-dbs`, a query the settings
 screen makes, which is not an update. The bar is `busybar.h`, the boot sweep
@@ -537,7 +551,7 @@ Upstream's commands are unchanged. These are additions, all ESP32-only:
 | `CMDFADE,<ms>` | one line; how long every contrast change fades, 0..4000, 0 jumps. Sent before the first `CMDCON` |
 | `CMDBOOTPIC,<core>,<effect>` | one line, no payload; show the boot image as the core's picture. Sent for MENU when `BOOTSCREEN_AS_MENU` is on. Nothing transitions if the power-on screen is still up |
 | `CMDTFADE,<fade ms>,<blank ms>` | one line; the Fade transition's timings, 0..4000 each. Sent before the first picture. `CMDCOR`'s effect may now be `-2` |
-| `CMDBUSY,<0\|1>` | one line; 1 runs the boot sweep in the bottom band, 0 lets it finish its cycle and stop. Any drawing command stops it at once |
+| `CMDBUSY,<0\|1>[,<label>]` | one line; 1 runs the boot sweep in the bottom band, 0 lets it finish its cycle and stop. A label blacks the panel above the band and writes it there, so the message is all that shows; the same label again is ignored, a different one redraws and rewinds the sweep. Any drawing command stops it at once |
 | `CMDFLIP,<seconds>` | one line; 0 disables and returns to the normal side |
 | `CMDWRBOOT` | followed by exactly 6912 raw bytes (256x54, 4bpp) |
 | `CMDCLRBOOT` | none - forget the stored boot image |
@@ -546,6 +560,26 @@ Upstream's commands are unchanged. These are additions, all ESP32-only:
 `,` `|` and `=` are the separators, so `metasanitize` strips them from every
 value along with anything non-printable. A short `CMDICON`/`CMDWRBOOT`
 transfer is dropped rather than half-applied.
+
+## The uninstaller, and why the init script places it
+
+`uninstall_tty2oledplus` in the Scripts menu removes the install folder, the
+boot hook and the comment above it, both Scripts entries, the pid file and the
+logs, and the boot image in the display's own flash - then itself, but only
+when it is the copy under `/media/fat/Scripts`, so running the repo's copy
+cannot delete it. It keeps the firmware (an ESP32 with none shows nothing),
+`log_file_entry` (MiSTer's setting), and everything of upstream's.
+
+It is installed **twice on purpose**: into `/media/fat/Scripts`, where it has
+to live to outlive the folder it removes, and into the install folder, from
+where `place_uninstaller` in `S60tty2oled` copies it to the menu on every
+start. That second path is the only one that works for an existing install:
+**an update is always applied by the previous version of the installer**, so a
+rule about where a new file goes cannot apply to the update that introduces
+it. 0.4.3b shipped the uninstaller and it landed in the install folder,
+because 0.4.2b's installer put every file from the archive there. The daemon's
+own start is the first thing a new version controls, so that is where the
+placement lives; `cmp` first, so a boot is not a write.
 
 ## Running the tests
 

@@ -115,6 +115,9 @@ public:
     void    setBackgroundColor(uint16_t bg)     { bgColor = bg; }
     void    setFont(const uint8_t *f)           { (void)f; }
     int16_t getUTF8Width(const char *str)       { return (int16_t)(strlen(str) * charW); }
+    // Cap height of the font in force, as u8g2 reports it: the harness's
+    // oled_setfont sets it beside charW.
+    int16_t getFontAscent(void)                 { return fontAscent; }
 
     void print(const char *s) {
         lastPrint = s;
@@ -134,6 +137,7 @@ public:
     int16_t curX = 0, curY = 0;
     uint16_t fgColor = 0, bgColor = 0;
     int charW = 6;
+    int fontAscent = 7;
     const char *lastPrint = "";
     std::string printLog;          // every string drawn since the last reset
     int printCalls = 0;

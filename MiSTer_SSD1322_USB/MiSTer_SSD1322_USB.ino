@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.4.3b"
+#define BuildVersion "0.4.4b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -1024,7 +1024,7 @@ void loop(void) {
   // is the one thing on the panel worth watching.
   if (ScreenSaverEnabled && !ScreenSaverActive && !busyActive && blinkpos) ScreenSaverLogoTimer++;
   ScreenSaverActive = (ScreenSaverLogoTimer>=ScreenSaverLogoTime) && ScreenSaverEnabled;
-  if (ScreenSaverActive) { bootHolding = false; busy_cancel(); }   // it draws over whatever was there
+  if (ScreenSaverActive) { bootHolding = false; busy_cancel(); busy_forgetLabel(); }   // it draws over whatever was there
   
   // ScreenSaver Timer
   if (ScreenSaverActive && blinkpos) ScreenSaverTimer++;

@@ -608,8 +608,13 @@ downloader_running() {
 # sweep, run by the firmware until told to stop.
 sendbusy() {
   [ "${USBMODE}" = "yes" ] || return 0
-  dbug "Sending: CMDBUSY,${1}"
-  echo "CMDBUSY,${1}" >${TTYDEV}
+  local arg="${1}"
+  # A label takes the panel: the firmware blacks the picture and writes the
+  # message above the bar. Without one the picture stays and only the bar runs.
+  # The comma is the separator, so it cannot survive in the text.
+  if [ -n "${2:-}" ]; then arg="${1},$(printf '%s' "${2}" | tr -d ',')"; fi
+  dbug "Sending: CMDBUSY,${arg}"
+  echo "CMDBUSY,${arg}" >${TTYDEV}
   cmdwait
 }
 
@@ -648,6 +653,41 @@ sendupdateall() {
   echo "${name}" >${TTYDEV}
 }
 
+# Is this fork's own updater running? update_tty2oledplus.sh stops the daemon
+# within a few seconds of starting - it wants the serial port for the display's
+# version and the flash - so this is the one chance to say what is happening.
+# The message stays on the panel afterwards precisely because the daemon is
+# gone: nothing else writes to it until the flash resets the board.
+#
+# The uninstaller is deliberately not matched: it stops the daemon too, but it
+# is removing this, and a display left saying "Updating" would be a lie.
+selfupdate_running() {
+  [ "${SELF_UPDATE_SCREEN:-yes}" = "yes" ] || return 1
+  grep -qsa -e '[u]pdate_tty2oledplus' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null
+}
+
+# The updater's own screen: no banner to show - it may be replaced mid-run -
+# so the message is all there is, with the bar under it.
+selfupdate_pass() {
+  selfupdate_running || { SELFUPDATE_SHOWN="no"; return 1; }
+  if [ "${SELFUPDATE_SHOWN:-no}" != "yes" ]; then
+    dbug "update_tty2oledplus is running"
+    if [ "${SHOW_METADATA}" = "yes" ]; then
+      dbug "Sending: CMDMETAOFF (self update)"
+      echo "CMDMETAOFF" >${TTYDEV}
+      sleep ${WAITSECS}
+      META_WIRE_LAST="OFF"
+    fi
+    sendbusy 1 "${SELF_UPDATE_TEXT:-Updating TTY2OLED+...}"
+    SELFUPDATE_SHOWN="yes"
+    # Whatever was on screen is gone, and the board is about to be reset by
+    # the flash: everything goes out again when the daemon comes back.
+    oldcore=""
+  fi
+  sleep "${UPDATE_ALL_POLL:-2}"
+  return 0
+}
+
 # One pass of the main loop while update_all runs: show its screen once, then
 # wait. Returns 1 when it is not running; the first such pass after it was
 # clears oldcore and the metadata line, so the core and game go out again in
@@ -663,9 +703,13 @@ updateall_pass() {
     # The bar follows the downloader, which update_all may run several times
     # over - its own update, then the main run.
     if downloader_running; then
-      [ "${UPDATEALL_BUSY:-no}" = "yes" ] || { sendbusy 1; UPDATEALL_BUSY="yes"; }
+      # The download is the part that takes minutes, so it gets the panel:
+      # UPDATING above the bar, the banner gone. The firmware ignores a repeat
+      # of the same label, so re-sending it costs a command and nothing else.
+      [ "${UPDATEALL_BUSY:-no}" = "yes" ] || { sendbusy 1 "${UPDATE_ALL_TEXT:-UPDATING}"; UPDATEALL_BUSY="yes"; }
     elif [ "${UPDATEALL_BUSY:-no}" = "yes" ]; then
-      sendbusy 0; UPDATEALL_BUSY="no"
+      # Back to the banner: the label blacked it out, so it has to go again.
+      sendbusy 0; UPDATEALL_BUSY="no"; sendupdateall
     fi
     sleep "${UPDATE_ALL_POLL:-2}"
     return 0
@@ -722,7 +766,9 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
         sleep ${SLEEPMODEDELAY}
       fi
       if [ ! -f ${SLEEPFILE} ]; then				  # Sleepmode = No
-        # update_all takes the screen over whatever core is loaded.
+        # update_all takes the screen over whatever core is loaded, and our
+        # own updater over that - it is about to stop this daemon.
+        selfupdate_pass && { deferred_setup; continue; }
         updateall_pass && { deferred_setup; continue; }
         newcore=$(<${corenamefile})				  # get CORENAME
         if [ "${SHOW_METADATA}" = "yes" ] && [ "${USBMODE}" = "yes" ]; then
@@ -766,7 +812,8 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
             # Anything but a timeout (an event, or inotifywait failing) ends
             # the wait as it always did.
             upwait=""
-            [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] && upwait="-t ${UPDATE_ALL_POLL:-2}"
+            { [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] || [ "${SELF_UPDATE_SCREEN:-yes}" = "yes" ]; } \
+              && upwait="-t ${UPDATE_ALL_POLL:-2}"
             while true; do
               if [ "${debug}" = "false" ]; then
                 inotifywait -qq ${upwait} -e modify "${corenamefile}"  # wait here for next change of corename, -qq for quietness
@@ -775,6 +822,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
               fi
               [ "$?" -eq 2 ] || break
               updateall_running && break
+              selfupdate_running && break
             done
 	  #else
           #  dbug "Core not changed!"

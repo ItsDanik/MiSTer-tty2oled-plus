@@ -280,13 +280,16 @@ main() {
             note "kept your $(basename "${f}")"
             continue
           fi ;;
-        # Belongs in the Scripts menu, not in the folder it removes.
+        # Belongs in the Scripts menu, not in the folder it removes. It is
+        # copied into the install folder as well, because S60tty2oled places
+        # it from there on every start - which is what gets it into the menu
+        # on a MiSTer whose last update was run by an installer that predates
+        # it, this one included.
         uninstall_tty2oledplus.sh)
           if [ -d "${FAT}/Scripts" ]; then
             cp "${f}" "${FAT}/Scripts/uninstall_tty2oledplus.sh"
             chmod +x "${FAT}/Scripts/uninstall_tty2oledplus.sh"
-          fi
-          continue ;;
+          fi ;;
       esac
       cp -r "${f}" "${INSTALL}/"
     done

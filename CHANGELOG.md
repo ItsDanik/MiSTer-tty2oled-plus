@@ -4,6 +4,25 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.4.4b — 2026-09-22
+
+- **The uninstaller now actually reaches the Scripts menu.** In 0.4.3b it
+  landed in `/media/fat/tty2oledplus` instead: an update is applied by the
+  installer already on the MiSTer, and 0.4.2b's knew nothing about a file that
+  belongs somewhere else. The daemon's own start places it now, so it appears
+  however old the installer that applied the update was.
+- **"UPDATING" while update_all downloads.** The banner gave no sign of which
+  part of an update was running. Now, when the downloader starts - the part
+  that takes minutes - the panel shows UPDATING above the busy bar and nothing
+  else; the banner comes back when the download ends. `UPDATE_ALL_TEXT` in the
+  ini says what it reads.
+- **The display says when tty2oled+ itself is updating.** Running
+  `update_tty2oledplus` puts "Updating TTY2OLED+..." on the panel with the
+  busy bar under it, and it stays there while the updater has the serial port
+  and the display is reflashed - instead of the last game's artwork sitting
+  there through the whole thing. `SELF_UPDATE_TEXT` and `SELF_UPDATE_SCREEN`
+  in the ini. The uninstaller deliberately gets no such screen.
+
 ## 0.4.3b — 2026-09-22
 
 - **An uninstaller.** `uninstall_tty2oledplus` in the Scripts menu removes

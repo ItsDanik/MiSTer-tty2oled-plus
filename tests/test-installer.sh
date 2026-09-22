@@ -349,8 +349,13 @@ echo "# somebody else's line" >> "${FAT}/linux/user-startup.sh"
 T2OP_HWINF="HWLOLIN32;0.3.9b;" install
 ok "the installer leaves the uninstaller in the Scripts menu" \
    "$(yesno test -x "${FAT}/Scripts/uninstall_tty2oledplus.sh")" "yes"
-ok "and not in the install folder, which it outlives" \
-   "$(yesno test -e "${INSTALL}/uninstall_tty2oledplus.sh")" "no"
+# And in the install folder as well, which is what S60tty2oled places it from
+# on every start - the only way it reaches the menu of a MiSTer whose update
+# was applied by an installer too old to know about it.
+ok "and in the install folder, for S60tty2oled to place from" \
+   "$(yesno test -e "${INSTALL}/uninstall_tty2oledplus.sh")" "yes"
+ok "the two are the same file" \
+   "$(cmp -s "${INSTALL}/uninstall_tty2oledplus.sh" "${FAT}/Scripts/uninstall_tty2oledplus.sh" && echo same)" "same"
 BEFORE="$(cat "${FAT}/linux/user-startup.sh")"
 
 uninstall --dry-run; RC="${?}"

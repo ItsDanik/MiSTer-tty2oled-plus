@@ -81,7 +81,27 @@ upstream_installed() {
 }
 
 # Start
+# The Scripts menu entry that removes all of this. It ships in the install
+# folder because that is what a release archive unpacks, and belongs in
+# /media/fat/Scripts because it has to outlive the folder it removes.
+#
+# Done here, on every start, rather than only by the installer: an update is
+# always applied by the *previous* version of the installer, so a new rule
+# about where a file goes can never apply to the update that introduces it.
+# The daemon's own start is the first thing the new version controls.
+place_uninstaller() {
+  local dir="${SCRIPTSPATH:-/media/fat/Scripts}"
+  local src="${TTY2OLED_PATH:-/media/fat/tty2oledplus}/uninstall_tty2oledplus.sh"
+  local dst="${dir}/uninstall_tty2oledplus.sh"
+  [ -f "${src}" ] || return 0
+  [ -d "${dir}" ] || return 0
+  cmp -s "${src}" "${dst}" && return 0            # already there, and the same
+  cp "${src}" "${dst}" 2>/dev/null && chmod +x "${dst}" 2>/dev/null
+}
+
 start() {
+    place_uninstaller
+
     # Refused before anything else, and said where it will be read: at boot
     # nobody sees stdout, so the daemon log gets it too.
     if upstream_installed; then

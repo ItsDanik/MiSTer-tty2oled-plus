@@ -8,6 +8,12 @@
 // as at power-on, and across the full width, since there is no version to
 // leave room for.
 //
+// CMDBUSY,1 may carry a label - "UPDATING", "Updating TTY2OLED+..." - and then
+// the panel is the message: the picture above the band is cleared and the
+// label drawn across it, so nothing of the core or the update_all banner shows
+// through. Without a label the picture is left alone and only the bar runs,
+// which is what the boot screen's own sweep does.
+//
 // CMDBUSY,0 lets the bar finish the cycle it is in - on to the edge, then
 // clearing back - rather than leave half a bar on screen, which is how the
 // power-on outro ends too. Anything else that reaches the dispatcher (a
@@ -21,18 +27,41 @@
 // the transition's palette steps redraw the whole frame from a copy and would
 // both wipe the bar and be spoiled by it.
 //
-// Needs, from the sketch or the tests: oled, DispWidth, millis(),
+// Needs, from the sketch or the tests: oled, u8g2, DispWidth, millis(),
 // boot_quietCommand() (bootoutro.h), tfState/TF_IDLE (fadetransition.h), and
-// the BOOT_BAR_* constants (bootscreen.h).
+// the BOOT_BAR_* and BOOT_BAND_Y constants (bootscreen.h).
 
 #ifndef BUSYBAR_H
 #define BUSYBAR_H
 
+// Font 3 is luBS14 - bold, 14px - the largest that keeps "Updating
+// TTY2OLED+..." inside 256 pixels. oled_setfont() lives in the sketch; the
+// tests provide their own, as the metadata display does.
+void oled_setfont(int font);
+#define BUSY_LABEL_FONT 3
+
+char          busyLabel[33] = "";      // the message drawn above the band, if any
 bool          busyActive   = false;   // the bar is running
 bool          busyStopping = false;   // ...and finishing its cycle
 bool          busyFilling  = true;    // filling, or clearing back
 int           busyPos      = 0;       // next segment to draw
 unsigned long busyLast     = 0;
+
+// The label, centred in the rows above the band. Drawn once, when the bar
+// starts: the bar only ever touches the band below it, so nothing redraws it.
+// The whole panel is blacked first, band included - a bar stopped half way
+// through its cycle would otherwise sit there under the new message.
+void busy_showLabel(const char *label) {
+  oled.fillRect(0, 0, DispWidth, BOOT_PANEL_H, SSD1322_BLACK);
+  oled_setfont(BUSY_LABEL_FONT);
+  int w = u8g2.getUTF8Width(label);
+  int x = (DispWidth - w) / 2;
+  if (x < 0) x = 0;
+  // Centred in the picture area, not the panel: the band is the bar's.
+  u8g2.setCursor(x, (BOOT_BAND_Y + u8g2.getFontAscent()) / 2);
+  u8g2.print(label);
+  oled.display();
+}
 
 void busy_start(void) {
   if (busyActive && !busyStopping) return;             // already running: keep its place
@@ -55,18 +84,38 @@ void busy_cancel(void) {
   busyStopping = false;
 }
 
-// CMDBUSY,<0|1>
+// Someone else has taken the panel, so the message is gone with it: the next
+// CMDBUSY with the same label has to draw it again.
+void busy_forgetLabel(void) {
+  busyLabel[0] = '\0';
+}
+
+// CMDBUSY,<0|1>[,<label>]
 void busy_parse(const char *cmd) {
   const char *p = strchr(cmd, ',');
-  if (p && atoi(p + 1) > 0) busy_start();
-  else                      busy_stop();
+  if (!p || atoi(p + 1) <= 0) { busy_stop(); return; }
+  const char *label = strchr(p + 1, ',');
+  // A label restarts the bar from the left, under a freshly drawn message;
+  // repeating the same command must not, or a poll every couple of seconds
+  // would redraw the panel and reset the sweep each time.
+  if (label && label[1]) {
+    if (strncmp(busyLabel, label + 1, sizeof(busyLabel) - 1) != 0) {
+      strncpy(busyLabel, label + 1, sizeof(busyLabel) - 1);
+      busyLabel[sizeof(busyLabel) - 1] = '\0';
+      busy_cancel();                                     // so busy_start() rewinds it
+      busy_showLabel(busyLabel);
+    }
+  } else {
+    busyLabel[0] = '\0';
+  }
+  busy_start();
 }
 
 // Called for every command before it is handled.
 void busy_noteCommand(const char *cmd) {
   if (!busyActive) return;
   if (strncmp(cmd, "CMDBUSY", 7) == 0) return;
-  if (!boot_quietCommand(cmd)) busy_cancel();
+  if (!boot_quietCommand(cmd)) { busy_cancel(); busy_forgetLabel(); }
 }
 
 void busy_tick(void) {

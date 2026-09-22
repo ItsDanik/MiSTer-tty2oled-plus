@@ -209,6 +209,31 @@ ok "in the daemon log too, for a start at boot" "$(grep -c 'not made to run side
 ok "and nothing is started" "$([ -e "${PIDFILE}" ] && echo started || echo none)" "none"
 rm -rf "${UPSTREAM_DIR}"
 
+# The uninstaller reaches the Scripts menu from here, not only from the
+# installer: an update is applied by the *previous* installer, which knows
+# nothing of a file added after it - so the daemon's own start is the first
+# thing a new version controls.
+SCRIPTSPATH="${TMP}/Scripts"; TTY2OLED_PATH="${TMP}/install"
+mkdir -p "${SCRIPTSPATH}" "${TTY2OLED_PATH}"
+place_uninstaller
+ok "nothing to place, nothing placed" "$([ -e "${SCRIPTSPATH}/uninstall_tty2oledplus.sh" ] && echo yes || echo no)" "no"
+echo "#!/bin/bash" > "${TTY2OLED_PATH}/uninstall_tty2oledplus.sh"
+place_uninstaller
+ok "an install that has one gets it into the Scripts menu" \
+   "$(cat "${SCRIPTSPATH}/uninstall_tty2oledplus.sh")" "#!/bin/bash"
+ok "and it can be run from there" "$([ -x "${SCRIPTSPATH}/uninstall_tty2oledplus.sh" ] && echo yes || echo no)" "yes"
+echo "# newer" >> "${TTY2OLED_PATH}/uninstall_tty2oledplus.sh"
+place_uninstaller
+ok "a newer one replaces it" "$(grep -c '# newer' "${SCRIPTSPATH}/uninstall_tty2oledplus.sh")" "1"
+touch -d "2020-01-01" "${SCRIPTSPATH}/uninstall_tty2oledplus.sh"
+BEFORE="$(stat -c %Y "${SCRIPTSPATH}/uninstall_tty2oledplus.sh")"
+place_uninstaller
+ok "an identical one is left alone, so every boot is not a write" \
+   "$(stat -c %Y "${SCRIPTSPATH}/uninstall_tty2oledplus.sh")" "${BEFORE}"
+rm -rf "${SCRIPTSPATH}"
+place_uninstaller; ok "no Scripts folder, no complaint" "${?}" "0"
+unset SCRIPTSPATH TTY2OLED_PATH
+
 rm -f "${PIDFILE}" "${PIDFILE_LEGACY}"
 daemonpid; ok "nothing running, nothing found" "${?}" "1"
 status >/dev/null; ok "status says not running" "${?}" "1"
@@ -384,20 +409,35 @@ ok "so no bar for it" "$(wc -c <"${WIRE}")" "0"
 mkproc 601 /tmp/ua_downloader_bin
 downloader_running; ok "the downloader proper is" "${?}" "0"
 updateall_pass
-ok "the bar starts" "$(cat "${WIRE}")" "CMDBUSY,1"
+ok "the bar starts, and takes the panel with UPDATING" "$(cat "${WIRE}")" "CMDBUSY,1,UPDATING"
 : >"${WIRE}"; updateall_pass
 ok "and is not restarted every pass" "$(wc -c <"${WIRE}")" "0"
 rm -rf "${PROC_ROOT}/601"
-updateall_pass
-ok "the downloader done, the bar stops" "$(cat "${WIRE}")" "CMDBUSY,0"
+# Every write truncates this file, so what the whole pass sent is read off
+# stdout instead - with the picture out of the way, so it is all text.
+mv "${picturefolder}/GSC/update_all.gsc" "${TMP}/update_all.gsc.away"
+ok "the downloader done, the bar stops and the banner is drawn again" \
+   "$(TTYDEV=/dev/stdout updateall_pass | tr '\n' ' ')" "CMDBUSY,0 CMDMETAOFF update_all "
+mv "${TMP}/update_all.gsc.away" "${picturefolder}/GSC/update_all.gsc"
+UPDATEALL_BUSY="no"    # that pass ran down a pipe, so its state stayed there
 : >"${WIRE}"; updateall_pass
 ok "once" "$(wc -c <"${WIRE}")" "0"
 mkproc 602 python3 /tmp/ua_downloader_dd.pyz
 updateall_pass
-ok "a second run starts it again" "$(cat "${WIRE}")" "CMDBUSY,1"
+ok "a second run starts it again" "$(cat "${WIRE}")" "CMDBUSY,1,UPDATING"
+UPDATE_ALL_TEXT="DOWNLOADING"; UPDATEALL_BUSY="no"
+: >"${WIRE}"; updateall_pass
+ok "UPDATE_ALL_TEXT says what it reads" "$(cat "${WIRE}")" "CMDBUSY,1,DOWNLOADING"
+UPDATE_ALL_TEXT="Updating, now"; UPDATEALL_BUSY="no"
+: >"${WIRE}"; updateall_pass
+ok "and a comma in it cannot reach the wire, where it is the separator" \
+   "$(cat "${WIRE}")" "CMDBUSY,1,Updating now"
+UPDATE_ALL_TEXT="UPDATING"
 
 rm -rf "${PROC_ROOT}/501" "${PROC_ROOT}/602"
+
 : >"${WIRE}"
+UPDATEALL_BUSY="yes"
 updateall_pass; ok "finished: the pass is not taken" "${?}" "1"
 ok "and a bar still running is stopped" "$(cat "${WIRE}")" "CMDBUSY,0"
 ok "and the core is redrawn in full" "${oldcore}|${META_WIRE_LAST}" "|"
@@ -409,6 +449,48 @@ UPDATEALL_SHOWN="yes"; UPDATEALL_BUSY="yes"; TTYGONE="yes"; TTYDEV="/dev/null"
 serialready
 ok "a display that came back gets the update_all screen and bar again" \
    "${UPDATEALL_SHOWN}|${UPDATEALL_BUSY}" "no|no"
+# ---------------------------------------------------------------------------
+# Our own updater: the message has to go up before it stops this daemon
+# ---------------------------------------------------------------------------
+TTYDEV="${WIRE}"
+
+SELF_UPDATE_SCREEN="yes"; SELFUPDATE_SHOWN="no"; SHOW_METADATA="yes"
+selfupdate_running; ok "no updater running" "${?}" "1"
+mkproc 700 /bin/bash /media/fat/Scripts/update_tty2oledplus.sh
+selfupdate_running; ok "update_tty2oledplus seen" "${?}" "0"
+SELF_UPDATE_SCREEN="no"
+selfupdate_running; ok "SELF_UPDATE_SCREEN=no ignores it" "${?}" "1"
+SELF_UPDATE_SCREEN="yes"
+
+oldcore="NES"; META_WIRE_LAST="CMDMETA,..."
+ok "the message and the bar go out, with no banner" \
+   "$(TTYDEV=/dev/stdout selfupdate_pass | tr '\n' ' ')" \
+   "CMDMETAOFF CMDBUSY,1,Updating TTY2OLED+... "
+selfupdate_pass >/dev/null
+ok "the core is forgotten, so it is redrawn when the daemon returns" "${oldcore}" ""
+: >"${WIRE}"; TTYDEV="${WIRE}"; selfupdate_pass
+ok "and it is sent once, not every pass" "$(wc -c <"${WIRE}")" "0"
+
+# The uninstaller stops the daemon too, and a display left saying "Updating"
+# about software that is being removed would be a lie.
+rm -rf "${PROC_ROOT}/700"
+mkproc 701 /bin/bash /media/fat/Scripts/uninstall_tty2oledplus.sh
+selfupdate_running; ok "the uninstaller is not an update" "${?}" "1"
+rm -rf "${PROC_ROOT}/701"
+selfupdate_pass; ok "gone: the pass is not taken" "${?}" "1"
+
+# It wins over update_all: it is about to stop the daemon.
+mkproc 500 /bin/bash /media/fat/Scripts/update_all.sh
+mkproc 700 /bin/bash /media/fat/Scripts/update_tty2oledplus.sh
+SELFUPDATE_SHOWN="no"
+ok "with both running, ours is what shows" \
+   "$(TTYDEV=/dev/stdout selfupdate_pass | tail -n1)" "CMDBUSY,1,Updating TTY2OLED+..."
+rm -rf "${PROC_ROOT}/500" "${PROC_ROOT}/700"
+SELFUPDATE_SHOWN="no"
+
+ok "the daemon's wait times out for it even with the update_all screen off" \
+   "$(grep -c 'SELF_UPDATE_SCREEN:-yes}" = "yes" \]; }' "${ROOT}/tty2oled.sh")" "1"
+
 TTYDEV="/dev/null"; unset PROC_ROOT
 
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n\n' "${PASS}" "${FAIL}"

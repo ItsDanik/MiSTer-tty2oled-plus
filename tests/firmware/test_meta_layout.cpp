@@ -78,6 +78,7 @@ void oled_drawlogo(uint8_t e) {
 void oled_setfont(int font)   {
     lastFontSet = font;
     u8g2.charW = (font == 0) ? 5 : (font == CARD_TITLE_ALT ? 6 : 8);
+    u8g2.fontAscent = (font == 0) ? 7 : (font == CARD_TITLE_ALT ? 9 : 11);
 }
 
 // --- Harness ----------------------------------------------------------------
@@ -1640,6 +1641,65 @@ int main() {
         // exactly on the panel edge however far right it was pushed.
         okInt ("the shortened sweep still ends on the edge",
                (BOOT_PANEL_W - BOOT_BAR_X_MAX) % BOOT_BAR_STEP, 0);
+    }
+
+    section("busy bar: a label takes the panel above the band");
+    {
+        busy_cancel();
+        busy_forgetLabel();
+        tfState = TF_IDLE;
+        oled.resetProbe();
+        u8g2.resetProbe();
+
+        busy_parse("CMDBUSY,1,UPDATING");
+        okBool("CMDBUSY,1,<label> starts the bar", busyActive, true);
+        ok    ("and draws the label", u8g2.lastPrint, "UPDATING");
+
+        // The whole panel is blacked first: the band included, or a bar
+        // stopped half way through a cycle would show under the message.
+        okInt ("the panel is cleared for it", (long)oled.rects.size(), 1);
+        okInt ("all 64 rows of it", oled.rects[0].h, BOOT_PANEL_H);
+        okInt ("from the top", oled.rects[0].y, 0);
+        okInt ("in black", oled.rects[0].color, SSD1322_BLACK);
+
+        // Centred across the panel, and inside the rows above the band - the
+        // band belongs to the bar.
+        const auto &d = u8g2.draws[0];
+        okInt ("centred across the panel",
+               d.x, (BOOT_PANEL_W - (int)strlen("UPDATING") * d.charW) / 2);
+        okBool("its baseline is above the band", d.y < BOOT_BAND_Y, true);
+
+        // A poll every couple of seconds re-sends the same command: redrawing
+        // would rewind the sweep and flash the panel each time.
+        for (int i = 0; i < 4; i++) { g_fakeMillis += BOOT_BAR_MS; busy_tick(); }
+        int posBefore = busyPos;
+        oled.resetProbe();
+        u8g2.resetProbe();
+        busy_parse("CMDBUSY,1,UPDATING");
+        okInt ("the same label again draws nothing", u8g2.printCalls, 0);
+        okInt ("and does not rewind the sweep", busyPos, posBefore);
+
+        // A different one is a different message, so it starts over.
+        busy_parse("CMDBUSY,1,Updating TTY2OLED+...");
+        ok    ("a new label is drawn", u8g2.lastPrint, "Updating TTY2OLED+...");
+        okInt ("and the sweep starts from the left", busyPos, 0);
+
+        // Whoever takes the panel takes the message with it, so the next
+        // CMDBUSY carrying it has to draw it again.
+        busy_noteCommand("CMDCOR,nes,-2");
+        okBool("a picture cancels the bar", busyActive, false);
+        u8g2.resetProbe();
+        busy_parse("CMDBUSY,1,Updating TTY2OLED+...");
+        ok    ("and the label is drawn afresh", u8g2.lastPrint, "Updating TTY2OLED+...");
+
+        // Without a label the picture underneath is left alone - that is the
+        // bar as update_all's settings screen and the boot sweep use it.
+        busy_cancel(); busy_forgetLabel();
+        oled.resetProbe(); u8g2.resetProbe();
+        busy_parse("CMDBUSY,1");
+        okInt ("no label, nothing drawn over the picture", u8g2.printCalls, 0);
+        okInt ("and nothing cleared", (long)oled.rects.size(), 0);
+        busy_cancel(); busy_forgetLabel();
     }
 
     section("busy bar: the boot sweep in the band while the downloader runs");
