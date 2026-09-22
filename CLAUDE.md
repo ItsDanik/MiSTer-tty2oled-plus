@@ -165,11 +165,12 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootlogo.h` | New. The built-in 256x54 boot picture, generated. |
 | `MiSTer_SSD1322_USB/bootlogo.png` | New. The art it is generated from. |
 | `MiSTer_SSD1322_USB/contrastfade.h` | New. Every contrast change fades; base level times the transition veil. |
+| `MiSTer_SSD1322_USB/pagefade.h` | New. A metadata page turn fades only the rows that change. |
 | `MiSTer_SSD1322_USB/fadetransition.h` | New. `TRANSITION=-2`: palette-and-contrast fade out, black, fade in. |
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1313 checks, no hardware needed. |
+| `tests/` | 1356 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -391,6 +392,34 @@ wider than the panel at 12px - so a title that will not fit drops to
 `CARD_TITLE_ALT` before it is allowed to be truncated. There is no marquee
 here: the card is snapshotted into `metaBin` and handed to the transition
 effects, so it is a still image by construction.
+
+## Turning a page fades only the page
+
+A page turn is not a new picture: the header, the rule, the title and the
+pinned fields are identical either side of it, and fading the whole panel for
+the three or four rows that do change made the screen blink every few seconds
+while saying nothing. `pagefade.h` fades a **rectangle** instead - the paged
+rows only - out to black, redraws them, and back in, on the same sixteen
+palette steps as the picture fade. `meta_consolePagedRect` and
+`meta_cardPagedRect` derive it from the same constants the renderers use, so
+moving a row moves the fade with it.
+
+There is **no contrast veil** in it: contrast is a property of the whole panel,
+and dimming it would fade exactly what has to stay put. The rectangle is in
+**bytes** - 4bpp, so only an even x is a byte boundary, and an odd one is
+rounded outwards. That is what keeps the console's icon out of it: the text
+column starts at an even x and the icon sits beyond its right edge.
+
+It borrows `fadeBin` from `fadetransition.h` rather than carrying 8KB of its
+own; the two cannot run together, and `pf_start` gives way to a picture fade
+in progress instead of sharing it. `meta_tick` returns early while one runs,
+because the marquee redraws the whole frame and would undo the steps between
+them. Anything that takes the panel - a new picture through
+`oled_transition`, `meta_reset`, the screensaver - cancels it, and a cancel
+mid-fade-out still performs the redraw it was asked for, so the page it was
+turning to is not lost. Half its length, capped at 400ms, because the console
+pager turns every 2.5s and a fade still running when the next page is due
+would be a fade nobody asked for.
 
 ## Pinned fields
 
@@ -860,6 +889,14 @@ is what found the `FULLPATH` bug.
   `update_tty2oledplus.sh` now, the name it already had in the Scripts menu,
   and `test-installer.sh` fails on any two assets that differ only in case.
   The same pair would also have collided in a clone on macOS or Windows.
+- **`CMDBOOTPIC` draws, whatever the boot screen thinks.** It is on
+  `boot_quietCommand`'s list because at power-on the picture it draws is the
+  boot screen already on the panel. The busy bar shared that list, so after
+  `update_tty2oledplus` finished, the menu picture went up *under* a bar that
+  nothing would ever stop - the MENU core sends `CMDBOOTPIC` and no `CMDCOR`.
+  The bar keeps the list minus that one command, and the daemon stops the bar
+  itself when the updater exits: a screen that says "busy" has to be taken
+  down by whoever put it up.
 - **A theory that fits is not a cause.** The flash hang first looked like the
   firmware formatting LittleFS after the erase and missing the daemon's
   handshake meanwhile. Reproducing it - erase the region, reset, start the

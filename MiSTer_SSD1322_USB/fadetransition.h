@@ -42,6 +42,7 @@
 
 void oled_drawlogo(uint8_t e);          // the sketch's; declared later there
 void oled_renderlogo(void);             // draws into the framebuffer, shows nothing
+void pf_cancel(void);                   // pagefade.h's, included just after this
 
 #define EFFECT_RANDOM   -1
 #define EFFECT_FADE     -2
@@ -230,6 +231,10 @@ void transition_fadeIn(uint16_t ms) {
 // Every transition goes through here: -2 fades, -1 (or anything else below 0)
 // picks one of the wipes at random, and 0..maxEffect is that effect.
 void oled_transition(int e) {
+  // A new picture ends any page fade: its steps are computed from a copy of
+  // the panel as it was, and left running they would paint the old page's
+  // rows back over the new picture.
+  pf_cancel();
   if (e == EFFECT_FADE) { transition_fade(); return; }
   transition_cancel();
   if (e < 0) e = random(minEffect, maxEffect + 1);

@@ -285,7 +285,14 @@ void meta_activity(void);
 // ---------------------------------------------------------------------------
 // meta_reset - drop all metadata and return to plain picture display.
 // ---------------------------------------------------------------------------
+#ifdef HAS_METADISPLAY
+void pf_cancel(void);                // pagefade.h, included further down
+#endif
+
 void meta_reset(void) {
+#ifdef HAS_METADISPLAY
+  pf_cancel();                       // no page left to fade to
+#endif
   metaKind = MKIND_OFF;
   metaTitle[0] = 0;
   metaFieldCount = 0;
@@ -420,6 +427,7 @@ bool meta_parse(const char *cmd) {
 
 #include "contrastfade.h"
 #include "fadetransition.h"
+#include "pagefade.h"          // a page turn fades only the rows that change
 
 // ---------------------------------------------------------------------------
 // Which side each column is on. The icon must start on an even x: the
@@ -827,6 +835,37 @@ static void meta_renderConsole(void) {
 }
 
 // ---------------------------------------------------------------------------
+// The rows a page turn changes, for pagefade.h. Everything above them - the
+// header, the rule, the title and the pinned fields - is identical on every
+// page and must not move or flicker.
+//
+// Both are derived from the same constants the renderers use, so a layout
+// change carries the fade with it; test_meta_layout checks that the first
+// paged row's glyphs fall inside the rectangle and the last pinned row's
+// fall outside it.
+// ---------------------------------------------------------------------------
+
+// Console: the paged field rows, in the text column only - the icon panel
+// beside them belongs to neither page.
+static void meta_consolePagedRect(int *x, int *w, int *y0, int *y1) {
+  const int firstPaged = meta_pinnedRows();          // row index of the first
+  *x  = meta_textX();
+  *w  = meta_textW();
+  // The top row of that field: its baseline less the glyph height above it.
+  *y0 = CON_FIELD_Y0 + firstPaged * CON_FIELD_PITCH - CON_FIELD_ASCENT;
+  *y1 = DispHeight;
+}
+
+// Card: the rows below the pinned grid row, across the whole panel.
+static void meta_cardPagedRect(int *x, int *w, int *y0, int *y1) {
+  const int firstPaged = meta_cardPairRows(meta_cardPinned());
+  *x  = 0;
+  *w  = DispWidth;
+  *y0 = CARD_FIELD_Y0 + firstPaged * CARD_FIELD_PITCH - CARD_FIELD_ASCENT;
+  *y1 = DispHeight;
+}
+
+// ---------------------------------------------------------------------------
 // meta_snapshot - capture the composed framebuffer into metaBin so the
 // existing transition effects can animate towards it.
 // ---------------------------------------------------------------------------
@@ -973,10 +1012,25 @@ bool meta_parseDim(const char *cmd) {
 // artwork in with effect 5 and then every page of the card with a lottery.
 extern int tEffect;
 
+// The page a fade is turning to, and the callbacks that draw it once the
+// rectangle is black. Statics rather than arguments, because pf_start takes a
+// plain function pointer - there is no closure to hand it.
+static int  pfNextPage = 0;
+static void meta_redrawConsolePage(void) {
+  fieldPage = pfNextPage;
+  meta_renderConsole();
+  metaNeedsDraw = false;            // as meta_showConsole would have done
+}
+static void meta_redrawCardPage(void)    { cardPage  = pfNextPage; meta_renderCard(); }
+
 bool meta_tick(void) {
   unsigned long now = millis();
 
   meta_dimTick(now);
+
+  // A page fade owns the panel while it runs: the marquee would redraw the
+  // whole frame between its steps and undo them.
+  if (pf_active()) { pf_tick(); return true; }
 
   // Swap the layout's sides periodically so no part of the panel holds the
   // same lit pixels indefinitely. Console only: the arcade card and the
@@ -995,8 +1049,14 @@ bool meta_tick(void) {
       if (!metaShowingCard) {
         meta_showCard(tEffect);              // artwork -> first page
       } else if (cardPage + 1 < meta_cardPageCount()) {
-        cardPage++;                     // one page to the next, card to card
-        meta_showCard(tEffect);
+        // One page to the next: only the rows below the pinned grid row
+        // change, so only those fade. The title, the rule and the pinned row
+        // stay lit throughout.
+        int x, w, y0, y1;
+        meta_cardPagedRect(&x, &w, &y0, &y1);
+        pfNextPage = cardPage + 1;
+        metaLastSwap = now;
+        pf_start(x, w, y0, y1, meta_redrawCardPage);
       } else {
         cardPage = 0;                   // last page -> back to the artwork
         meta_showPicture(tEffect);
@@ -1015,12 +1075,16 @@ bool meta_tick(void) {
       return true;
     }
 
-    // Field pager. Same page count the renderer uses.
+    // Field pager. Same page count the renderer uses. The pinned rows above
+    // it do not change, so the fade is given the paged rows only.
     int pages = meta_pageCount();
     if (pages > 1 && now - lastPageTick >= VSCROLL_MS) {
-      fieldPage    = (fieldPage + 1) % pages;
+      int x, w, y0, y1;
+      meta_consolePagedRect(&x, &w, &y0, &y1);
+      pfNextPage   = (fieldPage + 1) % pages;
       lastPageTick = now;
-      dirty        = true;
+      pf_start(x, w, y0, y1, meta_redrawConsolePage);
+      return true;
     }
 
     // Title marquee. Only runs when the title actually overflows. The window

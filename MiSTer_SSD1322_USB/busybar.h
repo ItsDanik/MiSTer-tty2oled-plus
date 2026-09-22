@@ -34,11 +34,12 @@
 #ifndef BUSYBAR_H
 #define BUSYBAR_H
 
-// Font 3 is luBS14 - bold, 14px - the largest that keeps "Updating
-// TTY2OLED+..." inside 256 pixels. oled_setfont() lives in the sketch; the
-// tests provide their own, as the metadata display does.
+// Font 2 is luBS10 - bold, 10px. Big enough to read across a room, small
+// enough that the message is a caption over the bar rather than a headline.
+// oled_setfont() lives in the sketch; the tests provide their own, as the
+// metadata display does.
 void oled_setfont(int font);
-#define BUSY_LABEL_FONT 3
+#define BUSY_LABEL_FONT 2
 
 char          busyLabel[33] = "";      // the message drawn above the band, if any
 bool          busyActive   = false;   // the bar is running
@@ -112,10 +113,20 @@ void busy_parse(const char *cmd) {
 }
 
 // Called for every command before it is handled.
+//
+// The boot screen's quiet list, with one exception: CMDBOOTPIC draws a
+// picture. It counts as quiet for the power-on screen because the picture it
+// draws is the boot screen already on the panel - but a bar left sweeping
+// across a freshly drawn menu picture is exactly what it looks like, and
+// nothing would ever stop it: the daemon sends CMDBOOTPIC and no CMDCOR for
+// the MENU core.
 void busy_noteCommand(const char *cmd) {
   if (!busyActive) return;
   if (strncmp(cmd, "CMDBUSY", 7) == 0) return;
-  if (!boot_quietCommand(cmd)) { busy_cancel(); busy_forgetLabel(); }
+  if (strncmp(cmd, "CMDBOOTPIC", 10) == 0 || !boot_quietCommand(cmd)) {
+    busy_cancel();
+    busy_forgetLabel();
+  }
 }
 
 void busy_tick(void) {

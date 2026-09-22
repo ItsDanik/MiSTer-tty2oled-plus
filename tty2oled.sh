@@ -669,7 +669,21 @@ selfupdate_running() {
 # The updater's own screen: no banner to show - it may be replaced mid-run -
 # so the message is all there is, with the bar under it.
 selfupdate_pass() {
-  selfupdate_running || { SELFUPDATE_SHOWN="no"; return 1; }
+  if ! selfupdate_running; then
+    # Finished - which for an update that reflashed the display means the
+    # board reset under us, and for one that did not means the bar is still
+    # sweeping over whatever is drawn next. Stop it and redraw everything:
+    # CMDBOOTPIC, which is all the MENU core sends, used to leave it running
+    # for ever over the menu picture.
+    if [ "${SELFUPDATE_SHOWN:-no}" = "yes" ]; then
+      dbug "update_tty2oledplus finished, back to the core"
+      sendbusy 0
+      SELFUPDATE_SHOWN="no"
+      oldcore=""
+      META_WIRE_LAST=""
+    fi
+    return 1
+  fi
   if [ "${SELFUPDATE_SHOWN:-no}" != "yes" ]; then
     dbug "update_tty2oledplus is running"
     if [ "${SHOW_METADATA}" = "yes" ]; then

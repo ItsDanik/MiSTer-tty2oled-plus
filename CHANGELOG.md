@@ -4,6 +4,21 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.4.5b — 2026-09-22
+
+- **The busy bar no longer runs for ever after an update.** When
+  `update_tty2oledplus` finished, the bar kept sweeping across the menu
+  picture until a core was loaded: the daemon never took it down, and the
+  MENU core draws its picture with a command the firmware treats as harmless.
+  Both halves are fixed - the bar is stopped when the updater exits, and the
+  menu picture stops it by itself.
+- **A page turn fades only what changes.** Turning from one page of metadata
+  to the next used to fade the whole panel, title and all, for the sake of
+  three rows of text. Now the title, the rule and the pinned fields stay lit
+  and still, and only the paged rows fade out and back in - on the console
+  layout the icon beside them stays lit too.
+- The "UPDATING" message over the busy bar is drawn in a smaller font.
+
 ## 0.4.4b — 2026-09-22
 
 - **The uninstaller now actually reaches the Scripts menu.** In 0.4.3b it

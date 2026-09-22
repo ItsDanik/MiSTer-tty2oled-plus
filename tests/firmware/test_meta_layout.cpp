@@ -103,6 +103,12 @@ static void okBool(const char *label, bool got, bool want) {
 }
 static void section(const char *s) { printf("\n\033[1m%s\033[0m\n", s); }
 
+// A page turn fades the rows that change, so it finishes over several ticks
+// rather than in the one that started it. Run the clock on until it has.
+static void settlePageFade(void) {
+    for (int i = 0; i < 200 && pf_active(); i++) { g_fakeMillis += 25; meta_tick(); }
+}
+
 int main() {
 
     section("geometry constants are self-consistent");
@@ -395,10 +401,11 @@ int main() {
         g_fakeMillis += 11000;
         u8g2.resetProbe();
         okBool("page 1 -> page 2",    meta_tick(), true);
+        okBool("the pinned rows do not move for it", pf_active(), true);
+        settlePageFade();
         okBool("card still up",       metaShowingCard, true);
         okInt ("on the wide page",    cardPage, 1);
         okBool("wide page drawn",     u8g2.printLog.find("Buttons") != std::string::npos, true);
-        okBool("drawn from metaBin",  lastSrcAtDraw == metaBin, true);
 
         g_fakeMillis += 11000;
         okBool("last page -> artwork", meta_tick(), true);
@@ -638,7 +645,137 @@ int main() {
         okInt("offset stays zero", titleScrollX, 0);
     }
 
-    section("field pager cycles when fields overflow the rows");
+    section("a page turn fades only the rows that change");
+    {
+        // Two pinned fields and four paged ones: the header, rule, title and
+        // the two pinned rows are identical on both pages.
+        meta_parse("CMDMETA,2,0,2,Game|System=NES|Year=1987|Genre=Action|Region=USA|Company=N|Format=nes");
+        metaFlipped = false;
+        meta_tick();                            // first draw
+        settlePageFade();
+
+        int x, w, y0, y1;
+        meta_consolePagedRect(&x, &w, &y0, &y1);
+        okInt ("the rectangle starts at the first paged row",
+               y0, CON_FIELD_Y0 + 2 * CON_FIELD_PITCH - CON_FIELD_ASCENT);
+        okBool("below the last pinned baseline",
+               y0 > CON_FIELD_Y0 + 1 * CON_FIELD_PITCH, true);
+        okInt ("and runs to the bottom", y1, DispHeight);
+        okInt ("across the text column only", w, meta_textW());
+        okBool("so the icon panel is outside it", x + w <= meta_iconX(), true);
+
+        lastPageTick = g_fakeMillis;
+        g_fakeMillis += VSCROLL_MS + 1;
+        okBool("the pager starts a fade", meta_tick() && pf_active(), true);
+        okInt ("with the page it is turning to held back", fieldPage, 0);
+        okBool("and the marquee held while it runs", pf_active(), true);
+        settlePageFade();
+        okInt ("the page turns when the fade reaches black", fieldPage, 1);
+
+        // Something else taking the panel must not leave it half dark, nor
+        // swallow the page it was turning to.
+        lastPageTick = g_fakeMillis;
+        g_fakeMillis += VSCROLL_MS + 1;
+        meta_tick();
+        g_fakeMillis += PF_FADE_MAX_MS / 2; meta_tick();
+        okBool("a fade is under way", pf_active(), true);
+        pf_cancel();
+        okBool("cancelling ends it", pf_active(), false);
+        okInt ("with the page it was turning to drawn", fieldPage, 0);
+
+        // TRANSITION_FADE_MS=0 means no fading, here as everywhere.
+        uint16_t keepFade = tfFadeMs;
+        tfFadeMs = 0;
+        lastPageTick = g_fakeMillis;
+        g_fakeMillis += VSCROLL_MS + 1;
+        meta_tick();
+        okBool("with fading off the page just turns", pf_active(), false);
+        okInt ("straight away", fieldPage, 1);
+        tfFadeMs = keepFade;
+    }
+
+    section("a card page turn keeps its pinned row lit");
+    {
+        meta_parse("CMDMETA,1,10,2,4,NBA Jam|Year=1993|Manufctr=Midway|Region=World|Orient=Horizontal"
+                   "|Players=4|Controls=8-way|Buttons=Shoot");
+        int x, w, y0, y1;
+        meta_cardPagedRect(&x, &w, &y0, &y1);
+        okInt ("the rectangle starts below the pinned grid row",
+               y0, CARD_FIELD_Y0 + 1 * CARD_FIELD_PITCH - CARD_FIELD_ASCENT);
+        okInt ("and is the full width", w, DispWidth);
+        okBool("the pinned row's baseline is above it", CARD_FIELD_Y0 < y0, true);
+
+        metaShowingCard = true;
+        cardPage        = 0;
+        metaLastSwap    = g_fakeMillis;
+        meta_showCard(0);
+
+        g_fakeMillis += 11000;
+        okBool("the next page fades rather than transitioning the panel",
+               meta_tick() && pf_active(), true);
+        okInt ("the page is held back until it is black", cardPage, 0);
+        settlePageFade();
+        okInt ("the card turned its page", cardPage, 1);
+        okBool("without leaving the card", metaShowingCard, true);
+
+        // The last page still goes back to the artwork with a whole-panel
+        // transition: that is a different picture, not a page turn.
+        g_fakeMillis += 11000;
+        okBool("the last page goes back to the artwork", meta_tick(), true);
+        okBool("with the picture transition", lastSrcAtDraw == logoBin, true);
+        okBool("and no page fade", pf_active(), false);
+    }
+
+    section("the region fade darkens its rectangle and nothing else");
+    {
+        // The stub does not rasterise text, so the arithmetic is tested on a
+        // framebuffer painted by hand: every pixel white.
+        uint8_t *fb = oled.getBuffer();
+        const int stride = DispWidth / 2;
+        pf_cancel();
+        memset(fb, 0xFF, 8192);
+
+        // Stands in for meta_renderConsole: counts, and paints the frame the
+        // way a render leaves it - the fade-in has to come back to that, not
+        // to what was there before.
+        static int redraws = 0;
+        redraws = 0;
+        struct R { static void go(void) { redraws++; memset(oled.getBuffer(), 0xFF, 8192); } };
+
+        const int X = 8, W = 40, Y0 = 32, Y1 = 48;
+        pf_start(X, W, Y0, Y1, R::go);
+        okBool("it starts", pf_active(), true);
+        okInt ("and does not redraw yet", redraws, 0);
+
+        // Half way: inside the rectangle is darker, outside is untouched.
+        g_fakeMillis += PF_FADE_MAX_MS / 2; pf_tick();
+        okBool("inside the rectangle is darker", fb[(Y0 + 1) * stride + X / 2] < 0xFF, true);
+        okInt ("the row above is untouched", fb[(Y0 - 1) * stride + X / 2], 0xFF);
+        okInt ("the row below is untouched", fb[Y1 * stride + X / 2], 0xFF);
+        okInt ("the column left of it is untouched", fb[(Y0 + 1) * stride + X / 2 - 1], 0xFF);
+        okInt ("the column right of it is untouched",
+               fb[(Y0 + 1) * stride + (X + W) / 2], 0xFF);
+
+        // The bottom of the fade is black, and that is when the new page is
+        // drawn - never before, or it would show through undarkened.
+        for (int i = 0; i < 40 && pfState == PF_OUT; i++) { g_fakeMillis += 25; pf_tick(); }
+        okInt ("it redraws at the bottom of the fade", redraws, 1);
+        okInt ("where the rectangle is black", fb[(Y0 + 1) * stride + X / 2], 0x00);
+        okInt ("and everything else is still lit", fb[(Y0 - 1) * stride + X / 2], 0xFF);
+
+        // ...and back up to what the redraw left behind (white, here).
+        for (int i = 0; i < 40 && pf_active(); i++) { g_fakeMillis += 25; pf_tick(); }
+        okInt ("the fade-in restores it", fb[(Y0 + 1) * stride + X / 2], 0xFF);
+        okBool("and it is done", pf_active(), false);
+
+        // An odd x rounds outwards, so no byte is half faded.
+        pf_start(9, 7, Y0, Y1, R::go);
+        okInt ("an odd x rounds down to its byte", pfX0, 4);
+        okInt ("and the width up to the next", pfX1, 8);
+        pf_cancel();
+    }
+
+    section("field pager cycles when fields overflow the rows");    section("field pager cycles when fields overflow the rows");
     {
         meta_parse("CMDMETA,2,0,Game|A=1|B=2|C=3|D=4|E=5|F=6");
         meta_tick();                             // absorb the first draw
@@ -647,11 +784,13 @@ int main() {
 
         g_fakeMillis += VSCROLL_MS + 1;
         meta_tick();
+        settlePageFade();
         // 6 fields at 5 rows per page = 2 pages, so it must have moved.
         okInt("advanced to page 1", fieldPage, 1);
 
         g_fakeMillis += VSCROLL_MS + 1;
         meta_tick();
+        settlePageFade();
         okInt("wrapped back to page 0", fieldPage, 0);
     }
 
@@ -1691,6 +1830,18 @@ int main() {
         u8g2.resetProbe();
         busy_parse("CMDBUSY,1,Updating TTY2OLED+...");
         ok    ("and the label is drawn afresh", u8g2.lastPrint, "Updating TTY2OLED+...");
+
+        // CMDBOOTPIC draws a picture - the boot image as the menu's - even
+        // though the boot screen counts it as quiet. A bar left running over
+        // it never stopped: the MENU core sends no CMDCOR to cancel it, and
+        // that is what was left sweeping after every self-update.
+        busy_cancel(); busy_forgetLabel();
+        busy_parse("CMDBUSY,1,UPDATING");
+        busy_noteCommand("CMDBOOTPIC,MENU,-2");
+        okBool("the menu picture stops the bar", busyActive, false);
+        busy_parse("CMDBUSY,1,UPDATING");
+        busy_noteCommand("CMDCON,120");
+        okBool("but a setting still does not", busyActive, true);
 
         // Without a label the picture underneath is left alone - that is the
         // bar as update_all's settings screen and the boot sweep use it.

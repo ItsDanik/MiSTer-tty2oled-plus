@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.4.4b"
+#define BuildVersion "0.4.5b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -284,6 +284,7 @@ const uint8_t minEffect=1, maxEffect=23;      // Min/Max Effects for Random
 #include "bootlogo.h"                         // The built-in 256x54 boot picture
 #include "contrastfade.h"                     // Every contrast change fades
 #include "fadetransition.h"                   // TRANSITION=-2: fade out, black, fade in
+#include "pagefade.h"                         // a metadata page turn fades only its own rows
 #include "metadisplay.h"                      // Arcade card / console split layout
 #include "bootoutro.h"                        // The boot screen as the menu picture, and its outro
 #include "busybar.h"                          // The boot sweep as a busy bar (update_all)
@@ -1024,7 +1025,7 @@ void loop(void) {
   // is the one thing on the panel worth watching.
   if (ScreenSaverEnabled && !ScreenSaverActive && !busyActive && blinkpos) ScreenSaverLogoTimer++;
   ScreenSaverActive = (ScreenSaverLogoTimer>=ScreenSaverLogoTime) && ScreenSaverEnabled;
-  if (ScreenSaverActive) { bootHolding = false; busy_cancel(); busy_forgetLabel(); }   // it draws over whatever was there
+  if (ScreenSaverActive) { bootHolding = false; busy_cancel(); busy_forgetLabel(); pf_cancel(); }   // it draws over whatever was there
   
   // ScreenSaver Timer
   if (ScreenSaverActive && blinkpos) ScreenSaverTimer++;

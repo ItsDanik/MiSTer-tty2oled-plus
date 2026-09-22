@@ -477,6 +477,16 @@ rm -rf "${PROC_ROOT}/700"
 mkproc 701 /bin/bash /media/fat/Scripts/uninstall_tty2oledplus.sh
 selfupdate_running; ok "the uninstaller is not an update" "${?}" "1"
 rm -rf "${PROC_ROOT}/701"
+
+# Finished. The bar has to be stopped by name: the MENU core sends CMDBOOTPIC
+# and no picture, so nothing else would ever take the panel back, and it swept
+# over the menu picture for ever.
+SELFUPDATE_SHOWN="yes"; oldcore="MENU"; META_WIRE_LAST="OFF"
+ok "finished: the bar is stopped" "$(TTYDEV=/dev/stdout selfupdate_pass | tr '\n' ' ')" "CMDBUSY,0 "
+selfupdate_pass >/dev/null
+ok "and the core is redrawn in full" "${oldcore}|${META_WIRE_LAST}" "|"
+: >"${WIRE}"; TTYDEV="${WIRE}"; selfupdate_pass
+ok "only once" "$(wc -c <"${WIRE}")" "0"
 selfupdate_pass; ok "gone: the pass is not taken" "${?}" "1"
 
 # It wins over update_all: it is about to stop the daemon.
