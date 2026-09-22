@@ -24,6 +24,8 @@
 #     when there are none, so your settings survive every update
 #   - flashes the firmware for the board the display reports, and only when
 #     the display is running a different version
+#   - sets log_file_entry=1 in MiSTer.ini, inside its [MiSTer] section, and
+#     records what was there so the uninstaller can put it back
 #   - adds the boot hook to /media/fat/linux/user-startup.sh
 #   - puts itself in /media/fat/Scripts as update_tty2oledplus.sh, and the
 #     uninstaller beside it as uninstall_tty2oledplus.sh
@@ -137,6 +139,73 @@ upstream_installed() {
 
 installed_version() {
   sed -n 's/^TTY2OLED_VERSION="\([^"]*\)".*/\1/p' "${INSTALL}/tty2oled-system.ini" 2>/dev/null
+}
+
+# --- MiSTer.ini ------------------------------------------------------------
+# log_file_entry=1 is what makes MiSTer publish which game is loaded. Without
+# it the display can only ever show the core, which is the whole point of this
+# fork - so the install sets it, and records what it found so the uninstaller
+# can put it back exactly as it was.
+#
+# It has to go *inside* the [MiSTer] section. MiSTer.ini carries per-core
+# sections after it ([NES], [Genesis], ...), so a line appended to the end of
+# the file would belong to whichever of those came last and do nothing.
+MISTERINI="${FAT}/MiSTer.ini"
+INI_STATE="${INSTALL}/.misterini.state"
+
+ensure_log_file_entry() {
+  local tmp="${MISTERINI}.tty2oledplus.$$"
+
+  # Recorded once, on the run that changed it. A later update finds the
+  # setting already at 1 - because we set it - and must not overwrite the
+  # record with "it was already like that".
+  if [ -e "${INI_STATE}" ]; then
+    note "MiSTer.ini was set up by an earlier install; leaving it alone."
+    return 0
+  fi
+
+  if [ ! -e "${MISTERINI}" ]; then
+    printf '[MiSTer]\nlog_file_entry=1\n' > "${MISTERINI}" || {
+      note "Could not create ${MISTERINI} - set log_file_entry=1 by hand."; return 0; }
+    printf 'action=created\n' > "${INI_STATE}"
+    note "created ${MISTERINI} with log_file_entry=1"
+    note "Reboot for it to take effect."
+    return 0
+  fi
+
+  if grep -qs '^[[:space:]]*log_file_entry[[:space:]]*=[[:space:]]*1' "${MISTERINI}"; then
+    printf 'action=present\n' > "${INI_STATE}"
+    note "log_file_entry=1 is already set."
+    return 0
+  fi
+
+  # Set to something else - 0, usually - rather than missing: the value
+  # changes and the line, comment and all, is kept for the uninstaller.
+  if grep -qs '^[[:space:]]*log_file_entry[[:space:]]*=' "${MISTERINI}"; then
+    local old
+    old="$(grep -m1 '^[[:space:]]*log_file_entry[[:space:]]*=' "${MISTERINI}")"
+    sed 's/^\([[:space:]]*\)log_file_entry[[:space:]]*=[[:space:]]*[^[:space:];#]*/\1log_file_entry=1/' \
+      "${MISTERINI}" > "${tmp}" && mv "${tmp}" "${MISTERINI}" || {
+        rm -f "${tmp}"; note "Could not edit ${MISTERINI} - set log_file_entry=1 by hand."; return 0; }
+    { printf 'action=changed\n'; printf 'line=%s\n' "${old}"; } > "${INI_STATE}"
+    note "set log_file_entry=1 (was: ${old# })"
+    note "Reboot for it to take effect."
+    return 0
+  fi
+
+  # Missing: add it as the first line of the [MiSTer] section.
+  awk '
+    BEGIN { added = 0 }
+    { print }
+    !added && tolower($0) ~ /^[[:space:]]*\[mister\][[:space:]]*$/ {
+      print "log_file_entry=1"; added = 1
+    }
+    END { if (!added) { print "[MiSTer]"; print "log_file_entry=1" } }
+  ' "${MISTERINI}" > "${tmp}" && mv "${tmp}" "${MISTERINI}" || {
+      rm -f "${tmp}"; note "Could not edit ${MISTERINI} - add log_file_entry=1 by hand."; return 0; }
+  printf 'action=added\n' > "${INI_STATE}"
+  note "added log_file_entry=1 to ${MISTERINI}"
+  note "Reboot for it to take effect."
 }
 
 # --- The daemon ------------------------------------------------------------
@@ -341,13 +410,8 @@ main() {
     note "and uninstall_tty2oledplus removes all of this again."
   fi
 
-  # The one setting everyone misses. Without it MiSTer never says which game
-  # is loaded, and all the display can show is the core.
-  if ! grep -qs '^[[:space:]]*log_file_entry[[:space:]]*=[[:space:]]*1' "${FAT}/MiSTer.ini"; then
-    say "One more thing"
-    note "Add  log_file_entry=1  to ${FAT}/MiSTer.ini and reboot. Without it"
-    note "MiSTer does not publish which game is loaded, so only core names show."
-  fi
+  say "Checking MiSTer.ini"
+  ensure_log_file_entry
 
   say "tty2oled+ ${version} is installed."
 }

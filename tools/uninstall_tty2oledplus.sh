@@ -20,14 +20,17 @@
 #     "# Startup tty2oled+" comment the installer wrote above it
 #   - update_tty2oledplus.sh and TTY2OLEDplus_Installer.sh from Scripts
 #   - the pid file and the logs in /tmp
+#   - the log_file_entry line in MiSTer.ini, if the install was what put it
+#     there, restoring whatever was there before
 #   - itself
 #
 # What it deliberately leaves:
 #   - the firmware on the display. It is the display's own flash, not the
 #     MiSTer's, and an ESP32 with no firmware shows nothing at all. Flash
 #     upstream's from tty2tft.de if you want the stock display back.
-#   - log_file_entry=1 in MiSTer.ini. It is MiSTer's own setting and other
-#     things read that log.
+#   - log_file_entry=1 in MiSTer.ini when it was already set before this was
+#     installed, or when it has been changed since. It is MiSTer's own setting
+#     and other things read that log.
 #   - /media/fat/tty2oled, if upstream is installed there. Not ours to touch.
 
 # Overridable for tests/test-installer.sh, which runs this against a fake
@@ -71,6 +74,64 @@ clear_bootimage() {
   echo "CMDCLRBOOT" > "${dev}" 2>/dev/null \
     && note "cleared the boot image stored on the display" \
     || note "could not reach the display - a stored boot image may remain"
+}
+
+# MiSTer.ini, put back the way the install found it. The installer recorded
+# what it did in .misterini.state inside the install folder, which is why this
+# runs before the folder is removed:
+#
+#   present  it was already set: leave it alone
+#   changed  the old line is in the record, and goes back verbatim
+#   added    our line goes, and nothing else
+#   created  there was no MiSTer.ini at all; the file goes if it is still only
+#            what we wrote, and otherwise just our line does
+#
+# In every case the current value is checked first: a user who has since set
+# log_file_entry themselves keeps what they set.
+restore_misterini() {
+  local ini="${FAT}/MiSTer.ini" state="${INSTALL}/.misterini.state" tmp action old
+  [ -r "${state}" ] || { note "no record of changing MiSTer.ini"; return 0; }
+  action="$(sed -n 's/^action=//p' "${state}")"
+  old="$(sed -n 's/^line=//p' "${state}")"
+  [ -e "${ini}" ] || return 0
+
+  case "${action}" in
+    present) note "MiSTer.ini was already set up; leaving it alone"; return 0 ;;
+    changed|added|created) ;;
+    *) note "unrecognised record of MiSTer.ini; leaving it alone"; return 0 ;;
+  esac
+
+  if ! grep -qs '^[[:space:]]*log_file_entry[[:space:]]*=[[:space:]]*1' "${ini}"; then
+    note "log_file_entry is no longer ours to put back; leaving ${ini} alone"
+    return 0
+  fi
+
+  if [ "${DRYRUN}" = "yes" ]; then note "would put ${ini} back as it was"; return 0; fi
+
+  # Created by us and untouched since: the whole file goes.
+  if [ "${action}" = "created" ] && [ "$(grep -vc '^[[:space:]]*$' "${ini}")" = "2" ] \
+     && grep -qs '^\[MiSTer\]$' "${ini}"; then
+    rm -f "${ini}" && note "removed ${ini}, which this install created"
+    return 0
+  fi
+
+  tmp="${ini}.tty2oled.$$"
+  if [ "${action}" = "changed" ] && [ -n "${old}" ]; then
+    awk -v old="${old}" '
+      !done && $0 ~ /^[[:space:]]*log_file_entry[[:space:]]*=/ { print old; done = 1; next }
+      { print }
+    ' "${ini}" > "${tmp}" && mv "${tmp}" "${ini}" \
+      && note "put the old log_file_entry line back in ${ini}" \
+      || { rm -f "${tmp}"; note "could not edit ${ini}"; }
+    return 0
+  fi
+
+  awk '
+    !done && $0 ~ /^[[:space:]]*log_file_entry[[:space:]]*=/ { done = 1; next }
+    { print }
+  ' "${ini}" > "${tmp}" && mv "${tmp}" "${ini}" \
+    && note "removed the log_file_entry line this install added to ${ini}" \
+    || { rm -f "${tmp}"; note "could not edit ${ini}"; }
 }
 
 # Written by tools/tty2oled-boothook.sh as a comment line followed by the
@@ -143,6 +204,10 @@ main() {
       else cp "${INSTALL}/${f}" "${FAT}/tty2oledplus-${f}.saved" && note "saved ${FAT}/tty2oledplus-${f}.saved"; fi
     done
   fi
+
+  # Before the folder goes: the record of what was done to MiSTer.ini is in it.
+  say "Putting MiSTer.ini back"
+  restore_misterini
 
   say "Removing the install"
   gone "${INSTALL}"

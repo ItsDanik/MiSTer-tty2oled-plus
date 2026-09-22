@@ -46,8 +46,7 @@ bool          bootHolding = false;    // the power-on screen is still on the pan
 bool          boActive    = false;    // an outro is running
 bool          boStarted   = false;    // ...and has begun (after any fade-in)
 int           boBarX      = 0;        // where the bar starts, past the version
-int           boBarPos    = 0;        // next segment to draw
-bool          boFilling   = true;     // filling, or clearing back
+int           boBarHead   = 0;        // the comet's head, in pixels
 bool          boBarDone   = true;
 unsigned long boBarLast   = 0;
 unsigned long boVerStart  = 0;
@@ -60,6 +59,34 @@ void boot_compose(uint8_t *pic) {
   if (!boot_load(pic, BOOT_PANEL_BYTES))
     memcpy_P(pic, bootlogo_bits, BOOTIMG_BYTES);
   memset(pic + BOOTIMG_BYTES, 0, BOOT_PANEL_BYTES - BOOTIMG_BYTES);
+}
+
+// ---------------------------------------------------------------------------
+// boot_barDraw - one frame of the comet, its head at `head`.
+//
+// Here rather than in bootscreen.h beside its constants, because it draws:
+// bootscreen.h is included before the display object exists, which is what
+// lets the tests compile its geometry on its own.
+//
+// Sixteen rectangles, the tail from the head backwards, each BOOT_BAR_SEG
+// wide and one grey darker than the last. The final one is level 0, which is
+// what rubs out the pixel the tail has just left behind - so the comet cleans
+// up after itself and there is no separate clearing pass.
+//
+// Everything is clipped to [startX, panel width): the columns left of startX
+// belong to the build version.
+// ---------------------------------------------------------------------------
+static inline void boot_barDraw(int head, int startX) {
+  for (int k = 0; k < BOOT_BAR_LEVELS; k++) {
+    int x0 = head - (k + 1) * BOOT_BAR_SEG + 1;
+    int w  = BOOT_BAR_SEG;
+    if (x0 < startX)  { w -= (startX - x0); x0 = startX; }
+    if (w <= 0) continue;
+    if (x0 >= BOOT_PANEL_W) continue;
+    if (x0 + w > BOOT_PANEL_W) w = BOOT_PANEL_W - x0;
+    oled.fillRect(x0, BOOT_BAR_Y, w, BOOT_BAR_H,
+                  (uint16_t)(BOOT_BAR_LEVELS - 1 - k));
+  }
 }
 
 // Commands that change nothing on the panel. Everything else is assumed to.
@@ -83,20 +110,14 @@ void boot_noteCommand(const char *cmd) {
   if (bootHolding && !boot_quietCommand(cmd)) bootHolding = false;
 }
 
-// The daemon has spoken: finish the power-on screen from here. barPos is the
-// next segment the sweep would have drawn and filling says which half of the
-// cycle it was in, or barPos is -1: still in the hold, no cycle to finish. A
-// fill that had just reached the edge still has its clearing half to do; a
-// clear that had, has nothing left.
-void boot_outroStart(int barX, int barPos, bool filling) {
+// The daemon has spoken: finish the power-on screen from here. head is where
+// the comet had got to, or -1: still in the hold, with no run to finish. It
+// carries on to the end of its run - off the right edge, tail and all - which
+// leaves the band empty without a clearing pass of its own.
+void boot_outroStart(int barX, int head) {
   boBarX     = barX;
-  boBarPos   = barPos;
-  boFilling  = filling;
-  boBarDone  = barPos < 0;
-  if (!boBarDone && barPos >= DispWidth) {
-    if (filling) { boFilling = false; boBarPos = barX; }
-    else         boBarDone = true;
-  }
+  boBarHead  = head;
+  boBarDone  = head < 0 || head >= barX + BOOT_BAR_SPAN(barX);
   boVerDone  = false;
   boVerLevel = 15;
   boStarted  = false;
@@ -117,18 +138,17 @@ void boot_outroTick(void) {
   if (!boStarted) bo_start(now);
   bool drew = false;
 
-  // The bar: one segment every BOOT_BAR_MS, as the sweep itself does, to the
-  // edge; then, if it was filling, clear back across; then stop.
-  while (!boBarDone && now - boBarLast >= BOOT_BAR_MS) {
-    boBarLast += BOOT_BAR_MS;
-    oled.fillRect(boBarPos, BOOT_BAR_Y, BOOT_BAR_STEP, BOOT_BAR_H,
-                  boFilling ? boBarPos / BOOT_BAR_STEP : SSD1322_BLACK);
-    drew = true;
-    boBarPos += BOOT_BAR_STEP;
-    if (boBarPos >= DispWidth) {
-      if (boFilling) { boFilling = false; boBarPos = boBarX; }
-      else           boBarDone = true;
+  // The bar: a pixel every BOOT_BAR_PX_MS, as the sweep itself moves, until
+  // the comet has run off the right edge and the band is empty again.
+  if (!boBarDone) {
+    int moved = 0;
+    while (now - boBarLast >= BOOT_BAR_PX_MS) {
+      boBarLast += BOOT_BAR_PX_MS;
+      boBarHead++;
+      moved++;
+      if (boBarHead >= boBarX + BOOT_BAR_SPAN(boBarX)) { boBarDone = true; break; }
     }
+    if (moved) { boot_barDraw(boBarHead, boBarX); drew = true; }
   }
 
   // The version: its grey steps from 15 down to 0 over BOOT_VERFADE_MS.

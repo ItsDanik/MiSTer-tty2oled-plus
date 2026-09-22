@@ -14,15 +14,14 @@
 // through. Without a label the picture is left alone and only the bar runs,
 // which is what the boot screen's own sweep does.
 //
-// CMDBUSY,0 lets the bar finish the cycle it is in - on to the edge, then
-// clearing back - rather than leave half a bar on screen, which is how the
-// power-on outro ends too. Anything else that reaches the dispatcher (a
+// CMDBUSY,0 lets the comet finish its run off the right edge rather than
+// leave half a bar on screen, which is how the power-on outro ends too. Anything else that reaches the dispatcher (a
 // picture, text, the metadata display) stops it dead: the panel is someone
 // else's now, and drawing into their picture would be wrong. A setup command
 // that draws nothing - contrast, dimming, the clock - is not "anything else";
 // boot_quietCommand() is the list, shared with the boot screen.
 //
-// Ticked from loop(), one segment every BOOT_BAR_MS, never blocking: the port
+// Ticked from loop(), one pixel every BOOT_BAR_PX_MS, never blocking: the port
 // has to be read throughout. It waits while a Fade transition runs, because
 // the transition's palette steps redraw the whole frame from a copy and would
 // both wipe the bar and be spoiled by it.
@@ -44,9 +43,8 @@ void oled_setfont(int font);
 char          busyLabel[33] = "";      // the message drawn above the band, if any
 bool          busyActive   = false;   // the bar is running
 bool          busyStopping = false;   // ...and finishing its cycle
-bool          busyFilling  = true;    // filling, or clearing back
-int           busyPos      = 0;       // next segment to draw
-unsigned long busyLast     = 0;
+int           busyHead     = 0;       // the comet's head, in pixels
+unsigned long busyLast     = 0;       // when it last moved
 
 // The label, centred in the rows above the band. Drawn once, when the bar
 // starts: the bar only ever touches the band below it, so nothing redraws it.
@@ -66,10 +64,7 @@ void busy_showLabel(const char *label) {
 
 void busy_start(void) {
   if (busyActive && !busyStopping) return;             // already running: keep its place
-  if (!busyActive) {
-    busyPos     = 0;
-    busyFilling = true;
-  }
+  if (!busyActive) busyHead = 0;
   busyActive   = true;
   busyStopping = false;
   busyLast     = millis();
@@ -133,29 +128,32 @@ void busy_tick(void) {
   if (!busyActive) return;
   if (tfState != TF_IDLE) { busyLast = millis(); return; }   // after the transition
   unsigned long now = millis();
-  bool drew = false;
+  int moved = 0;
 
   // After a stall - a picture transfer holds loop() for a while - carry on
-  // from here rather than drawing every missed segment in one go.
-  if (now - busyLast > 4 * BOOT_BAR_MS) busyLast = now - BOOT_BAR_MS;
+  // from here rather than replaying every pixel that was missed.
+  if (now - busyLast > 4 * BOOT_BAR_PX_MS) busyLast = now - BOOT_BAR_PX_MS;
 
-  while (busyActive && now - busyLast >= BOOT_BAR_MS) {
-    busyLast += BOOT_BAR_MS;
-    // The bar's grey is its position, as on the boot screen: 0 at the left
-    // edge, 15 at the right.
-    oled.fillRect(busyPos, BOOT_BAR_Y, BOOT_BAR_STEP, BOOT_BAR_H,
-                  busyFilling ? busyPos / BOOT_BAR_STEP : SSD1322_BLACK);
-    drew = true;
-    busyPos += BOOT_BAR_STEP;
-    if (busyPos >= DispWidth) {
-      busyPos = 0;
-      if (busyFilling)       busyFilling = false;
-      else if (busyStopping) busy_cancel();              // a whole cycle done: stop here
-      else                   busyFilling = true;
+  // Only the head's final position is drawn, however many pixels are due:
+  // every frame redraws the whole tail anyway, so the ones in between would
+  // be painted over without ever being sent to the panel.
+  while (busyActive && now - busyLast >= BOOT_BAR_PX_MS) {
+    busyLast += BOOT_BAR_PX_MS;
+    busyHead++;
+    moved++;
+    if (busyHead >= BOOT_BAR_SPAN(0)) {
+      if (busyStopping) {
+        // The comet has just drained off the right edge, so the band is
+        // already empty: stop on that rather than half way across.
+        busy_cancel();
+        oled.display();
+        return;
+      }
+      busyHead = 0;
     }
   }
 
-  if (drew) oled.display();
+  if (moved) { boot_barDraw(busyHead, 0); oled.display(); }
 }
 
 #endif  // BUSYBAR_H

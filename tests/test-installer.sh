@@ -335,13 +335,128 @@ starter "${TMP}/nowhere"; RC="${?}"
 ok "an unreachable release fails the starter" "${RC}" "1"
 ok "saying where it looked" "$(said 'Is the MiSTer online')" "1"
 
-section "uninstaller: leaving nothing behind"
-
 uninstall() {
   : > "${CALLS}"
   T2OP_FAT="${FAT}" T2OP_INIT="${TMP}/fake-init" \
     bash "${FAT}/Scripts/uninstall_tty2oledplus.sh" --yes "$@" > "${TMP}/out" 2>&1 </dev/null
 }
+
+section "installer: MiSTer.ini's log_file_entry"
+
+misterini() {  # misterini <contents, or "none">
+  rm -rf "${FAT}"; mkdir -p "${FAT}/linux" "${FAT}/Scripts"
+  printf '#!/bin/sh\necho mister\n' > "${FAT}/linux/user-startup.sh"
+  rm -f "${STATE}"
+  if [ "$1" = "none" ]; then rm -f "${FAT}/MiSTer.ini"; else printf '%s' "$1" > "${FAT}/MiSTer.ini"; fi
+}
+state() { sed -n "s/^${1:-action}=//p" "${INSTALL}/.misterini.state" 2>/dev/null; }
+
+# Missing: the line goes inside [MiSTer], not at the end of the file, where a
+# per-core section would own it and it would do nothing.
+misterini '[MiSTer]
+video_mode=8
+
+[NES]
+video_mode=9
+'
+T2OP_HWINF="HWLOLIN32;${VERSION};" install
+ok "a missing setting is added" "$(grep -c '^log_file_entry=1$' "${FAT}/MiSTer.ini")" "1"
+ok "on the first line of the [MiSTer] section" "$(sed -n '2p' "${FAT}/MiSTer.ini")" "log_file_entry=1"
+ok "the rest of the file is untouched" "$(grep -c '^video_mode=9$' "${FAT}/MiSTer.ini")" "1"
+ok "and it is recorded as ours" "$(state)" "added"
+ok "with a word about rebooting" "$(said 'Reboot for it')" "1"
+
+# A second run must not re-record: the setting is 1 now because we set it.
+T2OP_HWINF="HWLOLIN32;${VERSION};" install --force
+ok "a later update leaves the record alone" "$(state)" "added"
+ok "and does not add it twice" "$(grep -c '^log_file_entry=1$' "${FAT}/MiSTer.ini")" "1"
+
+# Already set: nothing to do, and nothing to undo later.
+misterini '[MiSTer]
+log_file_entry=1
+'
+T2OP_HWINF="HWLOLIN32;${VERSION};" install
+ok "one already set is left alone" "$(cat "${FAT}/MiSTer.ini")" "$(printf '[MiSTer]\nlog_file_entry=1')"
+ok "and recorded as none of our doing" "$(state)" "present"
+
+# Set to something else: the value changes, the line is kept for later.
+misterini '[MiSTer]
+log_file_entry=0     ; off by default
+'
+T2OP_HWINF="HWLOLIN32;${VERSION};" install
+ok "a setting of 0 is turned on" "$(grep -c '^log_file_entry=1' "${FAT}/MiSTer.ini")" "1"
+ok "keeping the comment after it" "$(grep -c 'off by default' "${FAT}/MiSTer.ini")" "1"
+ok "and the old line is recorded" "$(state line)" "log_file_entry=0     ; off by default"
+
+# No MiSTer.ini at all.
+misterini none
+T2OP_HWINF="HWLOLIN32;${VERSION};" install
+ok "a missing MiSTer.ini is created" "$(cat "${FAT}/MiSTer.ini")" "$(printf '[MiSTer]\nlog_file_entry=1')"
+ok "and recorded as created" "$(state)" "created"
+
+section "uninstaller: MiSTer.ini goes back as it was found"
+
+# Added by us: the line goes, the file stays, everything else stays.
+misterini '[MiSTer]
+video_mode=8
+'
+T2OP_HWINF="HWLOLIN32;${VERSION};" install
+uninstall
+ok "our line is removed" "$(grep -c 'log_file_entry' "${FAT}/MiSTer.ini")" "0"
+ok "the file stays" "$(cat "${FAT}/MiSTer.ini")" "$(printf '[MiSTer]\nvideo_mode=8')"
+
+# Changed by us: the old line comes back verbatim.
+misterini '[MiSTer]
+log_file_entry=0     ; off by default
+'
+T2OP_HWINF="HWLOLIN32;${VERSION};" install
+uninstall
+ok "the old line comes back" "$(cat "${FAT}/MiSTer.ini")" \
+   "$(printf '[MiSTer]\nlog_file_entry=0     ; off by default')"
+
+# Already set before us: untouched, both ways.
+misterini '[MiSTer]
+log_file_entry=1
+'
+T2OP_HWINF="HWLOLIN32;${VERSION};" install
+uninstall
+ok "a setting that was not ours is left" "$(grep -c '^log_file_entry=1$' "${FAT}/MiSTer.ini")" "1"
+ok "and said so" "$(said 'leaving it alone')" "1"
+
+# Created by us and untouched since: the file goes with the install.
+misterini none
+T2OP_HWINF="HWLOLIN32;${VERSION};" install
+uninstall
+ok "a MiSTer.ini we created is removed" "$(yesno test -e "${FAT}/MiSTer.ini")" "no"
+
+# Created by us but written to since: only our line goes.
+misterini none
+T2OP_HWINF="HWLOLIN32;${VERSION};" install
+printf 'video_mode=8\n' >> "${FAT}/MiSTer.ini"
+uninstall
+ok "one we created but they edited is kept" "$(yesno test -e "${FAT}/MiSTer.ini")" "yes"
+ok "less our line" "$(cat "${FAT}/MiSTer.ini")" "$(printf '[MiSTer]\nvideo_mode=8')"
+
+# Changed by the user since: their setting wins over our record.
+misterini '[MiSTer]
+video_mode=8
+'
+T2OP_HWINF="HWLOLIN32;${VERSION};" install
+sed -i 's/^log_file_entry=1$/log_file_entry=0/' "${FAT}/MiSTer.ini"
+uninstall
+ok "a setting they have since changed is left alone" \
+   "$(grep -c '^log_file_entry=0$' "${FAT}/MiSTer.ini")" "1"
+
+# A dry run says what it would do and does none of it.
+misterini '[MiSTer]
+video_mode=8
+'
+T2OP_HWINF="HWLOLIN32;${VERSION};" install
+uninstall --dry-run
+ok "a dry run leaves MiSTer.ini alone" "$(grep -c '^log_file_entry=1$' "${FAT}/MiSTer.ini")" "1"
+ok "saying what it would do" "$(said 'would put')" "1"
+
+section "uninstaller: leaving nothing behind"
 
 # A real install first, so the uninstaller has the real thing to remove.
 fresh_mister

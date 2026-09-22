@@ -4,6 +4,24 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.4.6b — 2026-09-23
+
+- **The installer sets `log_file_entry=1` for you.** It is what makes MiSTer
+  say which game is loaded, it defaults to off, and until now the installer
+  could only tell you to go and set it. It is written into the `[MiSTer]`
+  section of `MiSTer.ini` - not the end of the file, where a per-core section
+  would own it - and what was there before is remembered, so the uninstaller
+  puts it back exactly as it found it: already set means untouched, a
+  different value is restored verbatim, a line we added is removed, and a
+  `MiSTer.ini` we created is deleted if nothing else has been written to it.
+  A setting you have changed since is always left alone. Reboot for it to
+  take effect.
+- **The busy bar is a comet now.** It was whole 16-pixel blocks that jumped a
+  block at a time and showed four or five visible shades. It is a head with a
+  64-pixel tail carrying all sixteen greys, moving a pixel at a time - ten
+  times the frames, over the same 640ms.
+- The message over the bar during update_all reads **"Updating System ..."**.
+
 ## 0.4.5b — 2026-09-22
 
 - **The busy bar no longer runs for ever after an update.** When

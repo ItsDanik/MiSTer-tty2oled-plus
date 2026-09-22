@@ -77,7 +77,14 @@
 #define BOOT_GAP_BAND  1                             // blank row above the bar
 #define BOOT_BAR_H     8                             // sweep bar height
 #define BOOT_BAR_Y     (BOOT_BAND_Y + BOOT_GAP_BAND) // 55, bar rows 55..62
-#define BOOT_BAR_STEP  16                            // bar segment width
+// The sweep is a comet: the head is the brightest pixel column, and behind it
+// a tail that steps down one grey level every BOOT_BAR_SEG pixels until it
+// reaches black. All sixteen levels are in it, which is the point - a bar
+// drawn as whole 16-pixel blocks showed its gradient in four or five visible
+// steps, the dark end of it being invisible against the panel.
+#define BOOT_BAR_LEVELS 16                           // greys in the tail
+#define BOOT_BAR_SEG   4                             // pixels per grey level
+#define BOOT_BAR_TAIL  (BOOT_BAR_LEVELS * BOOT_BAR_SEG)   // 64, the whole comet
 #define BOOT_VER_H     7                             // 5x7 font cell height
 #define BOOT_VER_Y     (BOOT_PANEL_H - 1)            // 63, version baseline
 
@@ -109,8 +116,17 @@
 // taken from the ini: nothing from the ini has arrived yet.
 #define BOOT_FADE_MS   800
 
-// One step of the sweep.
-#define BOOT_BAR_MS    20
+// One pixel of the sweep. The head moves a single pixel at a time - 320
+// frames across the panel where there used to be 32 - and 2ms keeps a whole
+// cycle at the 640ms it has always been. Only the bar's own rows are ever
+// drawn into, and the panel library sends just the rows that changed, so a
+// frame is about 1KB down the wire rather than the whole 8KB panel.
+#define BOOT_BAR_PX_MS 2
+
+// How far the head travels in one cycle: across the panel, and then the
+// length of the tail again so the comet drains off the right edge instead of
+// vanishing whole.
+#define BOOT_BAR_SPAN(startX) ((BOOT_PANEL_W - (startX)) + BOOT_BAR_TAIL)
 
 // How many fill-then-erase cycles a *re-show* runs - CMDSORG, or the tilt
 // sensor flipping the panel while the daemon is connected and silent. The
@@ -123,15 +139,13 @@
 // boot_barStartX - the first column the sweep may use, given the width the
 // version text actually measured.
 //
-// Rounded up to a whole BOOT_BAR_STEP so every segment stays aligned to the
-// gradient: the bar's grey is its position (i/BOOT_BAR_STEP), and the last
-// segment still has to end exactly on the panel edge.
+// No rounding any more: a pixel's grey is its distance from the head, not its
+// absolute position, so the comet looks the same wherever it starts.
 // ---------------------------------------------------------------------------
 static inline int boot_barStartX(int verWidth) {
   int x = (verWidth > 0 ? verWidth : 0) + BOOT_VER_GAP;
-  x = ((x + BOOT_BAR_STEP - 1) / BOOT_BAR_STEP) * BOOT_BAR_STEP;  // whole steps
-  if (x < BOOT_BAR_STEP) x = BOOT_BAR_STEP;
-  if (x > BOOT_BAR_X_MAX) x = BOOT_BAR_X_MAX;
+  if (x < BOOT_BAR_SEG)    x = BOOT_BAR_SEG;
+  if (x > BOOT_BAR_X_MAX)  x = BOOT_BAR_X_MAX;
   return x;
 }
 

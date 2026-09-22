@@ -720,7 +720,7 @@ updateall_pass() {
       # The download is the part that takes minutes, so it gets the panel:
       # UPDATING above the bar, the banner gone. The firmware ignores a repeat
       # of the same label, so re-sending it costs a command and nothing else.
-      [ "${UPDATEALL_BUSY:-no}" = "yes" ] || { sendbusy 1 "${UPDATE_ALL_TEXT:-UPDATING}"; UPDATEALL_BUSY="yes"; }
+      [ "${UPDATEALL_BUSY:-no}" = "yes" ] || { sendbusy 1 "${UPDATE_ALL_TEXT:-Updating System ...}"; UPDATEALL_BUSY="yes"; }
     elif [ "${UPDATEALL_BUSY:-no}" = "yes" ]; then
       # Back to the banner: the label blacked it out, so it has to go again.
       sendbusy 0; UPDATEALL_BUSY="no"; sendupdateall

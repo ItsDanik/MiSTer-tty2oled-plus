@@ -18,8 +18,8 @@ and a MiSTer that is online.
    your computer.
 3. On the MiSTer, open the menu, go to **Scripts** and run
    **TTY2OLEDplus_Installer**.
-4. Add `log_file_entry=1` to the `[MiSTer]` section of `MiSTer.ini` if it is
-   not there, and reboot. Without it MiSTer never says which game is loaded.
+4. Reboot, so MiSTer picks up the `log_file_entry=1` the installer set for you
+   (see below) and the display starts with the machine.
 
 The installer downloads the newest release, checks every file against the
 release's checksums before changing anything, and then:
@@ -28,6 +28,9 @@ release's checksums before changing anything, and then:
   `/media/fat/tty2oledplus`
 - asks the display which board it is and flashes the matching firmware - only
   when the display runs a different version, and never by guessing
+- sets `log_file_entry=1` in the `[MiSTer]` section of `MiSTer.ini`, which is
+  what makes MiSTer say which game is loaded, and remembers what was there so
+  the uninstaller can put it back
 - adds the start line to `/media/fat/linux/user-startup.sh`, so the display
   comes up on every boot, and starts it now
 - puts **update_tty2oledplus** and **uninstall_tty2oledplus** in the Scripts
@@ -40,7 +43,7 @@ is flashed only when the release carries a new one.
 **To uninstall**, run **uninstall_tty2oledplus** from the Scripts menu. It
 stops the display, removes `/media/fat/tty2oledplus`, the start line in
 `user-startup.sh` and both Scripts entries, clears any boot image stored on the
-display, and removes itself - `--keep-settings` saves your two ini files beside
+display, puts `MiSTer.ini` back as the install found it, and removes itself - `--keep-settings` saves your two ini files beside
 the install first, and `--dry-run` only lists what would go. The firmware stays
 on the display: it is the display's own flash, and an ESP32 with none shows
 nothing at all.
@@ -116,7 +119,8 @@ The arcade card is the whole panel, and takes two turns to say everything the
   behaviour — the display code needs more RAM than it has.
 - **USB mode.** The SD and Standard sketch variants are not covered yet.
 - `log_file_entry=1` in `MiSTer.ini`. It defaults to off, and without it MiSTer
-  never publishes which game is loaded, so only core names can show.
+  never publishes which game is loaded, so only core names can show. The
+  installer sets it; a working copy deploy does not, so set it by hand there.
 
 ## Installing from a working copy
 

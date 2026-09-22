@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.4.5b"
+#define BuildVersion "0.4.6b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -1166,42 +1166,31 @@ void oled_showStartScreen(bool waitForHost) {
 
   bool aborted = boot_waitOrCommand(BOOT_HOLD_MS);
 
-  // The bar's grey is its position (i/BOOT_BAR_STEP, 0..15) rather than a
-  // counter incremented per step: a counter would carry over into the next
-  // repeat and run past 15, where the low nibble the panel actually shows
-  // wraps back to black. Starting at barX simply skips the darkest steps.
-  // Where the sweep is when the daemon speaks - the next segment it would
-  // draw, and whether it was filling or clearing - so the outro can finish
-  // the cycle rather than stop it mid-bar. -1: still in the hold, no cycle.
-  int  sweepPos     = -1;
-  bool sweepFilling = true;
+  // A pixel's grey is its distance behind the comet's head, so starting at
+  // barX costs nothing but the columns the version has.
+  //
+  // Where the head is when the daemon speaks, so the outro can finish the run
+  // rather than stop it mid-bar. -1: still in the hold, nothing to finish.
+  int sweepHead = -1;
 
   for (unsigned int rep=0; !aborted; rep++) {
     if (!waitForHost && rep >= (unsigned int)BOOT_SWEEP_REPEATS) break;
 
-    for (int i=barX; i<DispWidth && !aborted; i+=BOOT_BAR_STEP) { // Some Animation
-      sweepPos = i + BOOT_BAR_STEP; sweepFilling = true;
-      oled.fillRect(i,BOOT_BAR_Y,BOOT_BAR_STEP,BOOT_BAR_H,i/BOOT_BAR_STEP);
+    // One pixel per frame: the comet's tail rubs out what it leaves behind,
+    // so there is no clearing pass to follow it.
+    for (int head=barX; head<barX+BOOT_BAR_SPAN(barX) && !aborted; head++) {
+      sweepHead = head;
+      boot_barDraw(head, barX);
       oled.display();
 #ifdef USE_ESP32XDEV
-      if (dtiv>=12) {                              // Let the RGB LED light up
-        wsleds[0] = CHSV(i,255,255);
+      // Every BOOT_BAR_TAIL pixels rather than every frame: FastLED.show()
+      // costs far more than the pixel it would be following.
+      if (dtiv>=12 && (head-barX) % BOOT_BAR_TAIL == 0) {
+        wsleds[0] = CHSV(head,255,255);
         FastLED.show();
       }
 #endif
-      aborted = boot_waitOrCommand(BOOT_BAR_MS);
-    }
-    for (int i=barX; i<DispWidth && !aborted; i+=BOOT_BAR_STEP) { // Remove Animation Line
-      sweepPos = i + BOOT_BAR_STEP; sweepFilling = false;
-      oled.fillRect(i,BOOT_BAR_Y,BOOT_BAR_STEP,BOOT_BAR_H,SSD1322_BLACK);
-      oled.display();
-#ifdef USE_ESP32XDEV
-      if (dtiv>=12) {                              // Let the RGB LED light up
-        wsleds[0] = CHSV(255-i,255,255);
-        FastLED.show();
-      }
-#endif
-      aborted = boot_waitOrCommand(BOOT_BAR_MS);
+      aborted = boot_waitOrCommand(BOOT_BAR_PX_MS);
     }
   }
 #ifdef USE_ESP32XDEV
@@ -1212,13 +1201,12 @@ void oled_showStartScreen(bool waitForHost) {
   }
 #endif
 
-  // Power-on: the daemon has spoken, and the rest - finishing the sweep's
-  // cycle, fading the version out - runs from loop() (bootoutro.h), because
-  // staying in here would stop the port being read. A fill that had just
-  // reached the edge still has its clearing half to do.
+  // Power-on: the daemon has spoken, and the rest - letting the comet run off
+  // the right edge, fading the version out - runs from loop() (bootoutro.h),
+  // because staying in here would stop the port being read.
   if (waitForHost) {
     bootHolding = true;
-    boot_outroStart(barX, sweepPos, sweepFilling);
+    boot_outroStart(barX, sweepHead);
     startScreenActive=true;
     return;
   }

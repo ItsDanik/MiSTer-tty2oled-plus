@@ -1467,29 +1467,51 @@ int main() {
     section("BOOTSCREEN_AS_MENU: the power-on screen's outro");
     {
         auto tick = [](unsigned long ms) { g_fakeMillis += ms; contrast_tick(); transition_tick(); boot_outroTick(); };
-        auto barRects = []() {
+        // Where the comet's head is, frame by frame: the head is the right
+        // edge of the brightest rectangle drawn in that frame.
+        auto barHeads = []() {
             std::string out;
-            for (const auto &r : oled.rects)
-                if (r.y == BOOT_BAR_Y) out += std::to_string(r.x) + (r.color ? "+ " : "- ");
+            int last = -1;
+            for (const auto &r : oled.rects) {
+                if (r.y != BOOT_BAR_Y || r.color != BOOT_BAR_LEVELS - 1) continue;
+                int head = r.x + r.w - 1;
+                if (head != last) { out += std::to_string(head) + " "; last = head; }
+            }
             return out;
+        };
+        auto barDrew = []() {
+            for (const auto &r : oled.rects) if (r.y == BOOT_BAR_Y) return true;
+            return false;
         };
         const int barX = 32;
         veil_fadeOver(255, 0);
 
-        // Interrupted mid-fill: fill on to the edge, clear back, stop.
+        // Interrupted part way: the comet runs off the right edge and stops,
+        // which leaves the band empty with no clearing pass of its own.
         bootHolding = true;
         oled.resetProbe(); u8g2.draws.clear();
-        boot_outroStart(barX, 128, true);
-        for (int i = 0; i < 100; i++) tick(20);
-        ok("the fill finishes, then clears back across",
-              barRects(),
-              "128+ 144+ 160+ 176+ 192+ 208+ 224+ 240+ "
-              "32- 48- 64- 80- 96- 112- 128- 144- 160- 176- 192- 208- 224- 240- ");
-        bool greysRight = true;
-        for (const auto &r : oled.rects)
-            if (r.y == BOOT_BAR_Y && r.color && r.color != r.x / BOOT_BAR_STEP) greysRight = false;
-        okBool("each segment in its own grey, as the sweep draws it", greysRight, true);
+        boot_outroStart(barX, 128);
+        // Long enough for both halves: the comet's run, and the version's
+        // one-second fade.
+        for (int i = 0; i < 700; i++) tick(BOOT_BAR_PX_MS);
+        okBool("it carries on from where the sweep was",
+               barHeads().rfind("129 ", 0) == 0, true);
+        okBool("to the right edge of the panel",
+               barHeads().find(std::to_string(BOOT_PANEL_W - 1) + " ") != std::string::npos, true);
         okBool("and it is over", boActive, false);
+
+        // Every frame carries the whole gradient, and only the bar's rows.
+        int levels[BOOT_BAR_LEVELS] = {0};
+        bool ownRows = true;
+        for (const auto &r : oled.rects) {
+            if (r.y != BOOT_BAR_Y) continue;
+            if (r.h != BOOT_BAR_H) ownRows = false;
+            if (r.color < BOOT_BAR_LEVELS) levels[r.color]++;
+        }
+        bool allGreys = true;
+        for (int i = 0; i < BOOT_BAR_LEVELS; i++) if (!levels[i]) allGreys = false;
+        okBool("every one of the sixteen greys is drawn", allGreys, true);
+        okBool("and only in the bar's own rows", ownRows, true);
 
         // The version fades 15 -> 0 over a second, one grey at a time.
         std::string greys;
@@ -1500,37 +1522,36 @@ int main() {
                oled.rects.back().color == SSD1322_BLACK, true);
         okInt("leaving the text colour as it was", u8g2.fgColor, SSD1322_WHITE);
 
-        // Timing: the version takes BOOT_VERFADE_MS, the bar 20ms a segment.
+        // The tail drains off the right edge after the head does, so the band
+        // is left empty without a clearing pass of its own.
+        oled.resetProbe();
+        for (int i = 0; i < 100; i++) tick(BOOT_BAR_PX_MS);
+        okBool("nothing is still being drawn afterwards", barDrew(), false);
+
+        // Timing: the version takes BOOT_VERFADE_MS, the bar a pixel per frame.
         bootHolding = true;
         oled.resetProbe(); u8g2.draws.clear();
-        boot_outroStart(barX, 128, true);
+        boot_outroStart(barX, 128);
         tick(0);
         tick(500);
         okBool("half a second in, the version is still fading", boVerDone, false);
         tick(500);
         okBool("gone at one second", boVerDone, true);
 
-        // Interrupted while clearing: just finish clearing.
+        // A head already past the end of its run has nothing left to do: the
+        // tail has drained and the band is empty.
         bootHolding = true;
         oled.resetProbe();
-        boot_outroStart(barX, 176, false);
-        for (int i = 0; i < 100; i++) tick(20);
-        ok("interrupted clearing, it only finishes clearing", barRects(), "176- 192- 208- 224- 240- ");
-
-        // A fill that had just reached the edge still has its clear to do.
-        bootHolding = true;
-        oled.resetProbe();
-        boot_outroStart(barX, 256, true);
-        for (int i = 0; i < 100; i++) tick(20);
-        ok("a fill just at the edge clears back",
-              barRects(), "32- 48- 64- 80- 96- 112- 128- 144- 160- 176- 192- 208- 224- 240- ");
+        boot_outroStart(barX, barX + BOOT_BAR_SPAN(barX));
+        for (int i = 0; i < 700; i++) tick(BOOT_BAR_PX_MS);
+        okBool("a run already finished draws no bar", barDrew(), false);
 
         // The daemon spoke during the hold: no bar yet, only the version.
         bootHolding = true;
         oled.resetProbe(); u8g2.draws.clear();
-        boot_outroStart(barX, -1, true);
+        boot_outroStart(barX, -1);
         for (int i = 0; i < 100; i++) tick(20);
-        ok("spoken to during the hold, no bar is drawn", barRects(), "");
+        okBool("spoken to during the hold, no bar is drawn", barDrew(), false);
         okBool("but the version still fades", u8g2.draws.size() >= 14, true);
 
         // It waits for the power-on fade-in, which redraws the whole frame
@@ -1538,16 +1559,16 @@ int main() {
         bootHolding = true;
         oled.resetProbe(); u8g2.draws.clear();
         transition_fadeIn(800);
-        boot_outroStart(barX, 128, true);
+        boot_outroStart(barX, 128);
         tick(20); tick(20);
-        ok("nothing while the fade-in is running", barRects(), "");
+        okBool("nothing while the fade-in is running", barDrew(), false);
         for (int i = 0; i < 40; i++) tick(20);
-        okBool("then it runs", barRects().size() > 0, true);
+        okBool("then it runs", barDrew(), true);
 
         // Anything that takes the panel stops it on the spot.
         bootHolding = true;
         oled.resetProbe(); u8g2.draws.clear();
-        boot_outroStart(barX, 128, true);
+        boot_outroStart(barX, 128);
         tick(0); tick(20); tick(20);
         size_t before = oled.rects.size(), drawsBefore = u8g2.draws.size();
         boot_noteCommand("CMDCOR,NES,-2");
@@ -1731,16 +1752,20 @@ int main() {
                BOOT_BAR_Y + BOOT_BAR_H - 1, BOOT_PANEL_H - 2);
         okBool("sweep bar starts below the image",
                BOOT_BAR_Y >= BOOTIMG_H, true);
-        okInt ("the sweep crosses the panel in whole steps",
-               BOOT_PANEL_W % BOOT_BAR_STEP, 0);
-        // The bar's grey is its step index, so the last step has to be a legal
-        // 4bpp level. Halve BOOT_BAR_STEP and the gradient would run to 31,
-        // whose low nibble - the only part the panel shows - is black again.
-        okBool("the brightest sweep step is a legal grey",
-               (BOOT_PANEL_W / BOOT_BAR_STEP) - 1 <= SSD1322_WHITE, true);
+        // The comet's tail carries every 4bpp level, and its brightest is
+        // white: one level per BOOT_BAR_SEG pixels, sixteen of them.
+        okInt ("the tail is one segment per grey",
+               BOOT_BAR_TAIL, BOOT_BAR_LEVELS * BOOT_BAR_SEG);
+        okInt ("its head is white", BOOT_BAR_LEVELS - 1, SSD1322_WHITE);
+        okBool("and the tail is shorter than the panel",
+               BOOT_BAR_TAIL < BOOT_PANEL_W, true);
         okBool("a re-show's sweep repeats at least once",
                BOOT_SWEEP_REPEATS >= 1, true);
-        okBool("a sweep step takes time", BOOT_BAR_MS > 0, true);
+        okBool("a pixel of sweep takes time", BOOT_BAR_PX_MS > 0, true);
+        // The run is the panel plus the tail, so the comet leaves the edge
+        // completely rather than vanishing whole.
+        okInt ("a run clears the panel and drains the tail",
+               BOOT_BAR_SPAN(0), BOOT_PANEL_W + BOOT_BAR_TAIL);
 
         okInt ("version sits on the last row", BOOT_VER_Y, BOOT_PANEL_H - 1);
         okBool("version text stays below the image",
@@ -1761,25 +1786,32 @@ int main() {
         // start, so the invariants it has to hold are checked over the whole
         // range of widths a version string could measure rather than for the
         // one string this build happens to carry.
-        bool aligned = true, inRange = true, clearsText = true, keepsGap = true;
+        bool inRange = true, clearsText = true, keepsGap = true;
         for (int w = 0; w < BOOT_BAR_X_MAX; w++) {
             int x = boot_barStartX(w);
-            if (x % BOOT_BAR_STEP != 0)                  aligned    = false;
-            if (x < BOOT_BAR_STEP || x > BOOT_BAR_X_MAX) inRange    = false;
+            if (x < BOOT_BAR_SEG || x > BOOT_BAR_X_MAX)  inRange    = false;
             if (x <= w)                                  clearsText = false;
             if (w <= BOOT_BAR_X_MAX - BOOT_VER_GAP &&
                 x < w + BOOT_VER_GAP)                    keepsGap   = false;
         }
-        okBool("bar starts on a whole sweep step",   aligned,    true);
         okBool("bar start stays inside the panel",   inRange,    true);
         okBool("bar never starts on the version",    clearsText, true);
         okBool("bar leaves the gap after the text",  keepsGap,   true);
         okInt ("a wide version string is clamped",
                boot_barStartX(BOOT_PANEL_W), BOOT_BAR_X_MAX);
-        // Both ends are multiples of the step, so the sweep still finishes
-        // exactly on the panel edge however far right it was pushed.
-        okInt ("the shortened sweep still ends on the edge",
-               (BOOT_PANEL_W - BOOT_BAR_X_MAX) % BOOT_BAR_STEP, 0);
+
+        // The comet clipped against a start column: nothing is drawn left of
+        // it, whatever of the tail would have fallen there.
+        oled.resetProbe();
+        boot_barDraw(BOOT_BAR_X_MAX + 8, BOOT_BAR_X_MAX);
+        bool insideStart = true, insidePanel = true;
+        for (const auto &r : oled.rects) {
+            if (r.x < BOOT_BAR_X_MAX)            insideStart = false;
+            if (r.x + r.w > BOOT_PANEL_W)        insidePanel = false;
+        }
+        okBool("the tail is clipped at the start column", insideStart, true);
+        okBool("and at the panel edge",                   insidePanel, true);
+        oled.resetProbe();
     }
 
     section("busy bar: a label takes the panel above the band");
@@ -1810,18 +1842,18 @@ int main() {
 
         // A poll every couple of seconds re-sends the same command: redrawing
         // would rewind the sweep and flash the panel each time.
-        for (int i = 0; i < 4; i++) { g_fakeMillis += BOOT_BAR_MS; busy_tick(); }
-        int posBefore = busyPos;
+        for (int i = 0; i < 4; i++) { g_fakeMillis += BOOT_BAR_PX_MS; busy_tick(); }
+        int posBefore = busyHead;
         oled.resetProbe();
         u8g2.resetProbe();
         busy_parse("CMDBUSY,1,UPDATING");
         okInt ("the same label again draws nothing", u8g2.printCalls, 0);
-        okInt ("and does not rewind the sweep", busyPos, posBefore);
+        okInt ("and does not rewind the sweep", busyHead, posBefore);
 
         // A different one is a different message, so it starts over.
         busy_parse("CMDBUSY,1,Updating TTY2OLED+...");
         ok    ("a new label is drawn", u8g2.lastPrint, "Updating TTY2OLED+...");
-        okInt ("and the sweep starts from the left", busyPos, 0);
+        okInt ("and the sweep starts from the left", busyHead, 0);
 
         // Whoever takes the panel takes the message with it, so the next
         // CMDBUSY carrying it has to draw it again.
@@ -1863,46 +1895,56 @@ int main() {
         busy_tick();
         okInt ("nothing before the first step", (long)oled.rects.size(), 0);
 
-        // One whole fill: every segment on the bar's rows, grey = position.
-        bool rows = true, grey = true;
-        for (int i = 0; i < BOOT_PANEL_W / BOOT_BAR_STEP; i++) {
-            g_fakeMillis += BOOT_BAR_MS; busy_tick();
+        // One frame: the whole comet, every grey once, on the bar's rows only.
+        // Taken once the head is clear of the left edge, since until then the
+        // tail is clipped and only part of the gradient is on the panel.
+        for (int i = 0; i < BOOT_BAR_TAIL; i++) { g_fakeMillis += BOOT_BAR_PX_MS; busy_tick(); }
+        oled.resetProbe();
+        g_fakeMillis += BOOT_BAR_PX_MS; busy_tick();
+        okInt ("a frame is one rectangle per grey",
+               (long)oled.rects.size(), BOOT_BAR_LEVELS);
+        bool rows = true;
+        int seen[BOOT_BAR_LEVELS] = {0};
+        for (const auto &r : oled.rects) {
+            if (r.y != BOOT_BAR_Y || r.h != BOOT_BAR_H) rows = false;
+            if (r.color < BOOT_BAR_LEVELS) seen[r.color]++;
         }
-        okInt ("a fill is one rect per step", (long)oled.rects.size(), BOOT_PANEL_W / BOOT_BAR_STEP);
-        for (size_t i = 0; i < oled.rects.size(); i++) {
-            const FakeOled::Rect &r = oled.rects[i];
-            if (r.y != BOOT_BAR_Y || r.h != BOOT_BAR_H || r.w != BOOT_BAR_STEP) rows = false;
-            if (r.x != (int)i * BOOT_BAR_STEP || r.color != r.x / BOOT_BAR_STEP) grey = false;
-        }
+        bool everyGrey = true;
+        for (int i = 0; i < BOOT_BAR_LEVELS; i++) if (seen[i] != 1) everyGrey = false;
         okBool("on the boot bar's rows, nowhere above the band", rows, true);
-        okBool("full width, grey by position like the boot sweep", grey, true);
+        okBool("all sixteen greys, one segment each", everyGrey, true);
+
+        // The head moves a single pixel per frame - what makes it smooth -
+        // and it is the brightest thing drawn.
+        auto headOf = []() {
+            for (const auto &r : oled.rects)
+                if (r.color == BOOT_BAR_LEVELS - 1) return (int)(r.x + r.w - 1);
+            return -1;
+        };
+        int h0 = headOf();
+        oled.resetProbe();
+        g_fakeMillis += BOOT_BAR_PX_MS; busy_tick();
+        okInt ("the head advances one pixel a frame", headOf() - h0, 1);
         okBool("and it keeps going", busyActive, true);
 
-        // A stall - a picture arriving - does not come back as a burst.
+        // A stall - a picture arriving - does not come back as a burst: the
+        // head resumes a pixel on, not wherever the clock says it should be.
+        h0 = headOf();
         oled.resetProbe();
         g_fakeMillis += 5000; busy_tick();
-        okInt ("a stall resumes with one step, not a burst", (long)oled.rects.size(), 1);
+        okInt ("a stall resumes with one pixel, not a leap", headOf() - h0, 1);
 
-        // CMDBUSY,0 mid-clear: finishes clearing to the edge, then stops.
+        // CMDBUSY,0 lets the comet run off the right edge, which leaves the
+        // band empty without a clearing pass of its own.
         busy_parse("CMDBUSY,0");
         okBool("CMDBUSY,0 lets it finish", busyActive, true);
-        oled.resetProbe();
-        for (int i = 0; i < 64; i++) { g_fakeMillis += BOOT_BAR_MS; busy_tick(); }
+        for (int i = 0; i < BOOT_BAR_SPAN(0) + 8 && busyActive; i++) {
+            g_fakeMillis += BOOT_BAR_PX_MS; busy_tick();
+        }
         okBool("then it stops", busyActive, false);
-        bool black = !oled.rects.empty();
-        for (size_t i = 0; i < oled.rects.size(); i++) if (oled.rects[i].color != SSD1322_BLACK) black = false;
-        okBool("having only cleared - the band ends empty", black, true);
-        okInt ("up to the edge", oled.rects.back().x + BOOT_BAR_STEP, BOOT_PANEL_W);
-
-        // Stopped mid-fill: fills to the edge, then clears the whole bar.
-        busy_start();
-        for (int i = 0; i < 3; i++) { g_fakeMillis += BOOT_BAR_MS; busy_tick(); }
-        busy_stop();
         oled.resetProbe();
-        for (int i = 0; i < 64; i++) { g_fakeMillis += BOOT_BAR_MS; busy_tick(); }
-        okInt ("stopped mid-fill: the rest of the fill and a whole clear",
-               (long)oled.rects.size(), BOOT_PANEL_W / BOOT_BAR_STEP - 3 + BOOT_PANEL_W / BOOT_BAR_STEP);
-        okInt ("ending black", oled.rects.back().color, SSD1322_BLACK);
+        g_fakeMillis += 100 * BOOT_BAR_PX_MS; busy_tick();
+        okInt ("with nothing left on the panel", (long)oled.rects.size(), 0);
 
         // Something else taking the panel stops it at once; setup does not.
         busy_start();
@@ -1913,17 +1955,17 @@ int main() {
         busy_noteCommand("CMDCOR,nes,-2");
         okBool("a picture stops it dead", busyActive, false);
         oled.resetProbe();
-        g_fakeMillis += 10 * BOOT_BAR_MS; busy_tick();
-        okInt ("without another segment", (long)oled.rects.size(), 0);
+        g_fakeMillis += 10 * BOOT_BAR_PX_MS; busy_tick();
+        okInt ("without another frame", (long)oled.rects.size(), 0);
 
         // It waits out a Fade transition rather than draw into it.
         busy_start();
         tfState = TF_BLANK;
         oled.resetProbe();
-        g_fakeMillis += 10 * BOOT_BAR_MS; busy_tick();
+        g_fakeMillis += 10 * BOOT_BAR_PX_MS; busy_tick();
         okInt ("nothing drawn during a Fade", (long)oled.rects.size(), 0);
         tfState = TF_IDLE;
-        g_fakeMillis += BOOT_BAR_MS; busy_tick();
+        g_fakeMillis += BOOT_BAR_PX_MS; busy_tick();
         okInt ("and it starts after", (long)oled.rects.size(), 1);
         busy_cancel();
     }

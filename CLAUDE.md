@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1356 checks, no hardware needed. |
+| `tests/` | 1383 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -1201,14 +1201,32 @@ was running. The version used to be drawn when the sweep *finished*, which
 answered that question only after the ten seconds somebody was actually
 looking.
 
-Because the version is up for the whole animation and the two share rows
-57..62, the bar cannot use the full width any more: `boot_barStartX` measures
-what was actually drawn (`u8g2.getCursorX()`, so the `runsTesting` markers
-count) and rounds up to a whole `BOOT_BAR_STEP`. Rounding matters - the bar's
-grey is its position (`i/BOOT_BAR_STEP`, 0..15), not a counter, so starting
-off-step would shift every segment's grey and the last one would no longer end
-on the panel edge. `BOOT_BAR_X_MAX` caps it so a pathological string cannot
-leave no bar at all.
+**The sweep is a comet.** A head one pixel wide at white, and behind it a tail
+that drops one grey level every `BOOT_BAR_SEG` (4) pixels until it reaches
+black - all sixteen levels, `BOOT_BAR_TAIL` (64) pixels of them. It was whole
+16-pixel blocks whose grey was their position, which showed as four or five
+visible steps, the dark end being invisible against the panel, and it jumped a
+block at a time.
+
+The head moves **one pixel per frame**, every `BOOT_BAR_PX_MS` (2ms), so a run
+is 320 frames rather than 32 and takes the same 640ms it always did. It costs
+little because only the bar's own rows are drawn into and the panel library
+sends only the rows that changed - about 1KB a frame, not the 8KB panel.
+`boot_barDraw` is the one thing that draws it, shared by the power-on sweep,
+the outro and the busy bar; it lives in `bootoutro.h` rather than beside its
+constants in `bootscreen.h` because it draws, and `bootscreen.h` is included
+before the display object exists so the tests can compile its geometry alone.
+
+There is **no clearing pass** any more: the tail's last segment is level 0, so
+the comet rubs out what it leaves behind, and a run that reaches
+`BOOT_BAR_SPAN` - the panel plus a tail's length - has drained off the right
+edge and left the band empty. That is what "finish the cycle" now means for
+both `CMDBUSY,0` and the power-on outro.
+
+`boot_barStartX` still keeps the bar off the version text, but no longer
+rounds: a pixel's grey is its distance behind the head, not its absolute
+position, so the comet looks the same wherever it starts. `BOOT_BAR_X_MAX`
+caps it so a pathological string cannot leave no bar at all.
 
 **The sweep ends when the wait ends, not after a count.** `boot_waitOrCommand`
 replaces every `delay()` in the sequence and returns early the moment
@@ -1294,6 +1312,23 @@ The number lives as a literal in three files that cannot read each other -
 `png2gsc.py`, `tty2oled-bootimg.sh` and `bootscreen.h` - so `test-index.sh`
 greps all three and checks they agree. A mismatch is either a file the
 installer refuses or a transfer the firmware waits forever to finish.
+
+## MiSTer.ini, and putting it back
+
+`log_file_entry=1` is what makes MiSTer publish which game is loaded, so the
+installer sets it rather than printing a note nobody acts on. It goes **inside
+the `[MiSTer]` section** - `MiSTer.ini` carries per-core sections after it, so
+a line appended to the end of the file belongs to whichever of those came last
+and does nothing at all.
+
+What it found is recorded in `.misterini.state` in the install folder, and the
+uninstaller reads it *before* removing that folder: `present` leaves it alone,
+`changed` puts the old line back verbatim (comment and all), `added` removes
+the line, `created` removes the whole file - but only while it is still just
+the two lines we wrote. In every case the value is checked first, so a user who
+has since set it themselves keeps what they set. The record is written once, on
+the run that changed something: a later update finds the setting at 1 *because
+we set it*, and must not overwrite the record with "it was already like that".
 
 ## Releases and the installer
 

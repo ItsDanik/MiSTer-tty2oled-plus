@@ -409,7 +409,7 @@ ok "so no bar for it" "$(wc -c <"${WIRE}")" "0"
 mkproc 601 /tmp/ua_downloader_bin
 downloader_running; ok "the downloader proper is" "${?}" "0"
 updateall_pass
-ok "the bar starts, and takes the panel with UPDATING" "$(cat "${WIRE}")" "CMDBUSY,1,UPDATING"
+ok "the bar starts, and takes the panel with the message" "$(cat "${WIRE}")" "CMDBUSY,1,Updating System ..."
 : >"${WIRE}"; updateall_pass
 ok "and is not restarted every pass" "$(wc -c <"${WIRE}")" "0"
 rm -rf "${PROC_ROOT}/601"
@@ -424,7 +424,7 @@ UPDATEALL_BUSY="no"    # that pass ran down a pipe, so its state stayed there
 ok "once" "$(wc -c <"${WIRE}")" "0"
 mkproc 602 python3 /tmp/ua_downloader_dd.pyz
 updateall_pass
-ok "a second run starts it again" "$(cat "${WIRE}")" "CMDBUSY,1,UPDATING"
+ok "a second run starts it again" "$(cat "${WIRE}")" "CMDBUSY,1,Updating System ..."
 UPDATE_ALL_TEXT="DOWNLOADING"; UPDATEALL_BUSY="no"
 : >"${WIRE}"; updateall_pass
 ok "UPDATE_ALL_TEXT says what it reads" "$(cat "${WIRE}")" "CMDBUSY,1,DOWNLOADING"
@@ -432,7 +432,7 @@ UPDATE_ALL_TEXT="Updating, now"; UPDATEALL_BUSY="no"
 : >"${WIRE}"; updateall_pass
 ok "and a comma in it cannot reach the wire, where it is the separator" \
    "$(cat "${WIRE}")" "CMDBUSY,1,Updating now"
-UPDATE_ALL_TEXT="UPDATING"
+UPDATE_ALL_TEXT="Updating System ..."
 
 rm -rf "${PROC_ROOT}/501" "${PROC_ROOT}/602"
 
