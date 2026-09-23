@@ -4,6 +4,39 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.4.10b — 2026-09-23
+
+- **One artwork format.** The pack is now a single folder of greyscale `.gsc`
+  pictures. Upstream shipped five - `GSC`, `XBM`, `XBM_TEXT`, `GSC_US`,
+  `XBM_US` - with three settings choosing between them, which was never a
+  feature: `.gsc` was added after the 1bpp `.xbm` and the conversion was left
+  half-finished. It is finished now. The fifteen pictures that existed only as
+  `.xbm` were converted and look exactly as they did; nothing else in those
+  folders was reachable. `USE_GSC_PICTURE`, `USE_TEXT_PICTURE` and
+  `USE_US_PICTURE` are gone, and leaving them in your user ini is harmless.
+- **What was in the folders that went**, since deleting artwork deserves
+  showing your working: `GSC_US` held one file, byte-identical to the `GSC`
+  one beside it. `XBM_US` held three genuinely different pictures - US branding,
+  Genesis rather than Mega Drive - but all three also existed in `GSC`, and the
+  search order put `XBM_US` first, so switching US pictures on *downgraded*
+  those cores from 16 greys to black-and-white to get it. `XBM_TEXT` was not
+  searched at all unless you turned it on, and its eight exclusive cores
+  already fell through to the display drawing the core name as text - which is
+  what those pictures are. Of `XBM`'s 373 files, 351 were duplicates of a `.gsc`
+  the search found first, and 7 were `_alt` variants that could never be picked.
+- **Your own pictures still win.** Drop a `.gsc` named after the core into
+  `pics_pri` and it replaces the packaged one, exactly as before -
+  `tools/png2gsc.py --banner` makes one from a PNG. `<core>_alt1.gsc` and
+  friends are still diced between when `USE_RANDOM_ALT` is on.
+- **One core stops showing a transfer error.** `invinco.gsc` in upstream's pack
+  is corrupt - 6976 bytes of what renders as static rather than a picture - so
+  the display drew its transfer-error bitmap every time that core was loaded.
+  There is nothing there to repair, so it is removed; the core now shows its
+  name as text, like any other core without artwork. Every one of the remaining
+  1905 pictures is a full 8192 bytes, and the test suite checks that.
+- The pack is 1905 files and 82MB, down from 2322 and 87MB - about 12MB packed
+  either way, so `tty2oledplus_update --pics` is no slower or faster.
+
 ## 0.4.9b — 2026-09-23
 
 - **The screensaver is gone.** Upstream's moving-logo screensaver - the five

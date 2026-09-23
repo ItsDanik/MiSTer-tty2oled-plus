@@ -151,56 +151,55 @@ senddata() {
   newcore="${1}"
   unset picfnam
 
-    # Metadata first: the firmware needs to know which layout to compose
-    # before the picture arrives, and the console icon has to be in place
-    # before CMDCOR triggers the first paint of the split layout.
-    if sendmeta "${newcore}" force; then
-      sendicon "${META_ICON}"
-    fi
+  # Metadata first: the firmware needs to know which layout to compose
+  # before the picture arrives, and the console icon has to be in place
+  # before CMDCOR triggers the first paint of the split layout.
+  if sendmeta "${newcore}" force; then
+    sendicon "${META_ICON}"
+  fi
 
-    # The menu's picture is the boot screen, which lives on the display - so
-    # there is nothing to send but the request. At power-on the boot screen is
-    # already on the panel and the firmware leaves it there; later, returning
-    # to the menu transitions to it like any other core picture.
-    if [ "${BOOTSCREEN_AS_MENU:-yes}" = "yes" ] && [ "${newcore}" = "MENU" ]; then
-      dbug "Sending: CMDBOOTPIC,${newcore},${TRANSITION}"
-      echo "CMDBOOTPIC,${newcore},${TRANSITION}" >${TTYDEV}
-      cmdwait
-      return 0
-    fi
+  # The menu's picture is the boot screen, which lives on the display - so
+  # there is nothing to send but the request. At power-on the boot screen is
+  # already on the panel and the firmware leaves it there; later, returning
+  # to the menu transitions to it like any other core picture.
+  if [ "${BOOTSCREEN_AS_MENU:-yes}" = "yes" ] && [ "${newcore}" = "MENU" ]; then
+    dbug "Sending: CMDBOOTPIC,${newcore},${TRANSITION}"
+    echo "CMDBOOTPIC,${newcore},${TRANSITION}" >${TTYDEV}
+    cmdwait
+    return 0
+  fi
 
-    if [ -e "${picturefolder_pri}/${newcore}.gsc" ]; then # Check for _pri pictures
-      picfnam="${picturefolder_pri}/${newcore}.gsc"
-    elif [ -e "${picturefolder_pri}/${newcore}.xbm" ]; then
-      picfnam="${picturefolder_pri}/${newcore}.xbm"
-    else
-      picfolders="gsc_us xbm_us gsc xbm xbm_text" # If no _pri picture found, try all the others
-      [ "${USE_US_PICTURE}" = "no" ] && picfolders="${picfolders//gsc_us xbm_us/}"
-      [ "${USE_GSC_PICTURE}" = "no" ] && picfolders="${picfolders//gsc_us/}" && picfolders="${picfolders//gsc/}"
-      [ "${USE_TEXT_PICTURE}" = "no" ] && picfolders="${picfolders//xbm_text/}"
-      for picfolder in ${picfolders}; do
-        for ((c = "${#newcore}"; c >= 1; c--)); do                                   # Manipulate string...
-          picfnam="${picturefolder}/${picfolder^^}/${newcore:0:$c}.${picfolder:0:3}" # ...until it matches something
-          [ -e "${picfnam}" ] && break
-        done
-        [ -e "${picfnam}" ] && break
-      done
+  # One artwork format, one folder each. Upstream searched five - GSC_US,
+  # XBM_US, GSC, XBM, XBM_TEXT - because .gsc was a later addition that never
+  # finished replacing the 1bpp .xbm it was introduced beside. This fork
+  # finished it: the fifteen pictures that only ever existed as .xbm were
+  # converted, and the rest of XBM was 351 duplicates of a .gsc that was
+  # already found first. See CHANGELOG 0.4.10b.
+  if [ -e "${picturefolder_pri}/${newcore}.gsc" ]; then  # yours wins
+    picfnam="${picturefolder_pri}/${newcore}.gsc"
+  else
+    # Trim the core name a character at a time until something matches, so a
+    # core whose name carries a suffix still finds the base picture.
+    for ((c = "${#newcore}"; c >= 1; c--)); do
+      picfnam="${picturefolder}/GSC/${newcore:0:$c}.gsc"
+      [ -e "${picfnam}" ] && break
+    done
+  fi
+  if [ -e "${picfnam}" ]; then               # Exist?
+    if [ "${USE_RANDOM_ALT}" = "yes" ]; then # Use _altX pictures?
+      SAVEIFS="${IFS}"
+      IFS=$'\n'
+      ALTPICNUM=$(find $(dirname "${picfnam}") -name $(basename "${picfnam%.*}_alt")* | wc -l)
+      IFS="${SAVEIFS}"
+      if [ "${ALTPICNUM}" -gt "0" ]; then             # If more than 0 _altX pictures
+        ALTPICRND=$((${RANDOM} % $((ALTPICNUM + 1)))) # then dice between 0 and count of found _altX pictures
+         [ "${ALTPICRND}" -gt 0 ] && picfnam="${picfnam%.*}_alt"${ALTPICRND}".gsc"
+      fi # If 0 then original picture, otherwise _altX
     fi
-    if [ -e "${picfnam}" ]; then               # Exist?
-      if [ "${USE_RANDOM_ALT}" = "yes" ]; then # Use _altX pictures?
-        SAVEIFS="${IFS}"
-        IFS=$'\n'
-        ALTPICNUM=$(find $(dirname "${picfnam}") -name $(basename "${picfnam%.*}_alt")* | wc -l)
-        IFS="${SAVEIFS}"
-        if [ "${ALTPICNUM}" -gt "0" ]; then             # If more than 0 _altX pictures
-          ALTPICRND=$((${RANDOM} % $((ALTPICNUM + 1)))) # then dice between 0 and count of found _altX pictures
-           [ "${ALTPICRND}" -gt 0 ] && picfnam="${picfnam%.*}_alt"${ALTPICRND}".${picfolder:0:3}"
-        fi # If 0 then original picture, otherwise _altX
-      fi
-      dbug "Sending: CMDCOR,${1},${TRANSITION}"
-      echo "CMDCOR,${1},${TRANSITION}" >${TTYDEV}    # Send CORECHANGE" Command and Corename
-      sleep ${WAITSECS}                              # sleep needed here ?!
-      tail -n +4 "${picfnam}" | xxd -r -p >${TTYDEV} # The Magic, send the Picture-Data up from Line 4 and proces
+    dbug "Sending: CMDCOR,${1},${TRANSITION}"
+    echo "CMDCOR,${1},${TRANSITION}" >${TTYDEV}    # Send CORECHANGE" Command and Corename
+    sleep ${WAITSECS}                              # sleep needed here ?!
+    tail -n +4 "${picfnam}" | xxd -r -p >${TTYDEV} # The Magic, send the Picture-Data up from Line 4 and process
   else                                               # No Picture available!
     echo "${1}" >${TTYDEV}                           # Send just the CORENAME
   fi                                                 # End if Picture check
@@ -690,8 +689,7 @@ sendupdateall() {
     sleep ${WAITSECS}
     META_WIRE_LAST="OFF"
   fi
-  for f in "${picturefolder_pri}/${name}.gsc" "${picturefolder_pri}/${name}.xbm" \
-           "${picturefolder}/GSC/${name}.gsc" "${picturefolder}/XBM/${name}.xbm"; do
+  for f in "${picturefolder_pri}/${name}.gsc" "${picturefolder}/GSC/${name}.gsc"; do
     [ -e "${f}" ] && { pic="${f}"; break; }
   done
   if [ -n "${pic}" ]; then

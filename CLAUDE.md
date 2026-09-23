@@ -170,13 +170,13 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1473 checks, no hardware needed. |
+| `tests/` | 1478 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
 | `tools/make-screenshots.sh`, `tools/screenshots/` | The README's screenshots. Compiles the display headers against the real GFX/u8g2 libraries, composes each screen into a real framebuffer and writes `docs/img/*.png`. Re-run it when a layout changes. Workstation. |
 | `pics_pri/ICON/` | The icons themselves, 27 core names over 26 systems; same path as on the MiSTer. |
-| `pics/` | The core artwork pack, 2322 files. Upstream's, vendored. |
+| `pics/` | The core artwork pack, 1905 `.gsc` files. Upstream's, vendored, and converted to one format. |
 | `tools/tty2oled-bootimg.sh` | Installs/clears the stored boot screen. **On the MiSTer**. |
 | `tools/dat2index.awk`, `tools/index-emit.awk` | The DAT parser and index emitter it drives. |
 | `tools/build-tty2oled.sh` | Builds the firmware with arduino-cli. Runs on the workstation. |
@@ -220,7 +220,7 @@ software being removed would be a lie. `SELF_UPDATE_SCREEN="no"` turns it off.
 
 **update_all overrides all of it.** While a process whose command line names
 `update_all` exists, the daemon sends `CMDMETAOFF` and `update_all.gsc` (exact
-name; `pics_pri`, then `pics/GSC`, then `.xbm`), or the bare name as text when
+name; `pics_pri`, then `pics/GSC`), or the bare name as text when
 there is none, and does nothing else until it exits - then clears `oldcore`
 and `META_WIRE_LAST` so the core and game go out again in full. It has no
 state file and does not touch `CORENAME` (MiSTerZine runs it from inside a
@@ -816,22 +816,40 @@ survive a deploy. `titleindex/`, `pics_pri/ICON/` and `pics/` move only when
 asked for by flag, because all three are large and none of them changes with
 the scripts.
 
-`pics/` is **upstream's core artwork pack, vendored into this repo** - 2322
-files, what `CMDCOR` actually puts on screen. 87MB on disk but only ~12MB
-packed, because a `.gsc`/`.xbm` is `0X00,`-style hex text and compresses about
+`pics/` is **upstream's core artwork pack, vendored into this repo** - 1905
+files, what `CMDCOR` actually puts on screen. 82MB on disk but only ~12MB
+packed, because a `.gsc` is `0X00,`-style hex text and compresses about
 sevenfold. It is vendored rather than fetched so a fresh MiSTer needs nothing
 but this repo; upstream's picture repo and its updaters are not part of the
 fork, for the reasons under [Staying out of upstream's way](#staying-out-of-upstreams-way).
 
-`--pics` sends it as one `tar` stream rather than 2322 `scp` calls. `/media/fat`
+`--pics` sends it as one `tar` stream rather than 1905 `scp` calls. `/media/fat`
 is mounted `sync,dirsync`, so every separate file write waits on the SD card -
 the difference is minutes against seconds. `du` on the MiSTer reports the pack
-as 292MB rather than 87MB, which is exFAT cluster slack over 2322 small files,
+as rather more than 82MB, which is exFAT cluster slack over 1905 small files,
 not a different set of files.
 
-All five subfolders are live. `tty2oled.sh` searches
-`gsc_us xbm_us gsc xbm xbm_text` in order, so `XBM` is the fallback for a core
-with no `GSC` - shipping only `GSC` would leave those cores blank.
+**One folder, one format.** Upstream shipped five - `GSC_US`, `XBM_US`, `GSC`,
+`XBM`, `XBM_TEXT` - searched in that order, with three ini settings choosing
+between them. That was an unfinished migration, not a feature: `.gsc` arrived
+after `.xbm` and `USE_GSC_PICTURE` defaulted to `no` until upstream's ini v1.7.
+0.4.10b finished it. `pics/GSC` is all that is left, and `tty2oled.sh` looks in
+`pics_pri` and then there.
+
+What the other four were worth, measured before deleting them: `GSC_US` held
+one file, `1941.gsc`, byte-identical to `GSC/1941.gsc`. `XBM_US` held three
+real alternatives - US branding, Genesis for Mega Drive - but all three also
+existed in `GSC`, and `xbm_us` sorted *before* `gsc`, so turning
+`USE_US_PICTURE` on downgraded those cores from 16 greys to 1bpp to get it.
+`XBM_TEXT` was not searched at all by default (`USE_TEXT_PICTURE="no"`), and
+its eight exclusive cores already fell through to the firmware drawing the core
+name as text - which is what an `XBM_TEXT` picture is. Of `XBM`'s 373 files,
+351 were duplicates of a `.gsc` found first and 7 were `_alt` variants that
+could never be picked (the alt search looks in the directory the *base*
+picture came from, and those bases are in `GSC`). The 15 that were genuinely
+XBM-only were converted, LSB-first 1bpp to high-nibble-first 4bpp, every lit
+pixel to level 15 - the same picture in the container the firmware reads as
+greyscale.
 
 **`tty2oled-user.ini` is deliberately not in the deploy list.** It holds the
 user's own settings and is sourced after `tty2oled-system.ini`, so copying the
@@ -1234,9 +1252,13 @@ an MRA setname, which is not a core file. `USE_NAMES_TXT="no"` turns it off.
 **Two spellings of `.gsc`, one wire format.** This tool writes three header
 lines then one hex character per pixel; the vendored artwork pack writes three
 header lines then `0X1f,0Xa2,` bytes. They are interchangeable, because the
-daemon sends either with `tail -n +4 | xxd -r -p` (`tty2oled.sh:191`), which
-consumes hex digits and ignores everything else - both reduce to the same 8192
-bytes. What is *not* negotiable is the header being exactly three lines, since
+daemon sends either with `tail -n +4 | xxd -r -p` (`tty2oled.sh:191`), and both
+reduce to the same 8192 bytes. Not because `xxd` "keeps the hex digits and
+ignores the rest" - it does not, and writing a converter on that assumption
+produces 3072 bytes from a 2048-byte picture. `xxd -r -p` **restarts a token at
+every non-hex character**, so `0X1f,` is the single byte `0x1f`: the leading
+`0` is its own one-digit token, `X` ends it, `1f` is the next. Anything reading
+these files must shell out to `xxd -r -p` rather than reimplement it. What is *not* negotiable is the header being exactly three lines, since
 that `tail -n +4` is hardcoded.
 
 All of them are `.gsc`: three header lines, then the pixels, row

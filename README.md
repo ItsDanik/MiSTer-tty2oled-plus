@@ -170,7 +170,7 @@ So to change something the editor does not cover, put it in the user ini and
 restart the display:
 
 ```sh
-echo 'USE_TEXT_PICTURE="yes"' >> /media/fat/tty2oledplus/tty2oled-user.ini
+echo 'USE_RANDOM_ALT="no"' >> /media/fat/tty2oledplus/tty2oled-user.ini
 /media/fat/tty2oledplus/S60tty2oled restart
 ```
 

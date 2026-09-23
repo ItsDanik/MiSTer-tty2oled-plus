@@ -20,13 +20,34 @@ if not plain:
     sys.exit("xxd shim: only -p and -r -p are supported")
 
 if revert:
+    # Real xxd -r -p is not "keep the hex digits and drop the rest". Derived
+    # from it, byte for byte:
+    #
+    #   whitespace  is skipped and does not break a pair, so "a bc d" is abcd
+    #   any other non-hex character is a separator AND discards a pending
+    #               half-byte, so "0xa," is nothing at all and "0x1f," is 0x1f
+    #   at end of input a pending half-byte is discarded, so "abc" is ab
+    #
+    # That middle rule is the one that matters here: the vendored artwork pack
+    # is written "0X1f,0Xa2," and the leading 0 of each "0X" is swallowed by
+    # the X. Stripping whitespace and calling bytes.fromhex - which is what
+    # this shim used to do - raises on the first comma, so every real picture
+    # in pics/ failed to decode on any machine without a real xxd.
     data = sys.stdin.buffer.read()
-    # Strip whitespace, then decode hex. Tolerate an odd trailing nibble the
-    # way xxd does, by ignoring it.
-    hex_text = b"".join(data.split()).decode("ascii", "ignore")
-    if len(hex_text) % 2:
-        hex_text = hex_text[:-1]
-    sys.stdout.buffer.write(bytes.fromhex(hex_text))
+    out = bytearray()
+    pending = None
+    for ch in data.decode("ascii", "ignore"):
+        if ch in "0123456789abcdefABCDEF":
+            if pending is None:
+                pending = ch
+            else:
+                out.append(int(pending + ch, 16))
+                pending = None
+        elif ch.isspace():
+            continue
+        else:
+            pending = None
+    sys.stdout.buffer.write(bytes(out))
 else:
     data = sys.stdin.buffer.read()
     text = data.hex()

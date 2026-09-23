@@ -88,6 +88,7 @@ contains() {
   esac
 }
 section() { printf '\n\033[1m%s\033[0m\n' "${1}"; }
+skip() { printf "  \033[33mskip\033[0m %s (%s)\n" "${1}" "${2}"; }
 
 reset_capture() {
   sync_capture
@@ -416,11 +417,85 @@ ok "every other fade defaults to 0.8s" \
    "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${CONTRAST_FADE_MS} ${TRANSITION_FADE_MS}")" "800 800"
 
 # ---------------------------------------------------------------------------
+section "the artwork pack is one folder of one format"
+# ---------------------------------------------------------------------------
+# 0.4.10b finished upstream's half-done migration from 1bpp .xbm to 4bpp .gsc.
+# The daemon looks in pics_pri and pics/GSC and nowhere else now, so anything
+# that is not a .gsc in the pack is unreachable by construction, and a .gsc
+# that does not decode to exactly 8192 bytes is dropped by the firmware as a
+# truncated transfer - silently, which is why it is worth a test.
+ok "pics/ holds only GSC" "$(ls "${ROOT}/pics")" "GSC"
+ok "and nothing in it but .gsc files" \
+   "$(find "${ROOT}/pics" -type f ! -name '*.gsc' | head -n3 | tr '\n' ' ')" ""
+
+# The fifteen converted from .xbm, by name: these are the ones that would have
+# gone blank had the conversion been skipped, so they are pinned rather than
+# sampled. Decoded through the daemon's own reader.
+CONVERTED="A.ARKANOID a.astdelux A.COSMIC alienaru arkanoiduo"
+CONVERTED="${CONVERTED} contrae Cotton HyperOlympic jtsdram48 jtsdram96 quartet2a tokiob"
+BAD=""
+for n in ${CONVERTED} "Clean Sweep" "Diet Go Go" "Yie Ar Kung Fu"; do
+  f="${ROOT}/pics/GSC/${n}.gsc"
+  if [ ! -e "${f}" ]; then BAD="${BAD} ${n}:missing"; continue; fi
+  b="$(tail -n +4 "${f}" | xxd -r -p | wc -c)"
+  [ "${b}" = "8192" ] || BAD="${BAD} ${n}:${b}"
+done
+ok "every picture converted from .xbm is a full 8192-byte .gsc" "${BAD}" ""
+
+# And the pack at large, since a picture that is not exactly 8192 bytes is a
+# short readBytes in the firmware, which draws the transfer-error bitmap - the
+# core looks broken rather than unpainted. upstream's invinco.gsc was one: 6976
+# bytes of what renders as static, and it had been showing a transfer error for
+# as long as it has been in the pack. One python pass rather than 1905 pipes,
+# which is the difference between a second and a minute.
+SHORT="$(python3 - "${ROOT}/pics/GSC" <<'EOPY'
+import glob, os, sys
+def decode(b):
+    out = bytearray(); pending = None
+    for ch in b.decode('ascii', 'ignore'):
+        if ch in '0123456789abcdefABCDEF':
+            if pending is None: pending = ch
+            else: out.append(int(pending + ch, 16)); pending = None
+        elif ch.isspace(): continue
+        else: pending = None
+    return out
+bad = []
+for f in sorted(glob.glob(os.path.join(sys.argv[1], '*.gsc'))):
+    with open(f, 'rb') as fh:
+        body = fh.read().split(b'\n', 3)
+    n = len(decode(body[3])) if len(body) > 3 else 0
+    if n != 8192: bad.append(f'{os.path.basename(f)}:{n}')
+print(' '.join(bad))
+EOPY
+)"
+ok "and so is every other picture in the pack" "${SHORT}" ""
+
+# The suite's own xxd stand-in, for machines with no real one. It has to agree
+# with the real thing on the pack's "0X1f,0Xa2," spelling, and it did not: it
+# stripped whitespace and called bytes.fromhex, which raises on the first
+# comma, so every real picture failed to decode wherever the shim was used.
+# tests/bin is first on PATH, so the real one has to be looked up without it.
+SHIM="${HERE}/bin/xxd"
+REALXXD="$(PATH="$(printf '%s' "${PATH}" | tr ':' '\n' | grep -vxF "${HERE}/bin" | paste -sd:)" \
+           command -v xxd 2>/dev/null || true)"
+MISMATCH=""
+if [ -n "${REALXXD}" ]; then
+  for probe in '0X1f,0Xa2,' '0x00,0xff,' 'abc' 'a bc d' '0xa,' 'a,b,'; do
+    r="$(printf '%s' "${probe}" | "${REALXXD}" -r -p | od -An -tx1 | tr -d ' \n')"
+    m="$(printf '%s' "${probe}" | "${SHIM}" -r -p | od -An -tx1 | tr -d ' \n')"
+    [ "${r}" = "${m}" ] || MISMATCH="${MISMATCH} ${probe}[real=${r} shim=${m}]"
+  done
+  ok "the xxd shim decodes exactly as the real xxd does" "${MISMATCH}" ""
+else
+  skip "the xxd shim matches the real xxd" "no real xxd to compare against"
+fi
+
+# ---------------------------------------------------------------------------
 section "transitions: -2 reaches the firmware, and the ini lists every effect"
 # ---------------------------------------------------------------------------
 reset_capture
 TRANSITION="-2"; picturefolder="${TMP}/pics"; picturefolder_pri="${TMP}/pics_pri"
-USE_GSC_PICTURE="yes"; USE_US_PICTURE="no"; USE_TEXT_PICTURE="no"; USE_RANDOM_ALT="no"
+USE_RANDOM_ALT="no"
 newcore="NES"; META_ICON=""
 mkdir -p "${TMP}/pics/GSC"
 printf '#\n#\n#\n00\n' > "${TMP}/pics/GSC/NES.gsc"
@@ -448,7 +523,7 @@ ok "and the ini lists exactly those, plus -2, -1 and 0" "${LISTED}" "-2 -1 0 ${C
 section "BOOTSCREEN_AS_MENU: the menu asks for the boot screen, and sends no picture"
 # ---------------------------------------------------------------------------
 picturefolder="${TMP}/pics"; picturefolder_pri="${TMP}/pics_pri"
-USE_GSC_PICTURE="yes"; USE_US_PICTURE="no"; USE_TEXT_PICTURE="no"; USE_RANDOM_ALT="no"
+USE_RANDOM_ALT="no"
 META_ICON=""; TRANSITION="-2"
 mkdir -p "${TMP}/pics/GSC"
 printf '#\n#\n#\n00\n' > "${TMP}/pics/GSC/MENU.gsc"
