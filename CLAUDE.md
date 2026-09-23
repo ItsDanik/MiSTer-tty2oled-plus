@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1530 checks, no hardware needed. |
+| `tests/` | 1534 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -1216,6 +1216,20 @@ is what found the `FULLPATH` bug.
   when the outro begins. A test that measured the version fade from the start
   of the outro had to be rewritten - it drove the clock in two 500ms ticks and
   the bar only moves one step per tick however much clock it carries.
+- **A blocking read is a stopped animation.** `Serial.readBytes()` holds
+  `loop()` until the bytes arrive, and a transfer is not one stream: the daemon
+  writes the header, sleeps `WAITSECS`, then writes the payload, so a 2752-byte
+  icon owns the firmware for ~440ms at 115200 baud. The icon lands immediately
+  after the metadata that started a fade, so every game change showed two or
+  three palette steps, a freeze, and then a jump to black when `tf_stepsDue()`
+  returned 16 at once. `serial_readTicking` drains what is available and runs
+  `contrast_tick`/`transition_tick` while the port is quiet and every 16ms
+  while it is not - about 34 bytes of arrival against a 256-byte hardware
+  buffer. **The icon only**: `logoBin` and `metaBin` are what a transition
+  renders from at its black phase, so advancing one while overwriting them
+  could draw half a picture. Diagnosed from the symptom's shape - "2-4 steps of
+  16, then a freeze under a second, then a clear" is a stalled ticker, not bad
+  arithmetic; the arithmetic simulated perfectly.
 - **MiSTer publishes the core seconds before the game, so "a core launched
   with its game" is not a thing the daemon ever sees.** The log of a real load
   is `CMDMETAOFF (kind=console game=no)`, `CMDCOR`, and only then - a second or

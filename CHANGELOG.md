@@ -4,6 +4,18 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.5.5b — 2026-09-23
+
+- **Fades no longer stall part way through.** A fade would manage two or three
+  of its sixteen steps, freeze for about half a second, then jump straight to
+  black - on every game change, and on the way from a core's artwork to the
+  game's details. The cause was the console icon that follows the game details:
+  reading its 2752 bytes blocks the display's main loop, and the daemon pauses
+  between the header and the data, so nothing else ran for the best part of
+  half a second - including the fade. The icon is read a piece at a time now,
+  with the fade advanced between pieces. A transfer that goes silent is still
+  abandoned, so a truncated icon is dropped rather than half-drawn.
+
 ## 0.5.4b — 2026-09-23
 
 - **No more flash before the fade.** The game's details appeared for an instant

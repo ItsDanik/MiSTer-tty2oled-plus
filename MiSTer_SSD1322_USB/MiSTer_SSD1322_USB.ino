@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.5.4b"
+#define BuildVersion "0.5.5b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -369,6 +369,7 @@ inline void oled_drawEightPixelXY(int x, int y) { oled_drawEightPixelXY(x,y,x,y)
 // Game metadata command handlers (fork additions)
 void oled_readmeta(void);
 void oled_readicon(void);
+static size_t serial_readTicking(uint8_t *dst, size_t want);
 void oled_readdim(void);
 void oled_readbootpic(void);
 void oled_readflip(void);
@@ -2814,13 +2815,59 @@ void oled_readmeta(void) {
 
 // CMDICON followed by ICON_BYTES raw bytes.
 // The 86x64 4bpp console icon shown on the right of the split layout.
+// ---------------------------------------------------------------------------
+// serial_readTicking - read exactly want bytes without stalling an animation.
+//
+// Serial.readBytes() blocks until the bytes arrive, and a transfer is not one
+// continuous stream: the daemon writes the header line, sleeps WAITSECS, then
+// writes the payload. A 2752-byte icon therefore holds loop() for the best
+// part of half a second - 200ms of silence and 240ms of data at 115200 baud.
+//
+// Nothing else runs in that time, so a Fade that was under way simply stopped:
+// two or three palette steps, a freeze, and then a jump straight to black when
+// the clock caught up and tf_stepsDue() returned 16 at once. The icon lands
+// immediately after the metadata that started the fade, so this happened on
+// every game change.
+//
+// The transfer cannot be interrupted, so the tickers are brought to it. They
+// run while the port is quiet, and every TICK_MS even while it is not, which
+// costs a frame's SPI - about 34 bytes of arrival at this baud rate, against a
+// 256-byte hardware buffer. A run of silence longer than the timeout ends the
+// read short, exactly as readBytes would, so a truncated transfer is still
+// dropped rather than half-applied.
+// ---------------------------------------------------------------------------
+static size_t serial_readTicking(uint8_t *dst, size_t want) {
+  const unsigned long TIMEOUT_MS = 1000;   // Stream's own default
+  const unsigned long TICK_MS    = 16;     // about a frame
+  size_t got = 0;
+  unsigned long lastByte = millis(), lastTick = lastByte;
+
+  while (got < want) {
+    int avail = Serial.available();
+    if (avail > 0) {
+      size_t take = (size_t)avail;
+      if (take > want - got) take = want - got;
+      got += Serial.readBytes((char *)dst + got, take);
+      lastByte = millis();
+    } else if (millis() - lastByte >= TIMEOUT_MS) {
+      break;                               // gone quiet: a short transfer
+    }
+    if (millis() - lastTick >= TICK_MS) {
+      lastTick = millis();
+      contrast_tick();
+      transition_tick();
+    }
+  }
+  return got;
+}
+
 void oled_readicon(void) {
 #ifdef XDEBUG
   Serial.println("Called Command CMDICON");
 #endif
 
 #ifdef HAS_METADISPLAY
-  size_t got = Serial.readBytes((char*)iconBin, ICON_BYTES);
+  size_t got = serial_readTicking(iconBin, ICON_BYTES);
 
   // A short read means the transfer was truncated. Drop the icon rather than
   // blitting whatever happened to be left in the buffer.

@@ -535,6 +535,28 @@ ok "so the icon only draws when nothing is owed a first draw" \
    "$(grep -c 'metaKind==MKIND_CONSOLE && !coreBootHolding && !metaNeedsDraw' "${INO}")" "1"
 
 # ---------------------------------------------------------------------------
+section "an icon transfer must not freeze a fade"
+# ---------------------------------------------------------------------------
+# sendicon writes the header line, sleeps WAITSECS, then streams 2752 bytes -
+# so the read blocks the firmware's loop for the best part of half a second at
+# 115200 baud. The icon lands immediately after the metadata that started the
+# fade, so a Fade did two or three of its sixteen palette steps, froze, and
+# then jumped straight to black when the clock caught up. The transfer cannot
+# be interrupted, so the tickers are brought to it.
+INO="${ROOT}/MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino"
+ok "the icon is read with the ticking reader" \
+   "$(grep -c 'serial_readTicking(iconBin, ICON_BYTES)' "${INO}")" "1"
+ok "which advances the fade while it waits" \
+   "$(sed -n '/^static size_t serial_readTicking/,/^}/p' "${INO}" | grep -c 'transition_tick()')" "1"
+ok "and still gives up on silence, so a short transfer is dropped" \
+   "$(sed -n '/^static size_t serial_readTicking/,/^}/p' "${INO}" | grep -c 'TIMEOUT_MS')" "2"
+# The picture reads keep the plain blocking call on purpose: logoBin and metaBin
+# are what a transition renders from when it reaches its black phase, and
+# advancing one while overwriting them could draw half a picture.
+ok "the core picture is not read that way" \
+   "$(grep -c 'Serial.readBytes((char\*)logoBin' "${INO}")" "1"
+
+# ---------------------------------------------------------------------------
 section "core_bootscreen_time: the core's artwork before the game's layout"
 # ---------------------------------------------------------------------------
 # CMDCBOOT is the daemon's decision, not a setting the firmware keeps: it goes
