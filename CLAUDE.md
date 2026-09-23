@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1478 checks, no hardware needed. |
+| `tests/` | 1482 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -666,6 +666,16 @@ differently and a later release that changes a default is still followed.
 Everything else in the file - the user's own comments, settings the editor
 does not know about - is left where it was: `ini_put` replaces the one line or
 appends under a header of its own, and never rewrites the file wholesale.
+
+Since 0.5.0b it covers **every setting a user chooses** - 35 of them, across
+seven categories. `test-settings.sh` holds it there from both directions: every
+key offered must exist in the ini *and* be read by `tty2oled.sh` or
+`tty2oled-meta.sh`, and every key in the ini's user half must be offered or be
+on a short list of deliberate exclusions - `BAUDRATE` and `TTYPARAM`, which
+can only break a link the firmware fixes at 115200, and `NAMES_TXT`,
+`TITLE_INDEX` and `TITLE_INDEX_DIR`, which are where the installer put things
+rather than settings. That list is itself checked against the ini, so a name
+on it that no longer exists cannot hide a real gap behind it.
 
 The ini is **parsed, not sourced**. The daemon sources it, but this runs as
 root from a menu, and reading a value should not be able to run anything;

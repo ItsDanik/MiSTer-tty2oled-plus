@@ -51,11 +51,19 @@ die()  { printf '\n*** %s\n' "$1" >&2; exit 1; }
 #   list   SPEC is the vocabulary, in the order the checklist offers it
 #   prefix SPEC is the key whose value it must be a leading run of
 #
-# Only the fork's own settings are here. The inherited picture-variant and
-# screensaver options, the serial device and the game roots are deliberately
-# left to the ini: they are either set once at install time or not something
-# a menu makes safer.
-CATEGORIES="display console arcade panel transition updates"
+# Everything a user chooses is here. What is deliberately not, and why:
+#
+#   BAUDRATE   the firmware is Serial.begin(115200) and nothing reads a
+#              different rate, so the only thing this could do is break the
+#              link between the MiSTer and the display
+#   TTYPARAM   stty flags, not a choice
+#   NAMES_TXT, TITLE_INDEX, TITLE_INDEX_DIR
+#              where the installer put things, not settings - editing them
+#              points the daemon at files that are not there
+#
+# The picture-variant and screensaver options that used to be excluded here
+# are gone from the release entirely (0.4.10b, 0.4.9b).
+CATEGORIES="display console arcade panel transition updates advanced"
 
 cat_label() {
   case "$1" in
@@ -65,6 +73,7 @@ cat_label() {
     panel)      printf 'Brightness and burn-in' ;;
     transition) printf 'Changing picture' ;;
     updates)    printf 'While updates run' ;;
+    advanced)   printf 'Connection and troubleshooting' ;;
   esac
 }
 
@@ -75,6 +84,10 @@ ARCADE_FIELDS_ALL="Year Manufacturer Region Orientation Core Author Set MAME Gen
 
 # The transition effects, as tty2oled-system.ini lists them. Kept in step with
 # that list by tests/test-settings.sh, which reads the ini's own numbering.
+# The ports a MiSTer actually presents. The CP2102 and CH340 boards come up as
+# ttyUSB, the S3's native USB as ttyACM; there is never a fifth.
+TTYDEV_SPEC="/dev/ttyUSB0=/dev/ttyUSB0 (usual);/dev/ttyUSB1=/dev/ttyUSB1;/dev/ttyACM0=/dev/ttyACM0;/dev/ttyACM1=/dev/ttyACM1"
+
 TRANSITION_SPEC="-2=Fade (the default);-1=A random wipe each time;0=None;1=Left to right;2=Top to bottom;3=Right to left;4=Bottom to top;5=Alternate lines, opposite ways;6=Top half right, bottom half left;7=Four bands, alternating;8=Four quarters, crosswise;9=Particles;10=Diagonal, left to right;11=Slide in, left to right;12=Slide in, top to bottom;13=Slide in, right to left;14=Slide in, bottom to top;15=Top and bottom to the middle;16=Left and right to the middle;17=Middle out to top and bottom;18=Middle out to left and right;19=Warp, middle out to every edge;20=Clockwise sweep;21=Shaft;22=Waterfall;23=Chessboard of 8 squares"
 
 settings_in() {  # settings_in <category>
@@ -84,6 +97,8 @@ SHOW_METADATA|bool||Game details|Off shows only the core's artwork, as a display
 USE_NAMES_TXT|bool||Core names from names.txt|Name cores the way your MiSTer menu names them rather than by their internal name.
 COMPACT_YEAR_COMPANY|bool||Year and publisher on one row|"1989, Acclaim" on a single row instead of two.
 METADATA_INTERVAL|int|0 600|Arcade: seconds per screen|Artwork, then each page of the info card, then the artwork again - this long on each. 0 never swaps.
+ROTATE|bool||Upside down|Turn the whole display 180 degrees, for a panel mounted the other way up.
+USE_RANDOM_ALT|bool||Vary the artwork|Where a core has more than one picture, pick between them at random each time it loads.
 EOS
     ;;
     console) cat <<'EOS'
@@ -119,6 +134,18 @@ UPDATE_ALL_SCREEN|bool||Say so while update_all runs|Show what is happening on t
 UPDATE_ALL_TEXT|text||What it says|The message shown while update_all is downloading.
 SELF_UPDATE_SCREEN|bool||Say so while tty2oled+ updates|The same, for this display's own updater.
 SELF_UPDATE_TEXT|text||What that says|The message shown while tty2oledplus_update runs.
+UPDATE_ALL_POLL|int|1 60|How often to look (seconds)|How often to check whether update_all is running. Lower notices sooner and costs a little more.
+EOS
+    ;;
+    advanced) cat <<'EOS'
+TTYDEV|enum|TTYDEV_SPEC|Serial port|Which port the display is on. Almost always the first. Change this only if the display is not responding and you know it is on another.
+debug|bool||Write a debug log|Log everything the daemon does to /tmp/tty2oled. For working out why something is not showing; leave it off otherwise.
+METADATA_WARN|bool||Warn about log_file_entry|Say so in the log at startup when MiSTer is not publishing which game is loaded, which is what game details need.
+GAME_ROOTS|text|200|Where your games are|Searched in order, separated by spaces, to work out a game's file type. Add a mount point here if you keep games somewhere unusual.
+METADATA_POLL|int|1 60|Game check (seconds)|How often to look again for game details MiSTer had not written yet.
+SLEEPMODEDELAY|int|0 60|Settling delay (seconds)|After another program hands the display back, how long to wait before drawing - it may still be finishing up.
+SLEEP_POLL|int|1 60|Sleep check (seconds)|While another program has the display, how often to look at whether it is finished.
+SLEEP_STALE_GRACE|int|0 3600|Take the display back after (seconds)|If a program claimed the display and died without releasing it, how long past its own deadline to wait before taking it back.
 EOS
     ;;
   esac
@@ -206,12 +233,13 @@ ini_drop() {  # ini_drop <file> <key>
 # ---------------------------------------------------------------------------
 # A value is only ever what a menu offered or what these accept, because it
 # ends up in a file the daemon sources as shell.
-sanitize_text() {  # quotes, backslashes, backticks, $ and control characters
-  local s
+sanitize_text() {  # sanitize_text <value> [max] - quotes, backslashes,
+  # backticks, $ and control characters out; cut to max, 32 by default.
+  local s max="${2:-32}"
   s="$(printf '%s' "$1" | tr -d '"'"'"'\\`$\000-\037')"
   # Bash's own truncation rather than cut, which ends what it prints with a
   # newline - and a newline in the middle of an ini line is a broken ini.
-  printf '%s' "${s:0:32}"
+  printf '%s' "${s:0:${max}}"
 }
 
 is_int() { case "$1" in ''|*[!0-9-]*) return 1 ;; -*[!0-9]*) return 1 ;; esac; [ "$1" != "-" ]; }
@@ -401,15 +429,16 @@ ${min} to ${max}. The default is $(default_value "${key}")." 12 70 "${cur}" || r
   done
 }
 
-edit_text() {  # edit_text <record>
-  local key label help cur
+edit_text() {  # edit_text <record> - SPEC is the length limit, 32 if empty
+  local key label help spec max cur
   key="$(field "$1" 1)"; label="$(field "$1" 4)"; help="$(field "$1" 5)"
+  spec="$(field "$1" 3)"; max="${spec:-32}"
   cur="$(value_of "${key}")"
   run_dialog --clear --title "${label}" \
     --inputbox "${help}
 
-Up to 32 characters; quotes are removed." 12 70 "${cur}" || return 1
-  set_value "${key}" "$(sanitize_text "${DIALOG_OUT}")"
+Up to ${max} characters; quotes are removed." 12 70 "${cur}" || return 1
+  set_value "${key}" "$(sanitize_text "${DIALOG_OUT}" "${max}")"
 }
 
 edit_list() {  # edit_list <record>

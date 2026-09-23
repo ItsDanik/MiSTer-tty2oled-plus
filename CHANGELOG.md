@@ -4,6 +4,29 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.5.0b — 2026-09-23
+
+- **Every setting is in the Scripts menu now.** **tty2oledplus_settings** grew
+  from 24 settings to 35, so there is nothing left that can only be changed by
+  editing a file over SSH. New in it: whether the display is mounted upside
+  down, whether cores with more than one picture vary between them, which
+  serial port the display is on, where your games live, the debug log, and -
+  under a new **Advanced** heading - the timings for how often the daemon looks
+  for a loaded game, for `update_all`, and for another program handing the
+  display back.
+- **Four things are deliberately still not offered**, and the test suite holds
+  the list: the baud rate and the serial line settings, because the firmware is
+  fixed at 115200 and a different value can only break the link between the
+  MiSTer and the display; and the three paths the installer sets, because
+  those are where it put things rather than settings. Everything else in the
+  user half of `tty2oled-system.ini` must now be reachable from the menu or the
+  suite fails - so a setting added in a later release cannot quietly ship
+  without a way to change it.
+- **Longer values can be typed.** The editor's text boxes were capped at 32
+  characters for every setting, which is why the list of places your games can
+  be was not offered before - it is longer than that. The cap is per setting
+  now.
+
 ## 0.4.10b — 2026-09-23
 
 - **One artwork format.** The pack is now a single folder of greyscale `.gsc`

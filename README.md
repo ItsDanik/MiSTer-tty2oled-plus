@@ -139,10 +139,16 @@ if you have one.
 
 ## Settings
 
-Run **tty2oledplus_settings** from the Scripts menu. Everything worth changing
-is in there — what the display shows, which details appear under a game, how
-bright the panel is and when it dims, how one picture replaces the last —
-picked from menus, with what each one does written beside it.
+Run **tty2oledplus_settings** from the Scripts menu. **Every setting is in
+there** — what the display shows, which details appear under a game, how bright
+the panel is and when it dims, how one picture replaces the last, what happens
+while updates run, and the connection and troubleshooting settings under
+*Advanced* — picked from menus, with what each one does written beside it.
+
+Four things are deliberately not offered, because they are not choices: the
+baud rate and serial line settings (the firmware is fixed at 115200, so a
+different rate can only break the link), and the three paths the installer
+sets, which point at files it put there.
 
 Nothing is written until you save, and saving restarts the display so the new
 settings are on the panel before you leave the menu. Anything left at its

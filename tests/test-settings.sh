@@ -221,6 +221,35 @@ for c in ${CATEGORIES}; do
 done
 ok "and every setting offered is read by the daemon or the metadata script" "${UNREAD}" ""
 
+# The other direction, and the point of 0.5.0b: a setting a user is meant to
+# choose has to be reachable from the menu. Anything in the ini's user half
+# that the editor does not offer must be on this list, with a reason - so
+# adding a setting and forgetting the menu fails here rather than shipping a
+# release where the only way to change it is a text editor over SSH.
+#
+#   BAUDRATE, TTYPARAM        the firmware is Serial.begin(115200); a different
+#                             rate or different stty flags can only break the
+#                             link, so they are not choices
+#   NAMES_TXT, TITLE_INDEX,   where the installer put things. Editing them
+#   TITLE_INDEX_DIR           points the daemon at files that are not there
+NOT_OFFERED="BAUDRATE NAMES_TXT TITLE_INDEX TITLE_INDEX_DIR TTYPARAM"
+OFFERED="$(for c in ${CATEGORIES}; do settings_in "${c}"; done | cut -d'|' -f1 | sort -u)"
+UNREACHABLE=""
+while IFS= read -r k; do
+  printf '%s\n' "${OFFERED}" | grep -qxF "${k}" && continue
+  printf '%s' " ${NOT_OFFERED} " | grep -qF " ${k} " || UNREACHABLE="${UNREACHABLE} ${k}"
+done < <(sed -n '/lines below are the user settings/,$p' "${ROOT}/tty2oled-system.ini" \
+         | grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' | sed 's/=$//' | sort -u)
+ok "every user setting is either offered or listed as deliberately not" "${UNREACHABLE}" ""
+
+# And the exclusion list itself has to stay honest: a name on it that the ini
+# no longer has is a stale excuse, and would hide a real gap behind it.
+STALE=""
+for k in ${NOT_OFFERED}; do
+  grep -qE "^[[:space:]]*${k}=" "${ROOT}/tty2oled-system.ini" || STALE="${STALE} ${k}"
+done
+ok "and nothing is excused that the ini no longer has" "${STALE}" ""
+
 # Each record has to have all five fields, or the menu shows a blank label or
 # edits nothing at all.
 MALFORMED=""
@@ -236,6 +265,42 @@ for c in ${CATEGORIES}; do
   done < <(settings_in "${c}")
 done
 ok "every record is complete and of a type that can be edited" "${MALFORMED}" ""
+
+# An enum's SPEC names a variable holding "value=label;value=label" - it is not
+# the spec itself. Getting that wrong passes every check above (five fields, a
+# known type) and then fails at runtime with "bad substitution" the moment the
+# menu tries to render the value, which is exactly how TTYDEV was first written.
+BADSPEC=""
+for c in ${CATEGORIES}; do
+  while IFS= read -r r; do
+    [ "$(field "${r}" 2)" = "enum" ] || continue
+    k="$(field "${r}" 1)"; sp="$(field "${r}" 3)"
+    case "${sp}" in
+      ''|*[!A-Za-z0-9_]*) BADSPEC="${BADSPEC} ${k}:not-a-variable-name" ; continue ;;
+    esac
+    v="$(eval printf '%s' "\"\${${sp}-}\"")"
+    case "${v}" in
+      '')    BADSPEC="${BADSPEC} ${k}:${sp}-is-unset" ;;
+      *=*)   ;;
+      *)     BADSPEC="${BADSPEC} ${k}:${sp}-has-no-pairs" ;;
+    esac
+  done < <(settings_in "${c}")
+done
+ok "every enum's spec names a variable of value=label pairs" "${BADSPEC}" ""
+
+# And every value the enum offers has to survive being written and read back,
+# which is what rules out a label containing the ';' that separates the pairs.
+DUPE=""
+for c in ${CATEGORIES}; do
+  while IFS= read -r r; do
+    [ "$(field "${r}" 2)" = "enum" ] || continue
+    sp="$(field "${r}" 3)"
+    v="$(eval printf '%s' "\"\${${sp}-}\"")"
+    n="$(printf '%s' "${v}" | tr ';' '\n' | cut -d= -f1 | sort | uniq -d | tr '\n' ' ')"
+    [ -z "${n}" ] || DUPE="${DUPE} $(field "${r}" 1):${n}"
+  done < <(settings_in "${c}")
+done
+ok "and offers no value twice" "${DUPE}" ""
 
 section "the transition list matches the one the ini documents"
 # The ini lists every effect by number, and the firmware's own suite checks
