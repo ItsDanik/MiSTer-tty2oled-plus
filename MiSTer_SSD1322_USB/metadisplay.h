@@ -1172,8 +1172,11 @@ bool meta_tick(void) {
     }
 
     // First draw after new metadata, if nothing else has drawn it already.
+    // Transitioned into, not cut to: whatever is on the panel - the core's
+    // artwork with no game yet, or the game before this one - is a different
+    // picture, and replacing it between two frames is the jump this used to be.
     if (metaNeedsDraw) {
-      meta_showConsole();     // clears metaNeedsDraw
+      meta_transitionToConsole(tEffect);   // clears metaNeedsDraw
       return true;
     }
 

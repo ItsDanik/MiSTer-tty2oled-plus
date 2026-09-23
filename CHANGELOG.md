@@ -4,6 +4,20 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.5.3b — 2026-09-23
+
+- **Loading a ROM into a core that is already running now transitions too.**
+  It changed the screen with no transition at all, and so, sometimes, did the
+  core boot screen. The cause was the console icon: the daemon sends one after
+  every set of game details, game changes included, and the display composed
+  the split layout the moment it arrived - cutting straight to the new game and
+  marking the first draw done before the transition could happen. The icon now
+  only redraws when the layout is already on screen, which is what that redraw
+  was for.
+- Everything that puts the split layout on screen for the first time uses
+  `TRANSITION` now: a core and its game arriving together, a game loaded into a
+  running core, and a game replaced by another.
+
 ## 0.5.2b — 2026-09-23
 
 - **The core boot screen transitions into the game's details** rather than

@@ -520,6 +520,21 @@ ok "the sketch's effects are 1..maxEffect" "${CASES}" "$(seq 1 "${MAXEFFECT}" | 
 ok "and the ini lists exactly those, plus -2, -1 and 0" "${LISTED}" "-2 -1 0 ${CASES}"
 
 # ---------------------------------------------------------------------------
+section "an icon must not cut to the layout the transition is about to reach"
+# ---------------------------------------------------------------------------
+# refreshmeta sends an icon after every CMDMETA, game changes included. The
+# firmware used to compose the split layout the moment one landed, which cut
+# straight to the new game and cleared metaNeedsDraw before meta_tick could
+# transition into it - so loading a ROM into a core that was already running
+# changed the screen with no transition at all. The draw is for an icon
+# arriving for a layout that is already up, and nothing else.
+INO="${ROOT}/MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino"
+ok "the daemon sends an icon on a game change, not just a core change" \
+   "$(grep -c 'sendicon "\${META_ICON}"' "${ROOT}/tty2oled.sh")" "2"
+ok "so the icon only draws when nothing is owed a first draw" \
+   "$(grep -c 'metaKind==MKIND_CONSOLE && !coreBootHolding && !metaNeedsDraw' "${INO}")" "1"
+
+# ---------------------------------------------------------------------------
 section "core_bootscreen_time: the core's artwork before the game's layout"
 # ---------------------------------------------------------------------------
 # CMDCBOOT is the daemon's decision, not a setting the firmware keeps: it goes

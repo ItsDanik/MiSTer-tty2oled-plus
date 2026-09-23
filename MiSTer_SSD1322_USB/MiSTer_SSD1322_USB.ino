@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.5.2b"
+#define BuildVersion "0.5.3b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -2830,10 +2830,19 @@ void oled_readicon(void) {
   Serial.printf("Icon bytes: %u (want %u)\n", (unsigned)got, (unsigned)ICON_BYTES);
 #endif
 
-  // Not while the core's artwork is being held: the icon arrives just before
-  // the picture does, and drawing here would put the layout on screen a
-  // moment before the artwork replaced it.
-  if (metaHasIcon && metaKind==MKIND_CONSOLE && !coreBootHolding) meta_showConsole();
+  // Only when the layout is already on the panel, which is the case this draw
+  // exists for: an icon turning up for a game that is already being shown.
+  //
+  // Not while the core's artwork is being held - the icon arrives just before
+  // the picture, and drawing here would put the layout up a moment before the
+  // artwork replaced it - and not when metadata is still waiting for its first
+  // draw. The daemon sends an icon after every CMDMETA, game changes included,
+  // so drawing here cut straight to the new layout and cleared metaNeedsDraw
+  // before meta_tick could transition into it. That is why loading a ROM into
+  // a core that was already running changed the screen with no transition at
+  // all.
+  if (metaHasIcon && metaKind==MKIND_CONSOLE && !coreBootHolding && !metaNeedsDraw)
+    meta_showConsole();
 #endif  // HAS_METADISPLAY
 }
 

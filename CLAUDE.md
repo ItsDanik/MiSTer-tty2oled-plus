@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1518 checks, no hardware needed. |
+| `tests/` | 1522 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -1216,6 +1216,16 @@ is what found the `FULLPATH` bug.
   when the outro begins. A test that measured the version fade from the start
   of the outro had to be rewritten - it drove the clock in two 500ms ticks and
   the bar only moves one step per tick however much clock it carries.
+- **The icon arrives after every CMDMETA, not just on a core change.**
+  `refreshmeta` sends one too, so `oled_readicon` composing the split layout
+  the moment an icon landed cut straight to the new game and cleared
+  `metaNeedsDraw` before `meta_tick` could transition into it. Loading a ROM
+  into a running core therefore changed the screen with no transition however
+  much the tick was taught to fade. That redraw is for an icon turning up for a
+  layout that is *already* on the panel, so it is guarded on `!metaNeedsDraw`
+  as well as on the core-boot hold. Found by replaying the daemon's exact
+  command order against the firmware rather than reading either in isolation -
+  the firmware's own tick logic was correct in simulation the whole time.
 - **Moving a path means finding everything that reads it.** The daemon's pid
   file moved to its own name, and `deploy-mister.sh` went on checking the old
   one by hand - every plain deploy would have reported a healthy daemon as "did

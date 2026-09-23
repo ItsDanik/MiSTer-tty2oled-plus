@@ -673,11 +673,19 @@ int main() {
         tEffect = -1;
 
         // Without a CMDCBOOT nothing is held - a game loaded into a core that
-        // is already running appears at once, as it always did.
+        // is already running appears at once, as it always did - but it is
+        // still transitioned to rather than cut to. Whatever is on the panel,
+        // the core's artwork with no game yet or the game before this one, is
+        // a different picture.
         meta_reset();
+        tEffect = 5;
         meta_parse("CMDMETA,2,0,Sonic 2|System=MegaDrive");
         okBool("no CMDCBOOT, no hold", coreBootHolding, false);
+        lastEffect = -999; lastSrcAtDraw = nullptr;
         okBool("and the layout is drawn on the next tick", meta_tick(), true);
+        okInt ("through a transition, not as a cut", lastEffect, 5);
+        okBool("from the layout", lastSrcAtDraw == metaBin, true);
+        tEffect = -1;
 
         // CMDCBOOT,0 is the setting turned off: accepted, holds nothing.
         meta_reset();
