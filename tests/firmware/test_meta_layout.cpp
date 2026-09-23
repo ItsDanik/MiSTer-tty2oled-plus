@@ -597,6 +597,66 @@ int main() {
         okBool("no fields never swaps",  meta_tick(), false);
     }
 
+    section("core boot screen: the artwork is held before the layout");
+    {
+        // CMDCBOOT arms the hold; the picture arriving is what starts it, and
+        // that is stamped on the first tick after the transition goes idle -
+        // so a slow fade in front of the artwork does not eat the hold.
+        meta_reset();
+        meta_parse("CMDMETA,2,0,Sonic|System=MegaDrive");
+        okBool("metadata alone wants drawing", metaNeedsDraw, true);
+
+        meta_parseCoreBoot("CMDCBOOT,3000");
+        okBool("CMDCBOOT arms the hold", coreBootHolding, true);
+
+        // While the picture is still transitioning in, nothing is drawn and
+        // nothing is timed: the clock has not started.
+        tfState = TF_IN;
+        g_fakeMillis += 5000;
+        okBool("nothing is drawn while the picture arrives", meta_tick(), false);
+        okBool("and the hold has not started counting", coreBootSince == 0, true);
+
+        // Up. The first idle tick stamps it and still draws nothing.
+        tfState = TF_IDLE;
+        okBool("the tick it lands on draws nothing", meta_tick(), false);
+        okBool("but starts the clock", coreBootSince != 0, true);
+        okBool("the layout is still owed", metaNeedsDraw, true);
+
+        // Most of the way through, still the artwork.
+        g_fakeMillis += 2500;
+        okBool("part way through, the artwork stays", meta_tick(), false);
+        okBool("and the hold is still on", coreBootHolding, true);
+
+        // Past it: the layout goes up, once.
+        g_fakeMillis += 600;
+        okBool("past the hold, the layout is drawn", meta_tick(), true);
+        okBool("and the hold is over", coreBootHolding, false);
+        okBool("with nothing left owed", metaNeedsDraw, false);
+
+        // Without a CMDCBOOT nothing is held - a game loaded into a core that
+        // is already running appears at once, as it always did.
+        meta_reset();
+        meta_parse("CMDMETA,2,0,Sonic 2|System=MegaDrive");
+        okBool("no CMDCBOOT, no hold", coreBootHolding, false);
+        okBool("and the layout is drawn on the next tick", meta_tick(), true);
+
+        // CMDCBOOT,0 is the setting turned off: accepted, holds nothing.
+        meta_reset();
+        meta_parse("CMDMETA,2,0,Sonic 3|System=MegaDrive");
+        meta_parseCoreBoot("CMDCBOOT,0");
+        okBool("CMDCBOOT,0 holds nothing", coreBootHolding, false);
+        okBool("and the layout is drawn at once", meta_tick(), true);
+
+        // A new core change while one is still held replaces it rather than
+        // stacking: meta_reset clears the hold with everything else.
+        meta_parse("CMDMETA,2,0,Streets|System=MegaDrive");
+        meta_parseCoreBoot("CMDCBOOT,3000");
+        meta_reset();
+        okBool("meta_reset drops a hold in progress", coreBootHolding, false);
+
+        meta_reset();
+    }
+
     section("computer mode does nothing");
     {
         meta_parse("CMDMETA,3,10,Amiga|System=Minimig");
@@ -1572,15 +1632,50 @@ int main() {
                 r.x == barX && r.x + r.w == BOOT_PANEL_W) cleared = true;
         okBool("the bar is blacked when the run ends", cleared, true);
 
-        // Timing: the version takes BOOT_VERFADE_MS, the bar a step per frame.
+        // Timing: the version takes BOOT_VERFADE_MS - measured from where it
+        // now starts, which is the moment the comet leaves the panel, not the
+        // moment the daemon spoke. Driven a frame at a time, because one tick
+        // moves the bar one step however much clock it carries.
         bootHolding = true;
         oled.resetProbe(); u8g2.draws.clear();
         boot_outroStart(barX, 128);
-        tick(0);
-        tick(500);
-        okBool("half a second in, the version is still fading", boVerDone, false);
-        tick(500);
-        okBool("gone at one second", boVerDone, true);
+        for (int i = 0; i < 700 && !boBarDone; i++) tick(BOOT_BAR_PX_MS);
+        okBool("the bar finishes first", boBarDone, true);
+        okBool("and the version has not begun to fade", boVerDone, false);
+        tick(BOOT_VERFADE_MS / 2);
+        okBool("half its fade in, the version is still going", boVerDone, false);
+        tick(BOOT_VERFADE_MS / 2 + 1);
+        okBool("gone at the end of it", boVerDone, true);
+
+        // The two halves are sequential, never simultaneous. Each version step
+        // blacks the whole left half of the band and re-renders the text into
+        // it, which is a far heavier frame than the bar's few columns; drawing
+        // both in one tick made the comet stutter as it ran off the edge.
+        //
+        // Checked by watching which one drew first: no version text may appear
+        // before the bar has finished its run.
+        bootHolding = true;
+        oled.resetProbe(); u8g2.draws.clear();
+        boot_outroStart(barX, 128);
+        {
+            bool textBeforeBarDone = false;
+            for (int i = 0; i < 700; i++) {
+                bool wasDone = boBarDone;
+                size_t before = u8g2.draws.size();
+                tick(BOOT_BAR_PX_MS);
+                if (!wasDone && u8g2.draws.size() > before) textBeforeBarDone = true;
+            }
+            okBool("the version does not fade while the bar is still running",
+                   textBeforeBarDone, false);
+            okBool("and both are finished by the end", boActive, false);
+        }
+
+        // ...and it does fade once the bar is done, rather than being skipped.
+        bootHolding = true;
+        oled.resetProbe(); u8g2.draws.clear();
+        boot_outroStart(barX, 128);
+        for (int i = 0; i < 700; i++) tick(BOOT_BAR_PX_MS);
+        okBool("the version fades after it", u8g2.draws.size() >= 14, true);
 
         // A head already past the end of its run has nothing left to do: the
         // tail has drained and the band is empty.

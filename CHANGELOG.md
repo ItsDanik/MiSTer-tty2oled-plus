@@ -4,6 +4,27 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.5.1b — 2026-09-23
+
+- **A core launched with its game now shows the core's own artwork first.**
+  Loading a console core and its ROM in one go - from a frontend, or a `.mgl`
+  entry - went straight to the game's split layout, so the core's full-screen
+  picture was never seen at all. It is held for three seconds first, the way a
+  console holds its own boot screen before the game starts, and then the
+  layout replaces it. `core_bootscreen_time` in the settings, in milliseconds;
+  `0` goes straight to the layout as before. The hold is measured from the
+  moment the artwork is actually on the panel, so the transition in front of
+  it does not eat into it. A game loaded into a core that is already running
+  is unaffected - the artwork has been up all along, and there is nothing to
+  introduce.
+- **The end of the boot animation is smoother.** The loading bar finishing its
+  sweep and the version number fading out used to run at the same time, and
+  the bar visibly stuttered as it left the panel: each step of the version
+  fade blacks half the band and re-renders the text into it, which is a much
+  heavier frame than the bar's own few columns. They run one after the other
+  now - the comet leaves the panel, then the version fades - which is the
+  order they already read in, and neither drops frames.
+
 ## 0.5.0b — 2026-09-23
 
 - **Every setting is in the Scripts menu now.** **tty2oledplus_settings** grew

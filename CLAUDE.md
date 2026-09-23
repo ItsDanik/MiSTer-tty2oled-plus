@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1482 checks, no hardware needed. |
+| `tests/` | 1510 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -206,6 +206,17 @@ composes it.
 | `console` | split: "Now playing", a rule, the title, paged fields on the left; an 86x64 icon on the right |
 | `computer` | untouched - full-screen artwork, as upstream |
 | `unknown` | as `computer`; metadata off |
+
+A console core launched **with** its game - a frontend, or a `.mgl` - would
+otherwise never show the core's own artwork at all: `CMDCOR` composes the split
+layout directly for console kinds. `core_bootscreen_time` holds the artwork
+first. The daemon decides *whether* (`sendcoreboot`, only from `senddata`, so
+only on a core change with a game already known); the firmware decides *when
+the hold starts* (the first `meta_tick` after `tfState` goes idle, so a fade in
+front of it is not counted). No `CMDCBOOT`, no hold - which is what a game
+loaded into a running core gets, and what `0` gets. It is sent **before**
+`CMDICON`, because the icon composes the layout as it lands and would draw it a
+moment before the artwork replaced it.
 
 **This fork's own updater overrides even that.** `tty2oledplus_update` stops
 the daemon within seconds of starting - it wants the serial port for the
@@ -584,6 +595,7 @@ session. These are the fork's additions, all ESP32-only:
 | `CMDMETAOFF` | none - leave metadata mode, back to plain artwork |
 | `CMDICON` | followed by exactly 2752 raw bytes (86x64, 4bpp) |
 | `CMDSHMETA` | none - force the metadata view now |
+| `CMDCBOOT,<ms>` | one line; hold the core picture that follows for <ms> before the split layout replaces it, 0..10000. Sent only on a core change for a console core whose game is already known - receiving it at all is the decision |
 | `CMDDIM,<seconds>,<contrast>,<wake>[,<dim fade ms>]` | one line; 0 seconds disables; contrast 0..255, capped at the wake level; wake -1 means CONTRAST; going dim takes the fade time, 0..10000, default 6000 - waking takes `CMDFADE`'s |
 | `CMDFADE,<ms>` | one line; how long every contrast change fades, 0..4000, 0 jumps. Sent before the first `CMDCON` |
 | `CMDBOOTPIC,<core>,<effect>` | one line, no payload; show the boot image as the core's picture. Sent for MENU when `BOOTSCREEN_AS_MENU` is on. Nothing transitions if the power-on screen is still up |
@@ -1182,6 +1194,15 @@ is what found the `FULLPATH` bug.
   `test-deploy.sh` had **pinned the bug** with an assertion that the menu
   scripts go to Scripts "and not into the install folder". A test can be wrong;
   when behaviour and test agree and reality does not, suspect both.
+- **Two things drawing into one ten-row band is one thing too many.** The
+  power-on outro ran the comet's last sweep and the version's fade together.
+  Every version step blacks the left half of the band and re-renders the text
+  into it; the bar redraws a few columns. Sharing a tick between them made the
+  comet stutter as it ran off the edge on real hardware. They are sequential
+  in time anyway, so `boVerStart` is stamped when the bar finishes rather than
+  when the outro begins. A test that measured the version fade from the start
+  of the outro had to be rewritten - it drove the clock in two 500ms ticks and
+  the bar only moves one step per tick however much clock it carries.
 - **Moving a path means finding everything that reads it.** The daemon's pid
   file moved to its own name, and `deploy-mister.sh` went on checking the old
   one by hand - every plain deploy would have reported a healthy daemon as "did

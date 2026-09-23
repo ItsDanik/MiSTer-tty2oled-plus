@@ -138,6 +138,8 @@ void boot_outroStart(int barX, int head) {
 static void bo_start(unsigned long now) {
   boStarted  = true;
   boBarLast  = now;
+  // Only used when there is no bar run left to finish; otherwise the fade
+  // starts when the comet leaves the panel. See boot_outroTick.
   boVerStart = now;
 }
 
@@ -162,6 +164,7 @@ void boot_outroTick(void) {
     if (boBarHead >= boBarX + BOOT_BAR_SPAN(boBarX)) {
       boBarDone = true;
       boot_barClear(boBarX);            // ending empty, whatever was mid-frame
+      boVerStart = now;                 // and only now does the version fade
     } else {
       boot_barDraw(boBarHead, boBarX);
     }
@@ -169,7 +172,14 @@ void boot_outroTick(void) {
   }
 
   // The version: its grey steps from 15 down to 0 over BOOT_VERFADE_MS.
-  if (!boVerDone) {
+  //
+  // After the bar, never alongside it. Each step blacks the whole left half of
+  // the band and re-renders the text into it, which is a far heavier frame
+  // than the bar's own few columns; doing both in one tick made the comet
+  // stutter visibly as it ran off the edge. They are sequential in time
+  // anyway - the band is only ten rows and they share it - so nothing is lost
+  // by waiting, and the handover reads as one movement rather than two.
+  if (boBarDone && !boVerDone) {
     unsigned long elapsed = now - boVerStart;
     int level = 15 - (int)(elapsed * 16 / BOOT_VERFADE_MS);
     if (level < 0 || elapsed >= BOOT_VERFADE_MS) level = 0;

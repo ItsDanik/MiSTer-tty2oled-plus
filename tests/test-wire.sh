@@ -520,6 +520,52 @@ ok "the sketch's effects are 1..maxEffect" "${CASES}" "$(seq 1 "${MAXEFFECT}" | 
 ok "and the ini lists exactly those, plus -2, -1 and 0" "${LISTED}" "-2 -1 0 ${CASES}"
 
 # ---------------------------------------------------------------------------
+section "core_bootscreen_time: the core's artwork before the game's layout"
+# ---------------------------------------------------------------------------
+# CMDCBOOT is the daemon's decision, not a setting the firmware keeps: it goes
+# out only on a core change, and only for a console core that already knows its
+# game. Sending it at all is what asks for the hold, so a core with no game, an
+# arcade core, and a game loaded into a core that was already running must not
+# produce one.
+reset_capture
+META_KIND="console"; META_GAME="yes"; core_bootscreen_time="3000"
+sendcoreboot
+contains "a console core with its game sends CMDCBOOT" "$(captured)" "CMDCBOOT,3000"
+
+reset_capture
+core_bootscreen_time="0"
+sendcoreboot
+ok "0 sends nothing at all" "$(sync_capture; stat -c%s "${CAPTURE}")" "0"
+core_bootscreen_time="3000"
+
+reset_capture
+META_GAME="no"
+sendcoreboot
+ok "a core with no game sends nothing" "$(sync_capture; stat -c%s "${CAPTURE}")" "0"
+META_GAME="yes"
+
+reset_capture
+META_KIND="arcade"
+sendcoreboot
+ok "and nor does an arcade core" "$(sync_capture; stat -c%s "${CAPTURE}")" "0"
+META_KIND="console"
+
+# A value that is not a number must not reach the wire as one.
+reset_capture
+core_bootscreen_time="soon"
+sendcoreboot
+ok "a value that is not a number sends nothing" "$(sync_capture; stat -c%s "${CAPTURE}")" "0"
+core_bootscreen_time="3000"
+
+# Order matters as much as the command: the icon composes the split layout as
+# soon as it lands, so it has to come after the hold is armed or it would draw
+# the layout a moment before the artwork replaced it.
+ok "the hold is armed before the icon is sent" \
+   "$(grep -n 'sendcoreboot\|sendicon "\${META_ICON}"' "${ROOT}/tty2oled.sh" \
+      | head -n2 | cut -d: -f2 | tr -d ' ' | paste -sd' ')" \
+   "sendcoreboot sendicon\"\${META_ICON}\""
+
+# ---------------------------------------------------------------------------
 section "BOOTSCREEN_AS_MENU: the menu asks for the boot screen, and sends no picture"
 # ---------------------------------------------------------------------------
 picturefolder="${TMP}/pics"; picturefolder_pri="${TMP}/pics_pri"

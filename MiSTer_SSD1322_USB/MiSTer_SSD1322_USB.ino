@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.5.0b"
+#define BuildVersion "0.5.1b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -791,7 +791,12 @@ void loop(void) {
         // text on the left with the console icon on the right, so compose that
         // instead. Arcade and computer modes fall through to the normal
         // full-screen path below.
-        if (metaKind==MKIND_CONSOLE) {
+        //
+        // Unless a CMDCBOOT just asked for the core's artwork to be held
+        // first, which is what a core launched with its game already chosen
+        // gets: then it goes up full-screen like any other picture and
+        // meta_tick puts the layout over it once the hold is done.
+        if (metaKind==MKIND_CONSOLE && !coreBootHolding) {
           meta_showConsole();
         }
         else
@@ -903,6 +908,10 @@ void loop(void) {
 
     else if (newCommand.startsWith("CMDFADE,")) {                           // Contrast fade time
       contrast_parseFade(newCommand.c_str());
+    }
+
+    else if (newCommand.startsWith("CMDCBOOT,")) {                          // Hold the core picture before the game's layout
+      meta_parseCoreBoot(newCommand.c_str());
     }
 
     else if (newCommand.startsWith("CMDDIM,")) {                            // Idle dimming
@@ -2821,7 +2830,10 @@ void oled_readicon(void) {
   Serial.printf("Icon bytes: %u (want %u)\n", (unsigned)got, (unsigned)ICON_BYTES);
 #endif
 
-  if (metaHasIcon && metaKind==MKIND_CONSOLE) meta_showConsole();
+  // Not while the core's artwork is being held: the icon arrives just before
+  // the picture does, and drawing here would put the layout on screen a
+  // moment before the artwork replaced it.
+  if (metaHasIcon && metaKind==MKIND_CONSOLE && !coreBootHolding) meta_showConsole();
 #endif  // HAS_METADISPLAY
 }
 

@@ -189,6 +189,7 @@ sent over when it restarts, so nothing needs reflashing.
 | Setting | Default | Meaning |
 |---|---|---|
 | `SHOW_METADATA` | `yes` | Master switch. `no` shows core artwork only. |
+| `core_bootscreen_time` | `3000` | A console core launched with its game already chosen holds its own full-screen artwork this long, in ms, before the game's details replace it. `0` goes straight to the details. A game loaded into a running core is unaffected. |
 | `METADATA_INTERVAL` | `12` | Arcade: seconds per screen — artwork, each card page in turn, then the artwork again. `0` never swaps. |
 | `METADATA_FIELDS` | `System Year Genre Region Format` | Which console fields show, and in what order. Four fit at once; the rest page every 2.5s. Available: System Region Year Company Genre Developer Format. |
 | `METADATA_PINNED` | `System Year` | Fields that stay put while the rest page under them. |

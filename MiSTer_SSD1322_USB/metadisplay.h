@@ -213,6 +213,29 @@ bool      metaHasIcon      = false;     // a console icon has been received
 bool      metaNeedsDraw    = false;
 
 // ---------------------------------------------------------------------------
+// Core boot screen
+// ---------------------------------------------------------------------------
+// A console core launched with its game already chosen - from a frontend, or
+// a .mgl - used to go straight to the split layout, so the core's own
+// full-screen artwork was never seen at all. CMDCBOOT, sent just before the
+// picture on a core change, asks for it to be held first, the way a console
+// holds its own boot screen before the game starts.
+//
+// The daemon decides *whether* to hold, because only it can tell a core
+// change from a game loaded into a core that was already running; the
+// firmware decides *when the hold starts*, because only it knows when the
+// transition finished and the picture is actually on the panel. So there is
+// no timeout here and nothing to guess: no CMDCBOOT, no hold, exactly as
+// before.
+//
+// While the hold is on, nothing else may draw the layout underneath it -
+// not meta_tick honouring metaNeedsDraw, not the icon arriving - or the
+// artwork would be replaced before it had been looked at.
+bool          coreBootHolding = false;  // a core picture is owed its moment
+unsigned long coreBootMs      = 0;      // how long to hold it for
+unsigned long coreBootSince   = 0;      // when it reached the panel; 0 = not yet
+
+// ---------------------------------------------------------------------------
 // Screen side flip
 // ---------------------------------------------------------------------------
 // The console layout swaps sides every metaFlipMs so no region of the panel
@@ -240,6 +263,9 @@ int           metaDimContrast = 80;     // 0..255, never above the waking level
 // every other change - something new has arrived, and it should be seen.
 #define DIM_FADE_MS_DEFAULT  6000
 #define DIM_FADE_MS_MAX      10000
+// The core boot screen is a pause before the game appears, not a screensaver:
+// ten seconds is already longer than anyone wants to wait twice.
+#define CORE_BOOT_MS_MAX     10000
 unsigned long metaDimFadeMs   = DIM_FADE_MS_DEFAULT;
 int           metaWakeContrast = -1;    // -1 = whatever CMDCON last set
 bool          metaDimmed      = false;
@@ -302,6 +328,8 @@ void meta_reset(void) {
   metaCompact = 0;
   metaHasIcon = false;
   metaNeedsDraw = false;
+  coreBootHolding = false;
+  coreBootSince = 0;
   metaShowingCard = false;
   titleScrollX = 0;
   fieldPage = 0;
@@ -999,6 +1027,25 @@ bool meta_parseDim(const char *cmd) {
 }
 
 // ---------------------------------------------------------------------------
+// meta_parseCoreBoot - CMDCBOOT,<ms>
+//
+// Hold the core picture that is about to arrive for <ms> before letting the
+// split layout replace it. Sent only on a core change, and only when the
+// game is already known, so receiving it at all is the decision; 0 is
+// accepted and simply holds nothing.
+// ---------------------------------------------------------------------------
+bool meta_parseCoreBoot(const char *cmd) {
+  int ms = 0;
+  if (sscanf(cmd, "CMDCBOOT,%d", &ms) < 1) return false;
+  if (ms < 0) ms = 0;
+  if (ms > CORE_BOOT_MS_MAX) ms = CORE_BOOT_MS_MAX;
+  coreBootMs      = (unsigned long)ms;
+  coreBootHolding = (ms > 0);
+  coreBootSince   = 0;                  // stamped when the picture is up
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // meta_tick - non-blocking periodic work, called from the sketch's main loop.
 //
 // Arcade : artwork, then each page of the card in turn, then the artwork
@@ -1069,6 +1116,21 @@ bool meta_tick(void) {
 
   if (metaKind == MKIND_CONSOLE) {
     bool dirty = false;
+
+    // The core's own artwork, held before the game's layout replaces it.
+    // Nothing below this runs while it is up: the marquee and the pager have
+    // nothing to animate yet, and the first draw is the thing being delayed.
+    if (coreBootHolding) {
+      if (tfState != TF_IDLE) return false;   // the picture is still arriving
+      if (coreBootSince == 0) {               // it is up now - start counting
+        coreBootSince = now;
+        return false;
+      }
+      if (now - coreBootSince < coreBootMs) return false;
+      coreBootHolding = false;
+      meta_showConsole();                     // clears metaNeedsDraw
+      return true;
+    }
 
     // First draw after new metadata, if nothing else has drawn it already.
     if (metaNeedsDraw) {
