@@ -4,6 +4,17 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.6.0b — 2026-09-24
+
+- **The update screens arrive the way everything else does.** Starting
+  update_all, or tty2oledplus_update, replaces whatever core was on the panel
+  - which is as much a change of picture as loading a different core, and now
+  it cross-fades like one, using whichever effect `TRANSITION` is set to.
+
+  The bar that runs while update_all is downloading deliberately still just
+  appears: by then the panel is already the update_all screen, and fading from
+  one message to another would announce a change that had not happened.
+
 ## 0.5.9b — 2026-09-24
 
 - **The settings editor saves what you picked.** Choosing a different

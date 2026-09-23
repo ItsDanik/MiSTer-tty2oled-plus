@@ -746,12 +746,18 @@ downloader_running() {
 
 # The busy bar in the band under the update_all picture: the boot screen's
 # sweep, run by the firmware until told to stop.
-sendbusy() {
+sendbusy() {  # sendbusy <0|1> [label] [effect]
   local arg="${1}"
   # A label takes the panel: the firmware blacks the picture and writes the
   # message above the bar. Without one the picture stays and only the bar runs.
   # The comma is the separator, so it cannot survive in the text.
   if [ -n "${2:-}" ]; then arg="${1},$(printf '%s' "${2}" | tr -d ',')"; fi
+  # An effect makes the message arrive like a picture instead of appearing.
+  # Only for a screen that *replaces* what you were looking at - the updater
+  # taking over from a core's artwork. The downloader's bar passes none: by
+  # then the panel is already the update_all screen, and fading from one
+  # message to another says something changed when nothing did.
+  if [ -n "${2:-}" ] && [ -n "${3:-}" ]; then arg="${arg},${3}"; fi
   dbug "Sending: CMDBUSY,${arg}"
   echo "CMDBUSY,${arg}" >${TTYDEV}
   cmdwait
@@ -783,8 +789,14 @@ sendupdateall() {
     { tail -n +4 "${pic}" | xxd -r -p | head -c 6912; head -c 1280 /dev/zero; } >${TTYDEV}
     return 0
   fi
-  dbug "Sending: ${name} (as text)"
-  echo "${name}" >${TTYDEV}
+  # As text, and transitioned: this is the update_all screen whenever the
+  # artwork pack has no update_all.gsc, which is the usual case, and moving to
+  # it is as much a change of picture as a core change is. A bare line is what
+  # the firmware draws for any command it does not know, and carries no
+  # effect, so it is asked for by name instead.
+  dbug "Sending: CMDMSG,${TRANSITION},${name} (as text)"
+  echo "CMDMSG,${TRANSITION},${name}" >${TTYDEV}
+  cmdwait
 }
 
 # Is this fork's own updater running? tty2oledplus_update.sh stops the daemon
@@ -829,7 +841,7 @@ selfupdate_pass() {
       sleep ${WAITSECS}
       META_WIRE_LAST="OFF"
     fi
-    sendbusy 1 "${SELF_UPDATE_TEXT:-Updating TTY2OLED+...}"
+    sendbusy 1 "${SELF_UPDATE_TEXT:-Updating TTY2OLED+...}" "${TRANSITION}"
     SELFUPDATE_SHOWN="yes"
     # Whatever was on screen is gone, and the board is about to be reset by
     # the flash: everything goes out again when the daemon comes back.

@@ -2360,6 +2360,109 @@ int main() {
         busy_cancel(); busy_forgetLabel();
     }
 
+    section("busy bar: a label that replaces a picture transitions in");
+    {
+        // The updater's screen takes over from whatever core was loaded, so
+        // it is a change of picture and arrives like one. The downloader's
+        // bar is not: by then the panel is already the update_all screen, and
+        // fading from one message to another says something changed when
+        // nothing did. The effect on the end of the command is that
+        // distinction, and the daemon is what knows which case it is in.
+        auto at = [](unsigned long ms) { g_fakeMillis += ms; contrast_tick(); transition_tick(); };
+        busy_cancel(); busy_forgetLabel();
+        transition_cancel();
+        tfState = TF_IDLE;
+        tfFadeMs = 1600; tfBlankMs = 500;
+        fadeMs = 0; contrast = 200; contrast_jump(200); veil_fadeOver(255, 0);
+        memset(oled.buf, 0xCC, sizeof(oled.buf));      // a core's artwork
+
+        busy_parse("CMDBUSY,1,Updating TTY2OLED+...,-2");
+        okBool("an effect makes it a transition", tfState == TF_OUT, true);
+        okBool("the bar waits for it", (busy_tick(), busyHead) == 0, true);
+        // It fades from the artwork, not from the message: the old picture has
+        // to be taken before the label is rendered over it.
+        at(100);
+        okInt ("the artwork is what fades out", (int)oled.buf[0], 0xBB);
+        for (int i = 0; i < 400 && tfState != TF_IDLE; i++) at(10);
+        okBool("and it finishes", tfState == TF_IDLE, true);
+        ok    ("with the message on the panel", u8g2.lastPrint, "Updating TTY2OLED+...");
+        okBool("the bar runs once it is over", (at(BOOT_BAR_PX_MS), busy_tick(), busyHead) > 0, true);
+
+        // No effect: drawn, exactly as before. This is the downloader's bar.
+        busy_cancel(); busy_forgetLabel();
+        transition_cancel();
+        memset(oled.buf, 0xCC, sizeof(oled.buf));
+        u8g2.resetProbe();
+        busy_parse("CMDBUSY,1,Updating System ...");
+        okBool("no effect, no transition", tfState == TF_IDLE, true);
+        ok    ("the message is simply drawn", u8g2.lastPrint, "Updating System ...");
+
+        // The effect is not part of the label, and not part of what makes two
+        // CMDBUSYs the same: a poll every couple of seconds must not redraw.
+        busy_cancel(); busy_forgetLabel();
+        transition_cancel();
+        busy_parse("CMDBUSY,1,UPDATING,-2");
+        for (int i = 0; i < 400 && tfState != TF_IDLE; i++) at(10);
+        ok    ("the label stops at the effect", busyLabel, "UPDATING");
+        u8g2.resetProbe();
+        busy_parse("CMDBUSY,1,UPDATING,-2");
+        okInt ("the same label and effect draws nothing", u8g2.printCalls, 0);
+        busy_parse("CMDBUSY,1,UPDATING");
+        okInt ("nor the same label without one", u8g2.printCalls, 0);
+        okBool("and neither starts a transition", tfState == TF_IDLE, true);
+
+        // A fade-slide is an effect like any other here.
+        busy_cancel(); busy_forgetLabel();
+        transition_cancel();
+        busy_parse("CMDBUSY,1,SLIDING,30");
+        okBool("a fade-slide works too", tfState == TF_OUT, true);
+        okBool("and slides", tfSlideDX != 0, true);
+        for (int i = 0; i < 400 && tfState != TF_IDLE; i++) at(10);
+        ok    ("landing on the message", u8g2.lastPrint, "SLIDING");
+
+        busy_cancel(); busy_forgetLabel();
+        transition_cancel();
+        tfSlideDX = tfSlideDY = 0;
+        tfFadeMs = TFADE_MS_DEFAULT; tfBlankMs = TBLANK_MS_DEFAULT;
+    }
+
+    section("CMDMSG: a message that arrives like a picture");
+    {
+        // The update_all screen whenever the artwork pack has no
+        // update_all.gsc, which is the usual case. A bare line is what the
+        // firmware draws for any command it does not know, and carries no
+        // effect, so the daemon asks for this by name instead.
+        auto at = [](unsigned long ms) { g_fakeMillis += ms; contrast_tick(); transition_tick(); };
+        busy_cancel(); busy_forgetLabel();
+        transition_cancel();
+        tfState = TF_IDLE;
+        tfFadeMs = 1600; tfBlankMs = 500;
+        fadeMs = 0; contrast = 200; contrast_jump(200); veil_fadeOver(255, 0);
+        memset(oled.buf, 0xCC, sizeof(oled.buf));
+        u8g2.resetProbe();
+
+        msg_parse("CMDMSG,-2,update_all");
+        okBool("it starts a transition", tfState == TF_OUT, true);
+        at(100);
+        okInt ("from what was on the panel", (int)oled.buf[0], 0xBB);
+        for (int i = 0; i < 400 && tfState != TF_IDLE; i++) at(10);
+        ok    ("and lands on the message", u8g2.lastPrint, "update_all");
+        okBool("with nothing left running", tfState == TF_IDLE, true);
+
+        // The text is the rest of the line, so it needs no quoting and a
+        // comma in it cannot be mistaken for anything.
+        transition_cancel();
+        msg_parse("CMDMSG,0,Updating, please wait");
+        ok    ("the text is the whole rest of the line", u8g2.lastPrint, "Updating, please wait");
+
+        ok    ("and the text is remembered for a re-show", msgText, "Updating, please wait");
+
+        transition_cancel();
+        tfSlideDX = tfSlideDY = 0;
+        tfFadeMs = TFADE_MS_DEFAULT; tfBlankMs = TBLANK_MS_DEFAULT;
+        srcBin = logoBin;
+    }
+
     section("busy bar: the boot sweep in the band while the downloader runs");
     {
         busy_cancel();

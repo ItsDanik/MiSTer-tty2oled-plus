@@ -233,6 +233,35 @@ anything drawn into the framebuffer between two steps is overwritten by the
 next. Without it a long title's marquee would redraw the whole frame every 40ms
 for the length of a fade.
 
+**An update screen is a change of picture, so it arrives like one.** Moving
+to the update_all screen or the updater's own screen replaces whatever core
+was on the panel, and that deserves the same transition a core change gets.
+Two paths carry it: `CMDCOR` already did, for a MiSTer whose artwork pack has
+an `update_all.gsc`, and `CMDMSG,<effect>,<text>` is the one for the far more
+common case where it has not - a bare line is what the firmware draws for a
+command it does not recognise, and there is nothing on it to hold an effect.
+`CMDBUSY`'s optional fourth field does the same for a labelled bar.
+
+**The downloader's bar deliberately does not transition.** By the time it
+starts, the panel is already the update_all screen: nothing is being replaced,
+and fading from one message to another would announce a change that did not
+happen. So `updateall_pass` sends `CMDBUSY,1,<label>` with no effect while
+`selfupdate_pass` sends one - the daemon is what knows which case it is in,
+and the firmware only does as it is told. The effect is the last field rather
+than before the label because the label used to be the whole rest of the line
+and an install one version behind must keep working; `metasanitize` strips
+commas from everything the daemon sends, so a comma after the label is
+unambiguously ours.
+
+**A screen built out of text goes through the same door as a picture.**
+`meta_beginTransitionText` takes the old picture before the caller draws over
+it, and `meta_transitionToBuffer` snapshots what was drawn into `metaBin` and
+points `srcBin` at it - the idiom `meta_showCard` uses, split in two so
+anything that renders its own screen can borrow it. `busy_showLabel` and
+`msg_parse` are the two callers. `metaBin` is free whenever they run, because
+every update screen is preceded by `CMDMETAOFF`; that is the same argument
+`oled_showStartScreen` makes for composing into it.
+
 **This fork's own updater overrides even that.** `tty2oledplus_update` stops
 the daemon within seconds of starting - it wants the serial port for the
 display's version and the flash - so `selfupdate_pass` is the one chance to
@@ -661,7 +690,8 @@ session. These are the fork's additions, all ESP32-only:
 | `CMDFADE,<ms>` | one line; how long every contrast change fades, 0..4000, 0 jumps. Sent before the first `CMDCON` |
 | `CMDBOOTPIC,<core>,<effect>` | one line, no payload; show the boot image as the core's picture. Sent for MENU when `BOOTSCREEN_AS_MENU` is on. Nothing transitions if the power-on screen is still up |
 | `CMDTFADE,<fade ms>,<blank ms>` | one line; the Fade transition's timings, 0..4000 each. Sent before the first picture. `CMDCOR`'s effect may now be `-2` |
-| `CMDBUSY,<0\|1>[,<label>]` | one line; 1 runs the boot sweep in the bottom band, 0 lets it finish its cycle and stop. A label blacks the panel above the band and writes it there, so the message is all that shows; the same label again is ignored, a different one redraws and rewinds the sweep. Any drawing command stops it at once |
+| `CMDBUSY,<0\|1>[,<label>[,<effect>]]` | one line; 1 runs the boot sweep in the bottom band, 0 lets it finish its cycle and stop. A label blacks the panel above the band and writes it there, so the message is all that shows; the same label again is ignored, a different one redraws and rewinds the sweep. With an effect the label screen is transitioned to rather than drawn. Any drawing command stops it at once |
+| `CMDMSG,<effect>,<text>` | one line; a centred message, transitioned to like a picture. The text is the rest of the line, so commas in it are safe |
 | `CMDFLIP,<seconds>` | one line; 0 disables and returns to the normal side |
 | `CMDWRBOOT` | followed by exactly 6912 raw bytes (256x54, 4bpp) |
 | `CMDCLRBOOT` | none - forget the stored boot image |

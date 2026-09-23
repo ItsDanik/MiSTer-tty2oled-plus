@@ -911,6 +911,80 @@ static void meta_snapshot(void) {
 }
 
 // ---------------------------------------------------------------------------
+// meta_transitionToBuffer - hand whatever has just been rendered into the
+// framebuffer to oled_transition, so a screen built out of text arrives the
+// same way a picture does.
+//
+// The same idiom meta_showCard and meta_transitionToConsole use, without the
+// rendering: the effects animate from what is on the panel *towards* srcBin,
+// so the caller draws into the framebuffer, this copies it to metaBin and
+// points srcBin there. A Fade darkens the old picture step by step, so it has
+// to be taken before the caller drew over it - which is what the
+// transition_prepare() in meta_beginTransitionText() is for.
+//
+// metaBin is free whenever this is used: the update screens are preceded by
+// CMDMETAOFF, and with metadata off there is no card to hold. That is the
+// same argument oled_showStartScreen makes for composing into it.
+// ---------------------------------------------------------------------------
+static void meta_beginTransitionText(int effect) {
+  if (effect_is_fade(effect)) transition_prepare();
+}
+
+static void meta_transitionToBuffer(int effect) {
+  meta_snapshot();
+  uint8_t *savedSrc  = srcBin;
+  int      savedType = actPicType;
+  actPicType = GSC;                 // a rendered screen is always 4bpp
+  srcBin     = metaBin;
+  oled_transition(effect);
+  srcBin     = savedSrc;
+  actPicType = savedType;
+}
+
+// ---------------------------------------------------------------------------
+// CMDMSG,<effect>,<text> - a centred message that arrives like a picture.
+//
+// The update_all screen is this whenever the artwork pack has no
+// update_all.gsc, which is the usual case. A name drawn as text is what the
+// firmware does with any line it does not recognise, and that path cannot
+// carry an effect - there is nothing on the line but the name - so the daemon
+// asks for this by name when the screen should arrive the way a core's
+// artwork does.
+//
+// The effect comes first and the text is the rest of the line, so the text
+// needs no quoting and may contain anything but a newline, commas included.
+//
+// Here rather than in the sketch so the tests can drive it: they compile the
+// display headers and not the .ino.
+// ---------------------------------------------------------------------------
+#define MSG_TEXT_MAX 64
+#define MSG_FONT     9            // the font oled_showcorename uses
+
+char msgText[MSG_TEXT_MAX] = "";
+
+static void msg_parse(const char *cmd) {
+  const char *p = strchr(cmd, ',');                 // after "CMDMSG"
+  int effect = EFFECT_RANDOM;
+  const char *text = p ? p + 1 : cmd;
+  if (p) {
+    const char *t = strchr(p + 1, ',');
+    if (t) { effect = effect_clamp(atoi(p + 1)); text = t + 1; }
+  }
+  strncpy(msgText, text, MSG_TEXT_MAX - 1);
+  msgText[MSG_TEXT_MAX - 1] = '\0';
+
+  meta_beginTransitionText(effect);                 // the old picture, while it is there
+  oled.clearDisplay();
+  oled_setfont(MSG_FONT);
+  int w = u8g2.getUTF8Width(msgText);
+  int x = DispWidth / 2 - w / 2;
+  if (x < 0) x = 0;
+  u8g2.setCursor(x, DispHeight / 2 + (u8g2.getFontAscent() / 2));
+  u8g2.print(msgText);
+  meta_transitionToBuffer(effect);
+}
+
+// ---------------------------------------------------------------------------
 // meta_showCard - animate from whatever is on screen to the metadata card.
 // Reuses the sketch's transition effects by pointing srcBin at metaBin.
 // ---------------------------------------------------------------------------

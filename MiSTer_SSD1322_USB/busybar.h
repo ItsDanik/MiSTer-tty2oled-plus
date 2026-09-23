@@ -50,7 +50,24 @@ unsigned long busyLast     = 0;       // when it last moved
 // starts: the bar only ever touches the band below it, so nothing redraws it.
 // The whole panel is blacked first, band included - a bar stopped half way
 // through its cycle would otherwise sit there under the new message.
-void busy_showLabel(const char *label) {
+//
+// With an effect it arrives like a picture instead of appearing: rendered
+// into the framebuffer and handed to the transition. That is for the screens
+// that *replace* what you were looking at - tty2oledplus_update taking over
+// from a core's artwork. The downloader's bar sends no effect, because by
+// then the panel is already the update_all screen and nothing is being
+// replaced; fading from one message to another says something changed when
+// nothing did.
+//
+// BUSY_NO_EFFECT is "drawn, not transitioned", and is not a valid effect
+// number - the parsers clamp anything below -2 up to -1.
+#define BUSY_NO_EFFECT (-99)
+
+void busy_showLabel(const char *label, int effect) {
+#ifdef HAS_METADISPLAY
+  bool fade = (effect != BUSY_NO_EFFECT);
+  if (fade) meta_beginTransitionText(effect);   // the old picture, while it is there
+#endif
   oled.fillRect(0, 0, DispWidth, BOOT_PANEL_H, SSD1322_BLACK);
   oled_setfont(BUSY_LABEL_FONT);
   int w = u8g2.getUTF8Width(label);
@@ -59,6 +76,9 @@ void busy_showLabel(const char *label) {
   // Centred in the picture area, not the panel: the band is the bar's.
   u8g2.setCursor(x, (BOOT_BAND_Y + u8g2.getFontAscent()) / 2);
   u8g2.print(label);
+#ifdef HAS_METADISPLAY
+  if (fade) { meta_transitionToBuffer(effect); return; }
+#endif
   oled.display();
 }
 
@@ -86,20 +106,32 @@ void busy_forgetLabel(void) {
   busyLabel[0] = '\0';
 }
 
-// CMDBUSY,<0|1>[,<label>]
+// CMDBUSY,<0|1>[,<label>[,<effect>]]
+//
+// The effect is last rather than before the label because the label is the
+// rest of the line in the older form, and an install one version behind must
+// keep working. It is unambiguous despite that: metasanitize strips commas
+// from everything the daemon puts on the wire, so a comma after the label has
+// to be one of ours.
 void busy_parse(const char *cmd) {
   const char *p = strchr(cmd, ',');
   if (!p || atoi(p + 1) <= 0) { busy_stop(); return; }
   const char *label = strchr(p + 1, ',');
-  // A label restarts the bar from the left, under a freshly drawn message;
-  // repeating the same command must not, or a poll every couple of seconds
-  // would redraw the panel and reset the sweep each time.
   if (label && label[1]) {
-    if (strncmp(busyLabel, label + 1, sizeof(busyLabel) - 1) != 0) {
-      strncpy(busyLabel, label + 1, sizeof(busyLabel) - 1);
-      busyLabel[sizeof(busyLabel) - 1] = '\0';
+    // A third comma, if there is one, ends the label and begins the effect.
+    const char *eff = strrchr(label + 1, ',');
+    size_t len = eff ? (size_t)(eff - (label + 1)) : strlen(label + 1);
+    if (len > sizeof(busyLabel) - 1) len = sizeof(busyLabel) - 1;
+    // A label restarts the bar from the left, under a freshly drawn message;
+    // repeating the same command must not, or a poll every couple of seconds
+    // would redraw the panel and reset the sweep each time. The effect is not
+    // part of that comparison: the same message is the same screen however it
+    // was asked to arrive.
+    if (strncmp(busyLabel, label + 1, len) != 0 || strlen(busyLabel) != len) {
+      memcpy(busyLabel, label + 1, len);
+      busyLabel[len] = '\0';
       busy_cancel();                                     // so busy_start() rewinds it
-      busy_showLabel(busyLabel);
+      busy_showLabel(busyLabel, eff ? effect_clamp(atoi(eff + 1)) : BUSY_NO_EFFECT);
     }
   } else {
     busyLabel[0] = '\0';

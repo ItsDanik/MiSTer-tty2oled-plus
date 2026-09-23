@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.5.9b"
+#define BuildVersion "0.6.0b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -335,6 +335,7 @@ void oled_showSystemHardware(void);
 void oled_sendHardwareInfo(void);
 void oled_drawlogo64h(uint16_t w, const uint8_t *bitmap);
 void oled_showcorename();
+void oled_readnshowmessage(void);
 void oled_displayoff(void);
 void oled_displayon(void);
 void oled_updatedisplay(void);
@@ -899,6 +900,10 @@ void loop(void) {
       oled_readbootpic();
     }
 
+    else if (newCommand.startsWith("CMDMSG,")) {                            // A centred message, arriving like a picture
+      oled_readnshowmessage();
+    }
+
     else if (newCommand.startsWith("CMDBUSY,")) {                           // Busy bar in the bottom band on/off
       busy_parse(newCommand.c_str());
     }
@@ -1451,6 +1456,43 @@ void oled_showcorename() {
 
   contrast_fadeTo(contrast);
   oled_showcenterredtext(actCorename,9);
+}
+
+
+// --------------------------------------------------------------
+// -------------- CMDMSG,<effect>,<text> ------------------------
+// --------------------------------------------------------------
+// A centred message that arrives like a picture rather than appearing.
+//
+// The update_all screen is this whenever the artwork pack has no
+// update_all.gsc, which is the usual case - and a name drawn as text is what
+// the firmware does with any line it does not recognise, a path that cannot
+// carry an effect because there is nothing on the line but the name. So the
+// daemon asks for it by name when it wants the screen to arrive the way a
+// core's artwork does.
+//
+// The effect comes first and the text is the rest of the line, so the text
+// needs no quoting and may contain anything but a newline.
+void oled_readnshowmessage(void) {
+#ifdef XDEBUG
+  Serial.println("Called Command CMDMSG");
+#endif
+
+  contrast_fadeTo(contrast);
+
+#ifdef HAS_METADISPLAY
+  // The parsing and the drawing live in metadisplay.h, where the host tests
+  // can reach them; this is the part that needs the sketch's own globals.
+  msg_parse(newCommand.c_str());
+  actCorename = msgText;
+#else
+  // No buffer to compose in, so it is drawn rather than transitioned.
+  String args = newCommand.substring(7);             // after "CMDMSG,"
+  int comma = args.indexOf(',');
+  actCorename = (comma >= 0) ? args.substring(comma + 1) : args;
+  oled_showcenterredtext(actCorename, 9);
+#endif
+  actPicType = NONE;                                 // text, so nothing to redraw as a picture
 }
 
 

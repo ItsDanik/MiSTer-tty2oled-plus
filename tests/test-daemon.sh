@@ -467,7 +467,16 @@ bannerfolder="${picturefolder}/banner"; userbannerfolder="${picturefolder}/user"
 altbannerfolder="${picturefolder}/alt"
 mkdir -p "${bannerfolder}" "${userbannerfolder}" "${altbannerfolder}"
 SHOW_METADATA="yes"; TRANSITION="-2"; META_WIRE_LAST="CMDMETA,..."
-ok "no picture: metadata off, then the name as text" "$(sendupdateall | tr '\n' ' ')" "CMDMETAOFF update_all "
+# Moving to the update_all screen is as much a change of picture as a core
+# change is, so it arrives the same way - CMDMSG carries the effect, which a
+# bare line cannot. The artwork pack has no update_all.gsc, so this is the
+# path most MiSTers actually take.
+ok "no picture: metadata off, then the name as text, transitioned" \
+   "$(sendupdateall | tr '\n' ' ')" "CMDMETAOFF CMDMSG,-2,update_all "
+TRANSITION="30"
+ok "with whatever effect the ini asks for" \
+   "$(sendupdateall | grep -a CMDMSG | tr -d '\r\n')" "CMDMSG,30,update_all"
+TRANSITION="-2"
 sendupdateall >/dev/null
 ok "and the metadata line is forgotten" "${META_WIRE_LAST}" "OFF"
 
@@ -497,6 +506,13 @@ mkproc 601 /tmp/ua_downloader_bin
 downloader_running; ok "the downloader proper is" "${?}" "0"
 updateall_pass
 ok "the bar starts, and takes the panel with the message" "$(cat "${WIRE}")" "CMDBUSY,1,Updating System ..."
+# ...and with no effect on the end, deliberately. By this point the panel is
+# already the update_all screen: nothing is being replaced, and fading from
+# one message to another would say something changed when nothing did. The
+# screens that *are* a replacement - update_all arriving, the updater taking
+# over - carry one.
+ok "and the downloader's bar is not transitioned into" \
+   "$(grep -c ',Updating System ...,' "${WIRE}")" "0"
 : >"${WIRE}"; updateall_pass
 ok "and is not restarted every pass" "$(wc -c <"${WIRE}")" "0"
 rm -rf "${PROC_ROOT}/601"
@@ -504,7 +520,7 @@ rm -rf "${PROC_ROOT}/601"
 # stdout instead - with the picture out of the way, so it is all text.
 mv "${bannerfolder}/update_all.gsc" "${TMP}/update_all.gsc.away"
 ok "the downloader done, the bar stops and the banner is drawn again" \
-   "$(TTYDEV=/dev/stdout updateall_pass | tr '\n' ' ')" "CMDBUSY,0 CMDMETAOFF update_all "
+   "$(TTYDEV=/dev/stdout updateall_pass | tr '\n' ' ')" "CMDBUSY,0 CMDMETAOFF CMDMSG,-2,update_all "
 mv "${TMP}/update_all.gsc.away" "${bannerfolder}/update_all.gsc"
 UPDATEALL_BUSY="no"    # that pass ran down a pipe, so its state stayed there
 : >"${WIRE}"; updateall_pass
@@ -550,9 +566,11 @@ selfupdate_running; ok "SELF_UPDATE_SCREEN=no ignores it" "${?}" "1"
 SELF_UPDATE_SCREEN="yes"
 
 oldcore="NES"; META_WIRE_LAST="CMDMETA,..."
-ok "the message and the bar go out, with no banner" \
+# The updater's screen replaces a core's artwork, so it arrives like a
+# picture rather than appearing.
+ok "the message and the bar go out, with no banner, transitioned" \
    "$(TTYDEV=/dev/stdout selfupdate_pass | tr '\n' ' ')" \
-   "CMDMETAOFF CMDBUSY,1,Updating TTY2OLED+... "
+   "CMDMETAOFF CMDBUSY,1,Updating TTY2OLED+...,-2 "
 selfupdate_pass >/dev/null
 ok "the core is forgotten, so it is redrawn when the daemon returns" "${oldcore}" ""
 : >"${WIRE}"; TTYDEV="${WIRE}"; selfupdate_pass
@@ -581,7 +599,7 @@ mkproc 500 /bin/bash /media/fat/Scripts/update_all.sh
 mkproc 700 /bin/bash /media/fat/Scripts/tty2oledplus_update.sh
 SELFUPDATE_SHOWN="no"
 ok "with both running, ours is what shows" \
-   "$(TTYDEV=/dev/stdout selfupdate_pass | tail -n1)" "CMDBUSY,1,Updating TTY2OLED+..."
+   "$(TTYDEV=/dev/stdout selfupdate_pass | tail -n1)" "CMDBUSY,1,Updating TTY2OLED+...,-2"
 rm -rf "${PROC_ROOT}/500" "${PROC_ROOT}/700"
 SELFUPDATE_SHOWN="no"
 

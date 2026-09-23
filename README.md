@@ -51,7 +51,9 @@ if you have stored one.
 bar](docs/img/boot.png)
 
 **While an update runs** the panel says so instead of leaving stale artwork up,
-whether it is `update_all` or tty2oled+ updating itself.
+whether it is `update_all` or tty2oled+ updating itself. Those screens arrive
+with the same transition everything else uses; the bar that runs during the
+download simply appears, since by then nothing is being replaced.
 
 ![The message "Updating System ..." above the sweep bar](docs/img/busy.png)
 
