@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1510 checks, no hardware needed. |
+| `tests/` | 1518 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -217,6 +217,19 @@ front of it is not counted). No `CMDCBOOT`, no hold - which is what a game
 loaded into a running core gets, and what `0` gets. It is sent **before**
 `CMDICON`, because the icon composes the layout as it lands and would draw it a
 moment before the artwork replaced it.
+
+The hold **ends in a transition**, not a cut: `meta_transitionToConsole` renders
+the layout, snapshots it to `metaBin` and points `srcBin` there, exactly as
+`meta_showCard` does, then hands it to `oled_transition(tEffect)`. So a fade
+takes the artwork first (`transition_prepare`) and animates to the layout. The
+plain `meta_showConsole` stays a cut, because it is what every marquee tick
+calls.
+
+`meta_tick` now returns early while `tfState != TF_IDLE`, for the reason
+`pf_active()` already did: a transition animates from a copy towards a copy, so
+anything drawn into the framebuffer between two steps is overwritten by the
+next. Without it a long title's marquee would redraw the whole frame every 40ms
+for the length of a fade.
 
 **This fork's own updater overrides even that.** `tty2oledplus_update` stops
 the daemon within seconds of starting - it wants the serial port for the

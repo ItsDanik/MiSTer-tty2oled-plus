@@ -4,6 +4,19 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.5.2b — 2026-09-23
+
+- **The core boot screen transitions into the game's details** rather than
+  cutting to them. Three seconds of the core's artwork followed by an abrupt
+  swap was the one visible cut left in the console path; it now uses whatever
+  `TRANSITION` is set to, the same effect a core change uses, so the artwork
+  fades or wipes into the layout.
+- While any picture transition is running, the marquee and the field pager
+  hold still. They redraw the whole frame, and a transition animates from one
+  copy towards another, so anything drawn between two of its steps was
+  overwritten by the next one - a fade with a long title would have spent
+  itself fighting the scroll.
+
 ## 0.5.1b — 2026-09-23
 
 - **A core launched with its game now shows the core's own artwork first.**

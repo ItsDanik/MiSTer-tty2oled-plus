@@ -627,11 +627,50 @@ int main() {
         okBool("part way through, the artwork stays", meta_tick(), false);
         okBool("and the hold is still on", coreBootHolding, true);
 
-        // Past it: the layout goes up, once.
+        // Past it: the layout goes up, and it is transitioned to rather than
+        // drawn - the artwork has been on the panel for three seconds and
+        // swapping it for the layout between two frames is the one place in
+        // the console path where a cut is visible.
+        tEffect = 7;                                  // a wipe, so it completes
+        lastEffect = -999; lastSrcAtDraw = nullptr;
         g_fakeMillis += 600;
         okBool("past the hold, the layout is drawn", meta_tick(), true);
+        okInt ("through the core's own transition", lastEffect, 7);
+        okBool("from the layout, not the artwork", lastSrcAtDraw == metaBin, true);
+        okBool("and srcBin is put back afterwards", srcBin == logoBin, true);
         okBool("and the hold is over", coreBootHolding, false);
         okBool("with nothing left owed", metaNeedsDraw, false);
+
+        // A Fade is a state machine, so the layout arrives seconds later. The
+        // marquee must not redraw the frame underneath it while it runs: it
+        // animates from a copy towards a copy, so anything drawn between two
+        // steps is simply overwritten by the next.
+        meta_reset();
+        std::string wide(60, 'W');                    // long enough to marquee
+        meta_parse(("CMDMETA,2,0," + wide + "|System=SNES").c_str());
+        meta_parseCoreBoot("CMDCBOOT,3000");
+        tEffect = EFFECT_FADE;
+        meta_tick();                                  // stamps the clock
+        g_fakeMillis += 3100;
+        okBool("the fade is started", meta_tick(), true);
+        okBool("and it is running", tfState != TF_IDLE, true);
+        bool drewDuringFade = false;
+        for (int i = 0; i < 40; i++) {
+            g_fakeMillis += SCROLL_STEP_MS + 1;
+            if (meta_tick()) drewDuringFade = true;
+        }
+        okBool("nothing animates over a running transition", drewDuringFade, false);
+
+        // Drained before leaving, or every test after this one would find the
+        // panel still owned by a fade that nothing was ticking.
+        // Both clocks: the fade ends when its palette steps are done AND the
+        // contrast veil has come back up, and only contrast_tick moves that.
+        for (int i = 0; i < 400 && tfState != TF_IDLE; i++) {
+            g_fakeMillis += 25; contrast_tick(); transition_tick();
+        }
+        okBool("and the fade finishes", tfState == TF_IDLE, true);
+        okBool("after which the marquee runs again", meta_tick(), true);
+        tEffect = -1;
 
         // Without a CMDCBOOT nothing is held - a game loaded into a core that
         // is already running appears at once, as it always did.

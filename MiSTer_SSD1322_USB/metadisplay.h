@@ -947,6 +947,35 @@ void meta_showConsole(void) {
 }
 
 // ---------------------------------------------------------------------------
+// meta_transitionToConsole - the split layout, arrived at rather than drawn.
+//
+// meta_showConsole above is called on every marquee tick and has to stay
+// cheap, so it composes and pushes. This is the one moment the layout replaces
+// a *different* picture - the core's own artwork, at the end of its boot
+// screen - and that deserves the same transition a core change gets.
+//
+// Same shape as meta_showCard, and for the same reason: the effects animate
+// from what is on the panel towards srcBin, so the layout is rendered into the
+// framebuffer, copied to metaBin, and srcBin pointed at the copy. A Fade
+// darkens the old picture step by step, so it has to be taken before the
+// layout is rendered over it.
+// ---------------------------------------------------------------------------
+void meta_transitionToConsole(int effect) {
+  if (effect == EFFECT_FADE) transition_prepare();   // the artwork, while it is there
+  meta_renderConsole();
+  meta_snapshot();
+
+  int savedType = actPicType;
+  actPicType = GSC;                 // the layout is always 4bpp
+  srcBin     = metaBin;
+  oled_transition(effect);
+  srcBin     = logoBin;
+  actPicType = savedType;
+
+  metaNeedsDraw = false;
+}
+
+// ---------------------------------------------------------------------------
 // meta_wakeContrast - the level to return to when the panel wakes.
 // metaWakeContrast overrides it; -1 means whatever CMDCON last set, which is
 // the user's CONTRAST from the ini.
@@ -1080,6 +1109,14 @@ bool meta_tick(void) {
   // whole frame between its steps and undo them.
   if (pf_active()) { pf_tick(); return true; }
 
+  // A picture transition owns it the same way, and for the same reason: it
+  // animates from a copy towards a copy, so anything drawn into the
+  // framebuffer between two steps is simply overwritten by the next one. The
+  // console marquee redraws every 40ms and would spend a whole fade fighting
+  // it. Nothing here is lost by waiting - the layout being faded to is the
+  // thing the marquee would be animating.
+  if (tfState != TF_IDLE) return false;
+
   // Swap the layout's sides periodically so no part of the panel holds the
   // same lit pixels indefinitely. Console only: the arcade card and the
   // full-screen artwork already use the whole width.
@@ -1121,14 +1158,16 @@ bool meta_tick(void) {
     // Nothing below this runs while it is up: the marquee and the pager have
     // nothing to animate yet, and the first draw is the thing being delayed.
     if (coreBootHolding) {
-      if (tfState != TF_IDLE) return false;   // the picture is still arriving
+      // Reaching here at all means the transition that brought the artwork in
+      // has finished - the guard above returns while one is running - so this
+      // is the first tick on which the picture is actually on the panel.
       if (coreBootSince == 0) {               // it is up now - start counting
         coreBootSince = now;
         return false;
       }
       if (now - coreBootSince < coreBootMs) return false;
       coreBootHolding = false;
-      meta_showConsole();                     // clears metaNeedsDraw
+      meta_transitionToConsole(tEffect);      // clears metaNeedsDraw
       return true;
     }
 
@@ -1180,6 +1219,7 @@ bool meta_tick(void)              { return false; }
 void meta_showCard(int effect)    { (void)effect; }
 void meta_showPicture(int effect) { (void)effect; }
 void meta_showConsole(void)       { }
+void meta_transitionToConsole(int effect) { (void)effect; }
 
 #endif  // HAS_METADISPLAY
 
