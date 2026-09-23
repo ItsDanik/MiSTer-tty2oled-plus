@@ -10,7 +10,7 @@
 #   ./tools/deploy-mister.sh --firmware       # also copy the newest merged.bin
 #   ./tools/deploy-mister.sh --firmware --flash   # ...and flash it
 #   ./tools/deploy-mister.sh --index          # also copy titleindex/*.idx
-#   ./tools/deploy-mister.sh --icons          # also copy pics_pri/ICON/*.gsc
+#   ./tools/deploy-mister.sh --icons          # also copy pics/icon/*.gsc
 #   ./tools/deploy-mister.sh --pics           # also copy the pics/ artwork pack
 #   ./tools/deploy-mister.sh --all            # scripts, index, icons and artwork
 #   ./tools/deploy-mister.sh --dry-run ...    # check and list, touch nothing
@@ -99,8 +99,8 @@ if [ "${WITH_INDEX}" = "yes" ]; then
     || die "no titleindex/*.idx - run ./tools/build-title-index.sh first."
 fi
 if [ "${WITH_ICONS}" = "yes" ]; then
-  ls pics_pri/ICON/*.gsc >/dev/null 2>&1 \
-    || die "no pics_pri/ICON/*.gsc - draw one and convert it with ./tools/png2gsc.py."
+  ls pics/icon/*.gsc >/dev/null 2>&1 \
+    || die "no pics/icon/*.gsc - draw one and convert it with ./tools/png2gsc.py."
 fi
 if [ "${WITH_PICS}" = "yes" ]; then
   [ -d pics ] || die "no pics/ directory here - nothing to copy."
@@ -113,8 +113,8 @@ if [ "${DRY_RUN}" = "yes" ]; then
   for f in ${MANIFEST_DEFAULTS}; do echo "  if absent ${f}"; done
   [ -n "${BIN}" ]                 && echo "  copy     ${BIN}"
   [ "${WITH_INDEX}" = "yes" ]     && echo "  copy     titleindex/ ($(ls titleindex/*.idx | wc -l | tr -d ' ') cores)"
-  [ "${WITH_ICONS}" = "yes" ]     && echo "  copy     pics_pri/ICON/ ($(ls pics_pri/ICON/*.gsc | wc -l | tr -d ' ') icons)"
-  [ "${WITH_PICS}" = "yes" ]      && echo "  copy     pics/ ($(find pics -type f | wc -l | tr -d ' ') files)"
+  [ "${WITH_ICONS}" = "yes" ]     && echo "  copy     pics/icon/ ($(ls pics/icon/*.gsc | wc -l | tr -d ' ') icons)"
+  [ "${WITH_PICS}" = "yes" ]      && echo "  copy     pics/ ($(find pics -type f -not -path 'pics/user/*' | wc -l | tr -d ' ') files, not pics/user)"
   echo "  run      ${BOOTHOOK}"
   if [ "${DO_FLASH}" = "yes" ]; then echo "  flash    then restart the daemon"
   else echo "  restart  the daemon"; fi
@@ -207,11 +207,10 @@ if [ "${WITH_INDEX}" = "yes" ]; then
 fi
 
 if [ "${WITH_ICONS}" = "yes" ]; then
-  # Same path here as on the MiSTer. pics_pri overrides pics, the same way it
-  # does for core artwork, so these survive an upstream picture-pack update.
-  say "Copying $(ls pics_pri/ICON/*.gsc | wc -l | tr -d ' ') console icons"
-  ssh "${MISTER}" "mkdir -p ${REMOTE}/pics_pri/ICON"
-  scp -q pics_pri/ICON/*.gsc "${MISTER}:${REMOTE}/pics_pri/ICON/"
+  # Same path here as on the MiSTer.
+  say "Copying $(ls pics/icon/*.gsc | wc -l | tr -d ' ') console icons"
+  ssh "${MISTER}" "mkdir -p ${REMOTE}/pics/icon"
+  scp -q pics/icon/*.gsc "${MISTER}:${REMOTE}/pics/icon/"
 fi
 
 if [ "${WITH_PICS}" = "yes" ]; then
@@ -235,8 +234,13 @@ if [ "${WITH_PICS}" = "yes" ]; then
   # and the MiSTer's CPU unpacks it faster than the network delivers the
   # difference. It also shortens the window in which a dropped connection can
   # leave a half-written file behind.
-  say "Copying the artwork pack ($(find pics -type f | wc -l | tr -d ' ') files, $(du -sh pics | cut -f1))"
-  tar --owner=0 --group=0 --numeric-owner -czf - pics \
+  #
+  # pics/user is excluded. It is the user's own artwork, it is the one folder
+  # here a release is not allowed to touch, and the repo's copy of it is empty
+  # - sending it would be this fork's own version of copying tty2oled-user.ini
+  # over theirs. The daemon creates the folder on the MiSTer if it is missing.
+  say "Copying the artwork pack ($(find pics -type f -not -path 'pics/user/*' | wc -l | tr -d ' ') files, $(du -sh --exclude=pics/user pics | cut -f1))"
+  tar --owner=0 --group=0 --numeric-owner --exclude='pics/user' -czf - pics \
     | ssh "${MISTER}" "tar -C ${REMOTE} --no-same-owner -xzf -"
 fi
 

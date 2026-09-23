@@ -166,7 +166,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootlogo.png` | New. The art it is generated from. |
 | `MiSTer_SSD1322_USB/contrastfade.h` | New. Every contrast change fades; base level times the transition veil. |
 | `MiSTer_SSD1322_USB/pagefade.h` | New. A metadata page turn fades only the rows that change. |
-| `MiSTer_SSD1322_USB/fadetransition.h` | New. `TRANSITION=-2`: palette-and-contrast fade out, black, fade in. |
+| `MiSTer_SSD1322_USB/fadetransition.h` | New. `TRANSITION=-2`: palette-and-contrast fade out, black, fade in. `30`-`39`: the same, sliding. |
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
@@ -175,8 +175,9 @@ with scrolling text and an icon panel.
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
 | `tools/make-screenshots.sh`, `tools/screenshots/` | The README's screenshots. Compiles the display headers against the real GFX/u8g2 libraries, composes each screen into a real framebuffer and writes `docs/img/*.png`. Re-run it when a layout changes. Workstation. |
-| `pics_pri/ICON/` | The icons themselves, 27 core names over 26 systems; same path as on the MiSTer. |
-| `pics/` | The core artwork pack, 1905 `.gsc` files. Upstream's, vendored, and converted to one format. |
+| `pics/icon/` | The icons themselves, 27 core names over 26 systems; same path as on the MiSTer. |
+| `pics/banner/`, `pics/alt/` | The core artwork pack, 1768 banners and 137 alternatives. Upstream's, vendored, converted to one format and split. |
+| `pics/user/` | The user's own banners. Empty here, and no release writes into it. |
 | `tools/tty2oled-bootimg.sh` | Installs/clears the stored boot screen. **On the MiSTer**. |
 | `tools/dat2index.awk`, `tools/index-emit.awk` | The DAT parser and index emitter it drives. |
 | `tools/build-tty2oled.sh` | Builds the firmware with arduino-cli. Runs on the workstation. |
@@ -244,7 +245,7 @@ software being removed would be a lie. `SELF_UPDATE_SCREEN="no"` turns it off.
 
 **update_all overrides all of it.** While a process whose command line names
 `update_all` exists, the daemon sends `CMDMETAOFF` and `update_all.gsc` (exact
-name; `pics_pri`, then `pics/GSC`), or the bare name as text when
+name; `pics/user`, then `pics/banner`), or the bare name as text when
 there is none, and does nothing else until it exits - then clears `oldcore`
 and `META_WIRE_LAST` so the core and game go out again in full. It has no
 state file and does not touch `CORENAME` (MiSTerZine runs it from inside a
@@ -528,6 +529,50 @@ meanwhile is overwritten by the next step. `meta_showCard` is the one caller
 that renders *before* asking, so it calls `transition_prepare()` first to take
 the old picture while it is still there. All fade times, contrast and
 transition alike, max out at 4000ms and default to 800ms.
+
+**`TRANSITION=30`..`39` are the same fade, drifting** - the picture moves a
+pixel or two on every one of the sixteen palette steps, so it slides off one
+edge as it darkens and in from the other as it comes back. Eight fixed
+(left/right/up/down, each at one pixel a step and at two) and two that pick a
+direction at random. They are numbered clear of the wipes, which stop at
+`maxEffect`, so adding a wipe cannot collide with one; `test-wire.sh` reads
+`EFFECT_SLIDE_FIRST`/`_LAST` out of the header and checks the ini lists
+exactly them, and `test-settings.sh` checks the editor offers exactly what
+the ini lists.
+
+The offset is a function of the step, not an accumulator: `tf_slideAt` gives
+the position at step *n* of each phase, and `tf_showShifted` draws `fadeBin`
+from there. Outward that is `base + d*n`. **Inward it is `-d*(16-n)`**: the
+picture has to *end* centred, so it starts a whole travel's worth out on the
+side opposite the direction of travel and moves the same way the outward half
+did. Both halves therefore drift one way, which is what makes it read as a
+movement rather than a bounce - a fade-in that started centred and slid away
+was the first thing this got wrong.
+
+A horizontal offset of two pixels is a whole byte, but one pixel lands
+mid-byte, which is the entire reason the one-pixel speeds need the slow path:
+`tf_showShifted` works a pixel at a time, 16K nibble reads a step against the
+plain fade's 8K byte reads, sixteen times over most of a second.
+
+`base` is 0 normally and only matters when a fade-in is **turned around** by a
+new picture: the outward half then has to continue from where the picture
+actually is, which `transition_fade` works out from `tfSlidePos` - the last
+position drawn - rather than from the direction, so it is right even when the
+new effect slides a different way. Without it the picture jumped to the mirror
+of its own position before carrying on.
+
+The random pair pick **once per transition**, not per step - per step would be
+a shake, not a slide - and the dice keeps the low bit, so 38 stays a one-pixel
+slide and 39 a two-pixel one. `transition_cancel` clears the slide, so a wipe
+between two fades cannot leave one behind, and `transition_fadeIn` (the
+power-on screen) never slides: there is nothing for it to slide in from.
+
+`effect_clamp` is the one place that decides what the wire may ask for -
+`-2`, `-1`, `0..maxEffect` or a fade-slide - and `effect_is_fade` the one
+place that answers "does this go through `fadetransition.h`", which is what
+`meta_showCard` needs in order to snapshot the old picture first. There were
+four copies of the clamp before, and each would have had to learn about 30..39
+separately.
 
 **The new picture is rendered, not drawn, before it fades in.** The plain draw
 (effect 0) ends in `oled.display()`, so using it put the new picture on the
@@ -813,7 +858,7 @@ Over SSH from the repo root — no Samba, no git on the MiSTer:
 ./tools/deploy-mister.sh                    # scripts, then restart the daemon
 ./tools/deploy-mister.sh --firmware --flash # also copy and flash the newest build
 ./tools/deploy-mister.sh --index            # also copy titleindex/*.idx
-./tools/deploy-mister.sh --icons            # also copy pics_pri/ICON/*.gsc
+./tools/deploy-mister.sh --icons            # also copy pics/icon/*.gsc
 ./tools/deploy-mister.sh --pics             # also copy the pics/ artwork pack
 ./tools/deploy-mister.sh --all              # index, icons and artwork together
 ./tools/deploy-mister.sh --dry-run --all    # check and list, touch nothing
@@ -849,7 +894,7 @@ including the `sed` over `/media/fat/linux/user-startup.sh`, which still points
 at the old `S60tty2oled`.
 
 `coretypes.ini` is copied only when the MiSTer has none, so edits to it
-survive a deploy. `titleindex/`, `pics_pri/ICON/` and `pics/` move only when
+survive a deploy. `titleindex/`, `pics/icon/` and the rest of `pics/` move only when
 asked for by flag, because all three are large and none of them changes with
 the scripts.
 
@@ -866,12 +911,13 @@ the difference is minutes against seconds. `du` on the MiSTer reports the pack
 as rather more than 82MB, which is exFAT cluster slack over 1905 small files,
 not a different set of files.
 
-**One folder, one format.** Upstream shipped five - `GSC_US`, `XBM_US`, `GSC`,
-`XBM`, `XBM_TEXT` - searched in that order, with three ini settings choosing
-between them. That was an unfinished migration, not a feature: `.gsc` arrived
-after `.xbm` and `USE_GSC_PICTURE` defaulted to `no` until upstream's ini v1.7.
-0.4.10b finished it. `pics/GSC` is all that is left, and `tty2oled.sh` looks in
-`pics_pri` and then there.
+**One format, one folder per kind.** Upstream shipped five - `GSC_US`,
+`XBM_US`, `GSC`, `XBM`, `XBM_TEXT` - searched in that order, with three ini
+settings choosing between them. That was an unfinished migration, not a
+feature: `.gsc` arrived after `.xbm` and `USE_GSC_PICTURE` defaulted to `no`
+until upstream's ini v1.7. 0.4.10b finished it, leaving `pics/GSC` and
+`pics_pri`; 0.5.8b flattened what was left into `pics/{banner,alt,icon,user}`.
+See [The four artwork folders](#the-four-artwork-folders) below.
 
 What the other four were worth, measured before deleting them: `GSC_US` held
 one file, `1941.gsc`, byte-identical to `GSC/1941.gsc`. `XBM_US` held three
@@ -900,6 +946,77 @@ Debug with `debug="true"` in `tty2oled-user.ini`, log at `/tmp/tty2oled`.
 `./tools/tty2oled-diag.sh` on the MiSTer dumps every state file with mtimes and
 shows what `build_meta` made of them — run it right after loading a game. That
 is what found the `FULLPATH` bug.
+
+## The four artwork folders
+
+0.5.8b flattened `pics/GSC` + `pics_pri` into four lower-case folders under
+`pics/`, one per kind of picture:
+
+| folder | what | size | whose |
+|---|---|---|---|
+| `pics/banner` | the core artwork pack, one file per core | 256x64 | the release's |
+| `pics/alt` | its `<core>_alt1.gsc`, `_alt2.gsc` ... alternatives | 256x64 | the release's |
+| `pics/icon` | the console icons for the split layout | 86x64 | the release's |
+| `pics/user` | banners of the user's own | 256x64 | **theirs** |
+
+The first three are replaced by every update; `pics/user` is never written to
+by one. That is the whole point of it, and it is `tty2oled-user.ini`'s
+argument applied to artwork: `pics_pri` had the same job, but nothing said so
+in its name, and the pack folder sat one level up from it looking equally
+editable.
+
+The alternatives are their own folder because `findbanner` trims a core name
+down to a prefix to find a base picture, and a folder holding one file per
+core is what makes that safe - `_alt` files mixed in with the banners are
+exactly what a prefix search can land on by accident.
+
+**Two settings, and one of them changes upstream's behaviour deliberately:**
+
+- `PRIORITIZE_USER_BANNERS="yes"` searches `pics/user` before `pics/banner`,
+  and the other way round when it is `no`. Either way the other folder is the
+  fallback. The trimming runs **per folder**, not across both, which makes the
+  priority absolute: a user banner for a shorter prefix beats the pack's
+  longer match, rather than the most specific filename winning wherever it
+  lives. Cross-folder trimming is not wrong so much as unpredictable from the
+  setting's name - a user's `MegaDrive.gsc` would be ignored because the pack
+  ships a `MegaDriveX`.
+- `RANDOMIZE_ALT_BANNERS="no"` replaces upstream's `USE_RANDOM_ALT="yes"`,
+  **off** where upstream was on. The pack's alternatives are a different
+  artist's take on a system rather than a variant of one picture, so a core
+  that looked one way yesterday looking another way today reads as a fault.
+  `randomalt` dices the banner and its alternatives uniformly - the primary is
+  one face of the die, which is what upstream's `RANDOM % (count + 1)` was -
+  and takes them from `pics/alt` and from `pics/user`, so a user can have
+  alternatives of their own without editing a folder a release replaces. The
+  base name comes from the picture that was *found*, not from the core, since
+  it may have been trimmed.
+
+`deferred_setup` says so in the log if a user ini still sets the old name,
+like `DIM_PERCENT` before it.
+
+**Icons have no user override folder.** `pics/user` holds 256x64 banners named
+after the core, and an 86x64 icon of the same name in there would be
+indistinguishable from one until the firmware had read 2752 bytes of an
+8192-byte picture. One folder, `pics/icon`.
+
+**The migration is renames, not a download** (`migrate_pics` in `S60tty2oled`).
+It is there for the reason `place_menu_scripts` is: the update that introduces
+the new layout is applied by the *previous* updater, which knows nothing about
+moving anything - and which decides whether to fetch the 80MB pack by asking
+whether the artwork is already there, so it does not bring the new one either.
+`pics/GSC` and `pics/banner` hold byte-identical files, so the whole thing is
+`mv` on the SD card. A folder is only removed once its replacement is already
+there, so a half-finished update never leaves a MiSTer with no artwork; a user
+banner already in `pics/user` is never overwritten, because this runs on every
+start and has to be safe to run twice. `tty2oledplus_update.sh` accepts either
+layout as "the artwork is there" - `pics/` alone would skip a fresh install
+whose `pics/` holds nothing but the icons out of the scripts archive.
+
+**The icons ship in the scripts archive, the banners in the pack.** 27 small
+files that every update should carry, against 80MB fetched only when it is
+missing. `pics/user` ships in neither, and `deploy-mister.sh --pics` excludes
+it from its tar - the repo's copy is empty, and sending it would be this
+fork's version of copying `tty2oled-user.ini` over the user's.
 
 ## Things that cost time, recorded so they do not again
 
@@ -1381,8 +1498,8 @@ file one byte out is dropped as truncated.
 
 | | size | bytes | where |
 |---|---|---|---|
-| core banner | 256x64 | 8192 | `pics/GSC/<CORENAME>.gsc` - what `CMDCOR` shows |
-| console icon | 86x64 | 2752 | `pics_pri/ICON/<CORENAME>.gsc`, falling back to `pics/ICON/` |
+| core banner | 256x64 | 8192 | `pics/user/` then `pics/banner/<CORENAME>.gsc` - what `CMDCOR` shows |
+| console icon | 86x64 | 2752 | `pics/icon/<CORENAME>.gsc` |
 | blank icon | 86x64 | 2752 | `png2gsc.py --blank --out ...`, all pixels `0` |
 | boot screen | 256x54 | 6912 | the ESP's own flash, via `CMDWRBOOT` |
 | built-in boot logo | 256x54 | 6912 | `bootlogo.h`, compiled into the firmware |
@@ -1390,7 +1507,7 @@ file one byte out is dropped as truncated.
 Draw at the target size in Aseprite or Pixelorama with a 16-step greyscale
 palette, export PNG, then:
 
-The icon set is **curated, and the files are the list**: `pics_pri/ICON` holds
+The icon set is **curated, and the files are the list**: `pics/icon` holds
 one drawn icon per system this fork supports - 27 of the 47 console cores in
 `coretypes.ini`. The other 20 still get the split layout and everything in it;
 `findicon` simply finds nothing and the panel beside the text stays black.
@@ -1398,10 +1515,10 @@ There is no stub generator any more: a blank file in there would be
 indistinguishable from a drawn one and would quietly make the list wrong.
 
 ```bash
-./tools/png2gsc.py --banner --out pics/GSC/NES.gsc nes.png   # 256x64 banner
+./tools/png2gsc.py --banner --out pics/banner/NES.gsc nes.png   # 256x64 banner
 ./tools/deploy-mister.sh --pics
 
-./tools/png2gsc.py --out pics_pri/ICON/NES.gsc nes.png
+./tools/png2gsc.py --out pics/icon/NES.gsc nes.png
 ./tools/deploy-mister.sh --icons
 
 ./tools/png2gsc.py --boot splash.png                    # 256x54 boot screen

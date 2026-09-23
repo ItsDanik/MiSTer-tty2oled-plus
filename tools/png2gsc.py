@@ -4,8 +4,8 @@ png2gsc.py - convert an image to the .gsc format tty2oled displays.
 
     ./tools/png2gsc.py icon.png                     -> icon.gsc   (86x64)
     ./tools/png2gsc.py --boot splash.png            -> splash.gsc (256x54)
-    ./tools/png2gsc.py --banner -o pics/GSC/NES.gsc nes.png       (256x64)
-    ./tools/png2gsc.py --out pics/ICON/NES.gsc nes.png
+    ./tools/png2gsc.py --banner -o pics/banner/NES.gsc nes.png       (256x64)
+    ./tools/png2gsc.py --out pics/icon/NES.gsc nes.png
     ./tools/png2gsc.py --boot --header -o x/bootlogo.h logo.png   -> a C header
 
 A .gsc is a three-line header followed by the pixels as hex, ONE HEX
@@ -23,7 +23,7 @@ transparent is composited onto black before conversion.
 Sizes the firmware accepts:
 
     icon    86x64    the panel on the right of the console split layout
-    banner 256x64    the full-screen core artwork in pics/GSC, named after
+    banner 256x64    the full-screen core artwork in pics/banner, named after
                      the core - what CMDCOR puts on screen
     boot   256x54    the top of the screen, stored in the ESP's own flash
 
@@ -228,7 +228,7 @@ def main():
                          f"{ICON_W}x{ICON_H} icon")
     ap.add_argument("--banner", action="store_true",
                     help=f"produce a {BANNER_W}x{BANNER_H} core banner for "
-                         f"pics/GSC instead of an {ICON_W}x{ICON_H} icon")
+                         f"pics/banner instead of an {ICON_W}x{ICON_H} icon")
     ap.add_argument("--stretch", action="store_true",
                     help="fill the frame instead of fitting and centring")
     ap.add_argument("--dither", action="store_true",

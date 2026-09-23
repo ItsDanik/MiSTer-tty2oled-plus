@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.5.7b"
+#define BuildVersion "0.5.8b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -1696,8 +1696,7 @@ void oled_showpic(void) {
 
   if (newCommand.length()>7) {                       // Parameter added?
     tEffect=newCommand.substring(8).toInt();         // Get Effect from Command String (is set to 0 if not convertable)
-    if (tEffect<EFFECT_FADE) tEffect=EFFECT_RANDOM;  // Check Effect minimum: -2 is Fade
-    if (tEffect>maxEffect) tEffect=maxEffect;        // Check Effect maximum
+    tEffect=effect_clamp(tEffect);                   // -2 Fade, 30..39 fade-slide, 0..maxEffect a wipe
   }
   else {
     tEffect=-1;                                      // Set Parameter to -1 (random)
@@ -1727,8 +1726,7 @@ int oled_readlogo() {
   else {                                             // "," found = Effect Parameter given
     actCorename=TextIn.substring(0, d1);             // Extract Corename from Command String
     tEffect=TextIn.substring(d1+1).toInt();          // Get Effect from Command String (set to 0 if not convertable)
-    if (tEffect<EFFECT_FADE) tEffect=EFFECT_RANDOM;  // Check Effect minimum: -2 is Fade
-    if (tEffect>maxEffect) tEffect=maxEffect;        // Check Effect maximum
+    tEffect=effect_clamp(tEffect);                   // -2 Fade, 30..39 fade-slide, 0..maxEffect a wipe
 #ifdef XDEBUG
     Serial.printf("\nReceived Text: %s, Transition T:%i \n", (char*)actCorename.c_str(),tEffect);
 #endif
@@ -2910,9 +2908,7 @@ void oled_readbootpic(void) {
   int effect = EFFECT_RANDOM;
   if (comma >= 0) {
     actCorename = args.substring(0, comma);
-    effect = args.substring(comma + 1).toInt();
-    if (effect < EFFECT_FADE) effect = EFFECT_RANDOM;
-    if (effect > maxEffect)   effect = maxEffect;
+    effect = effect_clamp(args.substring(comma + 1).toInt());
   } else {
     actCorename = args;
   }

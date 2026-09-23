@@ -174,7 +174,7 @@ case "${cmd}" in
   *".ini ]"*) [ "${FAKE_HAS_DEFAULTS:-no}" = "yes" ] || exit 1 ;;
   *"/media/fat/tty2oled/"*) [ "${FAKE_UPSTREAM:-no}" = "yes" ] || exit 1 ;;
   *"bash -s"*) cat > "${FAKE_STDIN}" ;;
-  *"tar -C"*) cat > /dev/null ;;
+  *"tar -C"*) cat > "${FAKE_STDIN}.tar" ;;
 esac
 exit 0
 FAKE
@@ -312,10 +312,29 @@ ok "after the scripts it runs with are in place" \
    "$(awk '/^SCP.*tty2oled.sh /{s=NR} /flash-mister.sh$/{f=NR} END{print (s && f > s) ? "yes" : "no"}' "${LOG}")" "yes"
 ok "with no restart of its own to undo it" "$(grep -c 'S60tty2oled restart' "${LOG}")" "0"
 
-mkdir -p "${REPO}/pics/GSC"; echo 00 > "${REPO}/pics/GSC/NES.gsc"
+mkdir -p "${REPO}/pics/banner" "${REPO}/pics/alt" "${REPO}/pics/icon" "${REPO}/pics/user"
+echo 00 > "${REPO}/pics/banner/NES.gsc"
+echo 00 > "${REPO}/pics/alt/NES_alt1.gsc"
+echo 00 > "${REPO}/pics/icon/NES.gsc"
+echo 00 > "${REPO}/pics/user/NES.gsc"
 deploy --pics; RC="${?}"
 ok "--pics succeeds" "${RC}" "0"
 ok "the pack goes as one tar stream" "$(grep -c 'tar -C /media/fat/tty2oledplus --no-same-owner -xzf -' "${LOG}")" "1"
+# Read out of the stream itself rather than off the command line: what
+# matters is what would land on the MiSTer.
+SENT="$(tar tzf "${STDIN}.tar" | sort | tr '\n' ' ')"
+ok "with the banners and their alternatives in it" "${SENT}" \
+   "pics/ pics/alt/ pics/alt/NES_alt1.gsc pics/banner/ pics/banner/NES.gsc pics/icon/ pics/icon/NES.gsc "
+# pics/user is the user's own artwork, and the repo's copy of it is empty.
+# Sending it is this fork's version of copying tty2oled-user.ini over theirs -
+# and unlike the ini, nothing would report it: the deploy's own tar would
+# quietly replace a banner the user drew.
+ok "and nothing of the user's own" "$(printf '%s' "${SENT}" | grep -c 'pics/user')" "0"
+
+deploy --icons; RC="${?}"
+ok "--icons succeeds" "${RC}" "0"
+ok "the icons go to pics/icon" \
+   "$(grep -c '^SCP.* pics/icon/NES.gsc root@fake-mister:/media/fat/tty2oledplus/pics/icon/$' "${LOG}")" "1"
 
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n\n' "${PASS}" "${FAIL}"
 [ "${FAIL}" -eq 0 ]

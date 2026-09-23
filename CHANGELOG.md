@@ -4,6 +4,38 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.5.8b — 2026-09-23
+
+- **One artwork folder, four kinds of picture.** `pics/GSC` and `pics_pri` are
+  gone; everything now lives under `pics/` as `banner` (the core artwork),
+  `alt` (its `_alt1`, `_alt2` ... alternatives), `icon` (the console icons)
+  and `user`. Your MiSTer sorts itself out on the next restart: the old
+  folders are renamed into the new ones in place, so nothing is downloaded
+  again and nothing you put there is lost.
+
+- **`pics/user` is yours, and no update will ever write into it.** Drop a
+  256x64 `.gsc` named after the core in there and it replaces the shipped
+  picture - which is what `pics_pri` was for, except that nothing about the
+  name said so and the pack folder beside it looked just as editable.
+  `PRIORITIZE_USER_BANNERS="no"` puts the pack first instead and treats yours
+  as the fallback.
+
+- **Ten new transitions: the cross-fade, sliding.** `TRANSITION="30"` through
+  `"39"` fade one picture into the next exactly as `-2` does, but drift the
+  picture while they do it - off one edge as it darkens, in from the other as
+  it comes back. Left, right, up and down, each at a gentle pixel per step and
+  at a brisk two, plus two that pick a direction at random every time. They
+  are in the settings editor's Effect list by name, beside the wipes.
+
+- **A core with more than one picture now shows the same one every time.**
+  Upstream diced between a core's artwork and its alternatives on every load,
+  and this fork did too. The alternatives are a different artist's take on a
+  system rather than a variant of one picture, so the display changing its
+  mind about what a console looks like read as a fault. Set
+  `RANDOMIZE_ALT_BANNERS="yes"` for the old behaviour; alternatives of your
+  own go in `pics/user` beside your banners, and are diced in with the rest.
+  An ini that still sets `USE_RANDOM_ALT` gets a line in the log saying so.
+
 ## 0.5.7b — 2026-09-23
 
 - **The side swap fades too.** Every `FLIP_MINUTES` the console layout moves to

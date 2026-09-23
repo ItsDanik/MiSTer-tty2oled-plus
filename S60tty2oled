@@ -124,8 +124,75 @@ place_menu_scripts() {
   return 0
 }
 
+# The artwork folders were flattened in 0.5.1b: pics/GSC became pics/banner
+# with its _altN pictures split off into pics/alt, pics_pri/ICON became
+# pics/icon, and pics_pri itself - where a user's own banners went - became
+# pics/user.
+#
+# Here for the same reason place_menu_scripts is: the update that introduces
+# the new layout is applied by the *previous* updater, which knows nothing
+# about moving anything - and, because it decides whether to fetch the 80MB
+# artwork pack by asking whether pics/ exists at all, does not fetch the new
+# one either. So the first thing this version controls is its own start, and
+# a MiSTer that reached it with the old folders would otherwise have no
+# artwork until the user happened to update twice.
+#
+# Which is why this *moves* rather than deletes: pics/GSC and pics/banner hold
+# byte-identical files, so the whole migration is renames on the SD card and
+# nothing is downloaded again. A folder is only removed when its replacement
+# is already populated - that is, when a new pack has been unpacked beside the
+# old one and there is nothing left in it to keep.
+migrate_pics() {
+  local install="${TTY2OLED_PATH:-/media/fat/tty2oledplus}"
+  local pics="${install}/pics" pri="${install}/pics_pri"
+  local f base
+  [ -d "${pics}" ] || [ -d "${pri}" ] || return 0
+
+  # The pack. Moved wholesale, then the alternatives out of it - they are
+  # named <core>_altN.gsc and were mixed in with the banners.
+  if [ -d "${pics}/GSC" ]; then
+    if [ -d "${pics}/banner" ]; then              # a new pack is already here
+      rm -rf "${pics}/GSC" 2>/dev/null
+    elif mv "${pics}/GSC" "${pics}/banner" 2>/dev/null; then
+      mkdir -p "${pics}/alt" 2>/dev/null
+      for f in "${pics}/banner"/*_alt*.gsc; do
+        [ -e "${f}" ] || continue
+        mv "${f}" "${pics}/alt/" 2>/dev/null
+      done
+    fi
+  fi
+
+  # The icons. Same move, and the same "only if it is not already there".
+  if [ -d "${pri}/ICON" ]; then
+    if [ -d "${pics}/icon" ]; then
+      rm -rf "${pri}/ICON" 2>/dev/null
+    else
+      mkdir -p "${pics}" 2>/dev/null
+      mv "${pri}/ICON" "${pics}/icon" 2>/dev/null
+    fi
+  fi
+  [ -d "${pics}/icon" ] && rm -rf "${pics}/ICON" 2>/dev/null
+
+  # What is left in pics_pri is the user's own banners, and nobody but the
+  # user put them there. Never overwritten, so a file already in pics/user
+  # wins - this runs on every start and must be safe to run twice.
+  if [ -d "${pri}" ]; then
+    mkdir -p "${pics}/user" 2>/dev/null
+    for f in "${pri}"/*.gsc; do
+      [ -e "${f}" ] || continue
+      base="$(basename "${f}")"
+      [ -e "${pics}/user/${base}" ] || mv "${f}" "${pics}/user/${base}" 2>/dev/null
+    done
+    rmdir "${pri}" 2>/dev/null
+  fi
+
+  mkdir -p "${pics}/user" 2>/dev/null
+  return 0
+}
+
 start() {
     place_menu_scripts
+    migrate_pics
 
     # Refused before anything else, and said where it will be read: at boot
     # nobody sees stdout, so the daemon log gets it too.

@@ -296,7 +296,13 @@ main() {
 
   local scripts="yes"
   [ "${current}" = "${version}" ] && [ "${force}" = "no" ] && scripts="no"
-  [ -d "${INSTALL}/pics" ] || pics="yes"
+  # Either layout counts as "the artwork is there". pics/ itself does not:
+  # 0.5.8b split it into banner/alt/icon/user, and an install that predates
+  # that has a pics/ with the old pics/GSC inside it - which S60tty2oled
+  # renames into the new folders on its next start, locally, without fetching
+  # 80MB again. Asking about pics/ alone would skip a fresh install whose
+  # pics/ holds nothing but the icons out of the scripts archive.
+  [ -d "${INSTALL}/pics/banner" ] || [ -d "${INSTALL}/pics/GSC" ] || pics="yes"
 
   if upstream_installed; then
     die "Upstream tty2oled is installed in ${FAT}/tty2oled. tty2oled+ replaces it

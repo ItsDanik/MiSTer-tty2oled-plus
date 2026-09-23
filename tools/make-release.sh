@@ -93,17 +93,22 @@ pack() {  # pack <archive> <dir under STAGE>
 # --- Scripts, tools, defaults, icons, index --------------------------------
 say "Packing tty2oledplus.tar.gz"
 P="${STAGE}/tty2oledplus"
-mkdir -p "${P}/titleindex" "${P}/pics_pri/ICON"
+mkdir -p "${P}/titleindex" "${P}/pics/icon"
 for f in ${MANIFEST_FILES} ${MANIFEST_DEFAULTS}; do cp -p "${f}" "${P}/"; done
 for f in ${MANIFEST_TOOLS} ${MANIFEST_MENU}; do cp -p "${f}" "${P}/$(basename "${f}")"; done
 cp -p "${INDEX}"/*.idx "${P}/titleindex/"
-cp -p pics_pri/ICON/*.gsc "${P}/pics_pri/ICON/"
+cp -p "${PICS}/icon"/*.gsc "${P}/pics/icon/"
 pack "${OUT}/tty2oledplus.tar.gz" tty2oledplus
 
+# The banners and their alternatives. pics/icon ships in the scripts archive
+# above instead - 27 small files that every update should carry, against 80MB
+# of pack that is fetched only when it is missing. pics/user ships in neither:
+# it is the user's own and no release may write into it.
 say "Packing tty2oledplus-pics.tar.gz"
 rm -rf "${P}"
-mkdir -p "${P}"
-cp -rp "${PICS}" "${P}/pics"
+mkdir -p "${P}/pics/user"
+cp -rp "${PICS}/banner" "${P}/pics/banner"
+cp -rp "${PICS}/alt" "${P}/pics/alt"
 pack "${OUT}/tty2oledplus-pics.tar.gz" tty2oledplus
 
 # --- Firmware --------------------------------------------------------------

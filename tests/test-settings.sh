@@ -331,5 +331,25 @@ ok "and exits 2, as MiSTer's own editor does" "${RC}" "2"
 ok "having changed nothing"          "$(ini_get "${USR}" TRANSITION)" "5"
 
 # ---------------------------------------------------------------------------
+section "the effect list is the ini's, not a copy that drifts from it"
+# ---------------------------------------------------------------------------
+# The editor is how most people will ever pick a transition, so an effect the
+# ini documents and the editor cannot offer is as good as not existing - the
+# same "a setting in the ini is not a setting that works" the key checks
+# above are there for, one level down.
+INI_EFFECTS="$(sed -n '/^# How one picture replaces the last/,/^TRANSITION=/p' "${ROOT}/tty2oled-system.ini" \
+               | grep -oE '(^#|[[:space:]]) +-?[0-9]+  [A-Za-z]' | grep -oE -- '-?[0-9]+' | sort -n | tr '\n' ' ')"
+SPEC_EFFECTS="$(printf '%s' "${TRANSITION_SPEC}" | tr ';' '\n' | cut -d= -f1 | sort -n | tr '\n' ' ')"
+ok "the editor offers exactly what the ini lists" "${SPEC_EFFECTS}" "${INI_EFFECTS}"
+ok "the fade-slides among them" \
+   "$(printf '%s' "${SPEC_EFFECTS}" | grep -oE '\b3[0-9]\b' | tr '\n' ' ')" \
+   "30 31 32 33 34 35 36 37 38 39 "
+# Every one needs a label a person can choose between - a bare number in the
+# menu tells nobody which way the picture goes.
+ok "and every one has a name" \
+   "$(printf '%s' "${TRANSITION_SPEC}" | tr ';' '\n' | grep -cE '^-?[0-9]+=.+')" \
+   "$(printf '%s' "${TRANSITION_SPEC}" | tr ';' '\n' | grep -c .)"
+
+# ---------------------------------------------------------------------------
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n' "${PASS}" "${FAIL}"
 [ "${FAIL}" -eq 0 ]

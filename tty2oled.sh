@@ -146,6 +146,71 @@ sendrotation() {
   fi
 }
 
+# Locate a core's 256x64 banner, and set BANNERFILE to it. Returns 1 when
+# there is none, which is the caller's cue to send the core name as text.
+#
+# Two folders hold banners since 0.5.8b: pics/banner, the artwork pack's, which
+# every update replaces, and pics/user, yours, which no update ever touches.
+# PRIORITIZE_USER_BANNERS decides which is searched first and the other is the
+# fallback. One artwork format, one folder each: upstream searched five -
+# GSC_US, XBM_US, GSC, XBM, XBM_TEXT - because .gsc was a later addition that
+# never finished replacing the 1bpp .xbm it was introduced beside. This fork
+# finished it (CHANGELOG 0.4.10b) and then flattened what was left.
+#
+# The core name is trimmed a character at a time until something matches, so a
+# core whose name carries a suffix still finds the base picture. The trimming
+# runs per folder rather than across both, which makes the priority absolute:
+# a banner of yours for a shorter prefix beats the pack's longer match, rather
+# than the most specific filename winning wherever it happens to live. That is
+# what PRIORITIZE_USER_BANNERS says on the tin, and the alternative is a rule
+# nobody could predict from the setting's name - your MegaDrive.gsc quietly
+# ignored because the pack happens to ship a MegaDriveX.
+#
+# "exact" turns the trimming off, for the names that are looked up whole:
+# update_all is one, and the prefix search would happily settle on some
+# unrelated arcade set starting with "upd".
+findbanner() {
+  local core="${1}" mode="${2:-}" first="${userbannerfolder}" second="${bannerfolder}" d c
+  BANNERFILE=""
+  [ -n "${core}" ] || return 1
+  if [ "${PRIORITIZE_USER_BANNERS:-yes}" != "yes" ]; then
+    first="${bannerfolder}"; second="${userbannerfolder}"
+  fi
+  for d in "${first}" "${second}"; do
+    [ -n "${d}" ] || continue
+    if [ "${mode}" = "exact" ]; then
+      [ -e "${d}/${core}.gsc" ] && { BANNERFILE="${d}/${core}.gsc"; return 0; }
+      continue
+    fi
+    for ((c = "${#core}"; c >= 1; c--)); do
+      [ -e "${d}/${core:0:$c}.gsc" ] && { BANNERFILE="${d}/${core:0:$c}.gsc"; return 0; }
+    done
+  done
+  return 1
+}
+
+# Dice between a banner and its alternatives, and print the winner.
+#
+# The alternatives are <base>_alt1.gsc, _alt2.gsc ... in pics/alt - the pack's
+# - and beside your own banner in pics/user. Named after the picture that was
+# actually found rather than after the core, since that may have been a
+# trimmed prefix. The primary is one of the faces of the die, which is what
+# upstream's "RANDOM % (count + 1)" amounted to.
+#
+# Off by default here, unlike upstream: the pack's alternatives are a
+# different take on a system rather than a variant of one picture, and a core
+# that looked one way yesterday looking another way today reads as a fault.
+randomalt() {
+  local pic="${1}" base f
+  if [ "${RANDOMIZE_ALT_BANNERS:-no}" != "yes" ]; then printf '%s' "${pic}"; return 0; fi
+  base="$(basename "${pic}" .gsc)"
+  local -a cands=("${pic}")
+  for f in "${altbannerfolder}/${base}"_alt*.gsc "${userbannerfolder}/${base}"_alt*.gsc; do
+    [ -e "${f}" ] && cands+=("${f}")
+  done
+  printf '%s' "${cands[$((RANDOM % ${#cands[@]}))]}"
+}
+
 # Send-Picture-Data function
 senddata() {
   newcore="${1}"
@@ -176,33 +241,8 @@ senddata() {
     return 0
   fi
 
-  # One artwork format, one folder each. Upstream searched five - GSC_US,
-  # XBM_US, GSC, XBM, XBM_TEXT - because .gsc was a later addition that never
-  # finished replacing the 1bpp .xbm it was introduced beside. This fork
-  # finished it: the fifteen pictures that only ever existed as .xbm were
-  # converted, and the rest of XBM was 351 duplicates of a .gsc that was
-  # already found first. See CHANGELOG 0.4.10b.
-  if [ -e "${picturefolder_pri}/${newcore}.gsc" ]; then  # yours wins
-    picfnam="${picturefolder_pri}/${newcore}.gsc"
-  else
-    # Trim the core name a character at a time until something matches, so a
-    # core whose name carries a suffix still finds the base picture.
-    for ((c = "${#newcore}"; c >= 1; c--)); do
-      picfnam="${picturefolder}/GSC/${newcore:0:$c}.gsc"
-      [ -e "${picfnam}" ] && break
-    done
-  fi
-  if [ -e "${picfnam}" ]; then               # Exist?
-    if [ "${USE_RANDOM_ALT}" = "yes" ]; then # Use _altX pictures?
-      SAVEIFS="${IFS}"
-      IFS=$'\n'
-      ALTPICNUM=$(find $(dirname "${picfnam}") -name $(basename "${picfnam%.*}_alt")* | wc -l)
-      IFS="${SAVEIFS}"
-      if [ "${ALTPICNUM}" -gt "0" ]; then             # If more than 0 _altX pictures
-        ALTPICRND=$((${RANDOM} % $((ALTPICNUM + 1)))) # then dice between 0 and count of found _altX pictures
-         [ "${ALTPICRND}" -gt 0 ] && picfnam="${picfnam%.*}_alt"${ALTPICRND}".gsc"
-      fi # If 0 then original picture, otherwise _altX
-    fi
+  if findbanner "${newcore}"; then
+    picfnam="$(randomalt "${BANNERFILE}")"
     dbug "Sending: CMDCOR,${1},${TRANSITION}"
     echo "CMDCOR,${1},${TRANSITION}" >${TTYDEV}    # Send CORECHANGE" Command and Corename
     sleep ${WAITSECS}                              # sleep needed here ?!
@@ -237,19 +277,20 @@ metakindnum() {
   esac
 }
 
-# Locate the 86x64 console icon for a core, honouring the _pri override folder
-# so hand-made icons can replace generated ones one at a time.
+# Locate the 86x64 console icon for a core. One folder, pics/icon, named by
+# core name - not by the display name, which is why META_ICON is set from
+# CORENAME rather than from display_corename.
+#
+# There is no user override folder for icons the way there is for banners:
+# pics/user holds 256x64 banners named after the core, and an 86x64 icon of
+# the same name in there would be indistinguishable from one until the
+# firmware read 2752 bytes of an 8192-byte picture.
 findicon() {
   local key="${1}"
   ICONFILE=""
   [ -n "${key}" ] || return 1
-  if [ -e "${iconfolder_pri}/${key}.gsc" ]; then
-    ICONFILE="${iconfolder_pri}/${key}.gsc"
-  elif [ -e "${iconfolder}/${key}.gsc" ]; then
-    ICONFILE="${iconfolder}/${key}.gsc"
-  else
-    return 1
-  fi
+  [ -e "${iconfolder}/${key}.gsc" ] || return 1
+  ICONFILE="${iconfolder}/${key}.gsc"
   return 0
 }
 
@@ -447,6 +488,14 @@ DEFERRED_DONE="no"
 deferred_setup() {
   [ "${DEFERRED_DONE}" = "yes" ] && return 0
   DEFERRED_DONE="yes"
+
+  # USE_RANDOM_ALT became RANDOMIZE_ALT_BANNERS in 0.5.8b, and the default
+  # turned over with the rename. The system ini no longer sets the old name,
+  # so if it is set at all it came from the user's own ini - and a user who
+  # asked for the dice deserves to be told they are not being rolled.
+  if [ -n "${USE_RANDOM_ALT:-}" ]; then
+    echo "tty2oled: USE_RANDOM_ALT is gone - set RANDOMIZE_ALT_BANNERS (yes/no) in tty2oled-user.ini instead. Using ${RANDOMIZE_ALT_BANNERS:-no}."
+  fi
 
   checkversion												# Scripts and firmware in step?
   sendtime													# Set time and date
@@ -715,7 +764,7 @@ sendbusy() {
 # the name as text, which is what the firmware does with any line it does not
 # recognise - the same thing a missing core banner gets.
 sendupdateall() {
-  local name="update_all" pic="" f=""
+  local name="update_all" pic=""
   # Out of the split layout / card first, or the card alternation would
   # keep drawing the previous game over the picture.
   if [ "${SHOW_METADATA}" = "yes" ]; then
@@ -724,9 +773,7 @@ sendupdateall() {
     sleep ${WAITSECS}
     META_WIRE_LAST="OFF"
   fi
-  for f in "${picturefolder_pri}/${name}.gsc" "${picturefolder}/GSC/${name}.gsc"; do
-    [ -e "${f}" ] && { pic="${f}"; break; }
-  done
+  findbanner "${name}" exact && pic="${BANNERFILE}"
   if [ -n "${pic}" ]; then
     dbug "Sending: CMDCOR,${name},${TRANSITION} (${pic})"
     echo "CMDCOR,${name},${TRANSITION}" >${TTYDEV}

@@ -265,13 +265,13 @@ int main(int argc, char **argv) {
   scene_console("console-nes",
                 "CMDMETA,2,0,2,The Legend of Zelda"
                 "|System=Nintendo NES|Year=1987|Company=Nintendo|Region=USA",
-                "pics_pri/ICON/NES.gsc");
+                "pics/icon/NES.gsc");
 
   // The same layout on the other side - what FLIP_MINUTES swaps to.
   scene_console("console-flipped",
                 "CMDMETA,2,0,2,Sonic The Hedgehog"
                 "|System=Mega Drive|Year=1992|Company=Sega|Genre=Action",
-                "pics_pri/ICON/MegaDrive.gsc", true);
+                "pics/icon/MegaDrive.gsc", true);
 
   // Five fields into four rows: the last two take turns under the pinned pair,
   // and the pips by the header count the pages. Caught mid-marquee, since the
@@ -279,7 +279,7 @@ int main(int argc, char **argv) {
   scene_console("console-paging",
                 "CMDMETA,2,0,2,Castlevania Aria of Sorrow"
                 "|System=Game Boy Advance|Year=2003|Company=Konami|Region=USA|Format=gba",
-                "pics_pri/ICON/GBA.gsc");
+                "pics/icon/GBA.gsc");
 
   // Arcade card, both pages: the grid, then the wide fields under a repeat of
   // the pinned row. 2 pinned, 8 paired two to a row.
@@ -293,8 +293,8 @@ int main(int argc, char **argv) {
 
   // The artwork the card alternates with, and a computer core's banner - which
   // is the whole of what a computer core shows.
-  scene_picture("arcade-art",  "pics/GSC/nbajam.gsc");
-  scene_picture("computer-art", "pics/GSC/C64.gsc");
+  scene_picture("arcade-art",  "pics/banner/nbajam.gsc");
+  scene_picture("computer-art", "pics/banner/C64.gsc");
 
   // Power-on: the built-in logo, the version, and the comet mid-run.
   scene_boot("boot", nullptr, 150);

@@ -1607,6 +1607,187 @@ int main() {
         tfFadeMs = TFADE_MS_DEFAULT; tfBlankMs = TBLANK_MS_DEFAULT;
     }
 
+    section("fade-slide: the picture drifts as it fades, and lands centred");
+    {
+        auto at = [](unsigned long ms) { g_fakeMillis += ms; contrast_tick(); transition_tick(); };
+        static uint8_t oldPic[8192], newPic[8192];
+        auto setPx = [](uint8_t *b, int x, int y, uint8_t v) {
+            uint8_t &t = b[y * 128 + (x >> 1)];
+            t = (x & 1) ? (uint8_t)((t & 0xF0) | v) : (uint8_t)((t & 0x0F) | (v << 4));
+        };
+        auto getPx = [](const uint8_t *b, int x, int y) -> int {
+            uint8_t t = b[y * 128 + (x >> 1)];
+            return (x & 1) ? (int)(t & 0x0F) : (int)(t >> 4);
+        };
+        // A cross on black: one lit column and one lit row, so where the
+        // picture has got to can be read straight off the panel on either
+        // axis. Row 5 and column 5 carry only the one bar each.
+        auto cross = [&](uint8_t *b, int cx, int cy) {
+            memset(b, 0, 8192);
+            for (int y = 0; y < 64; y++)  setPx(b, cx, y, 15);
+            for (int x = 0; x < 256; x++) setPx(b, x, cy, 15);
+        };
+        auto colNow = [&]() { for (int x = 0; x < 256; x++) if (getPx(oled.buf, x, 5)) return x; return -1; };
+        auto rowNow = [&]() { for (int y = 0; y < 64; y++) if (getPx(oled.buf, 5, y)) return y; return -1; };
+
+        cross(oldPic, 100, 30);
+        cross(newPic, 100, 30);
+        fadeMs = 0; contrast = 200; contrast_jump(200); veil_fadeOver(255, 0);
+        tfFadeMs = 1600; tfBlankMs = 500;          // 100ms a palette step
+        srcBin = newPic; actPicType = GSC;
+
+        // --- 30: one pixel left a step -------------------------------------
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        oled_transition(30);
+        okBool("30 is a fade, not a wipe", tfState == TF_OUT, true);
+        at(100);
+        okInt("one step out, one pixel left", colNow(), 99);
+        at(400);
+        okInt("five steps, five pixels", colNow(), 95);
+        okInt("and nothing has moved vertically", rowNow(), 30);
+        at(900);
+        okInt("fourteen steps, fourteen pixels", colNow(), 86);
+
+        // The pre-offset: the fade-in starts a whole travel's worth out on the
+        // *opposite* side and slides back, so the movement reads as one
+        // continuous drift rather than a bounce - and ends centred.
+        at(200); at(500);                          // last steps out, then the blank
+        okBool("black in between", tfState == TF_IN, true);
+        at(200);                                   // two steps in: level 15 - 14 = 1
+        okInt("coming in from the right, 14 steps to go", colNow(), 114);
+        at(400);
+        okInt("still sliding the same way", colNow(), 110);
+        at(1000);
+        okInt("and it lands centred", colNow(), 100);
+        okBool("exactly the picture it was given", memcmp(oled.buf, newPic, sizeof(newPic)) == 0, true);
+        okBool("finished", tfState == TF_IDLE, true);
+        okInt("at full contrast", (int)oled.contrastLevel, 200);
+
+        // --- 31: two pixels a step -----------------------------------------
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        oled_transition(31);
+        at(100);
+        okInt("31 moves two pixels a step", colNow(), 98);
+        at(400);
+        okInt("so five steps is ten pixels", colNow(), 90);
+        at(1100); at(500); at(200);
+        okInt("and it comes in from twice as far out", colNow(), 128);
+        at(1400);
+        okBool("landing centred all the same", memcmp(oled.buf, newPic, sizeof(newPic)) == 0, true);
+
+        // --- 32..37: the other three directions ----------------------------
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        oled_transition(32);
+        at(300);
+        okInt("32 slides right", colNow(), 103);
+        okInt("and not up or down", rowNow(), 30);
+        at(1300); at(500); at(1600); at(0);
+
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        oled_transition(34);
+        at(300);
+        okInt("34 slides up", rowNow(), 27);
+        okInt("and not left or right", colNow(), 100);
+        at(1300); at(500); at(1600); at(0);
+
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        oled_transition(36);
+        at(300);
+        okInt("36 slides down", rowNow(), 33);
+        at(1300); at(500); at(200);
+        okInt("coming in from above, 14 steps to go", rowNow(), 16);
+        at(1400);
+        okBool("centred again", memcmp(oled.buf, newPic, sizeof(newPic)) == 0, true);
+
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        oled_transition(37);
+        at(300);
+        okInt("37 is the same at two pixels a step", rowNow(), 36);
+        at(1300); at(500); at(1600); at(0);
+
+        // --- 38, 39: a direction per transition, not per step ---------------
+        // Each is run enough times to see every direction come up, and each
+        // run must be one axis only - a diagonal is not one of the ten.
+        int seen1 = 0, seen2 = 0, oddSpeed = 0, diagonal = 0;
+        for (int i = 0; i < 200; i++) {
+            oled_transition(38);
+            int dx = tfSlideDX, dy = tfSlideDY;
+            if (dx && dy) diagonal++;
+            if (abs(dx) + abs(dy) != 1) oddSpeed++;
+            seen1 |= (dx < 0) | ((dx > 0) << 1) | ((dy < 0) << 2) | ((dy > 0) << 3);
+            transition_cancel();
+            oled_transition(39);
+            dx = tfSlideDX; dy = tfSlideDY;
+            if (dx && dy) diagonal++;
+            if (abs(dx) + abs(dy) != 2) oddSpeed++;
+            seen2 |= (dx < 0) | ((dx > 0) << 1) | ((dy < 0) << 2) | ((dy > 0) << 3);
+            transition_cancel();
+        }
+        okInt("38 comes up in all four directions", seen1, 15);
+        okInt("39 too", seen2, 15);
+        okInt("the dice never changes the speed", oddSpeed, 0);
+        okInt("and never picks a diagonal", diagonal, 0);
+
+        // One direction for the whole transition. A picture that changed its
+        // mind every sixteenth of a second would be a shake, not a slide.
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        oled_transition(38);
+        int dx0 = tfSlideDX, dy0 = tfSlideDY;
+        for (int i = 0; i < 16; i++) at(100);
+        at(500);
+        for (int i = 0; i < 16; i++) at(100);
+        okBool("the direction holds for the whole transition",
+               tfSlideDX == dx0 && tfSlideDY == dy0, true);
+        okBool("and it still lands centred", memcmp(oled.buf, newPic, sizeof(newPic)) == 0, true);
+
+        // --- the plain Fade does not move ----------------------------------
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        oled_transition(EFFECT_FADE);
+        okBool("-2 clears any slide left over", tfSlideDX == 0 && tfSlideDY == 0, true);
+        at(500);
+        okInt("and stays where it is", colNow(), 100);
+        at(1100); at(500); at(1600); at(0);
+
+        // A wipe cancels the slide with everything else, so the next plain
+        // Fade cannot inherit one.
+        oled_transition(30);
+        oled_transition(7);
+        okBool("a wipe clears it too", tfSlideDX == 0 && tfSlideDY == 0, true);
+        veil_fadeOver(255, 0);
+
+        // --- turning around mid fade-in ------------------------------------
+        // The picture carries on from where it is rather than jumping to the
+        // mirror of its own position, which is what a base of 0 would do.
+        memcpy(oled.buf, oldPic, sizeof(oldPic));
+        oled_transition(30);
+        at(1600); at(500); at(800);                // fading in, halfway: 8 to go
+        okInt("halfway in, eight pixels out", colNow(), 108);
+        oled_transition(30);
+        at(100);
+        okInt("turned around: one more pixel the same way, no jump", colNow(), 107);
+        at(700); at(0); at(500); at(1600);
+        okBool("and it still completes", tfState == TF_IDLE, true);
+        okBool("centred", memcmp(oled.buf, newPic, sizeof(newPic)) == 0, true);
+
+        // --- what the wire is allowed to ask for ---------------------------
+        okInt("effect_clamp lets the first fade-slide through", effect_clamp(30), 30);
+        okInt("and the last",                                  effect_clamp(39), 39);
+        okInt("the gap below them pins to maxEffect",           effect_clamp(29), (int)maxEffect);
+        okInt("and anything above them too",                    effect_clamp(40), (int)maxEffect);
+        okInt("-2 is still the Fade",                           effect_clamp(-2), EFFECT_FADE);
+        okInt("and anything under it is random",                effect_clamp(-3), EFFECT_RANDOM);
+        okBool("a fade-slide counts as a fade for the card",    effect_is_fade(30), true);
+        okBool("so does -2",                                    effect_is_fade(EFFECT_FADE), true);
+        okBool("a wipe does not",                               effect_is_fade(7), false);
+        okInt("the numbers are the ini's",   EFFECT_SLIDE_FIRST, 30);
+        okInt("ten of them",                 EFFECT_SLIDE_COUNT, 10);
+        okBool("clear of the wipes",         EFFECT_SLIDE_FIRST > (int)maxEffect, true);
+
+        srcBin = logoBin;
+        tfFadeMs = TFADE_MS_DEFAULT; tfBlankMs = TBLANK_MS_DEFAULT;
+        tfSlideDX = tfSlideDY = 0;
+    }
+
     section("the card alternates with TRANSITION, not at random");
     {
         tfFadeMs = 0; tfBlankMs = 0;

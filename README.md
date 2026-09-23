@@ -176,7 +176,7 @@ So to change something the editor does not cover, put it in the user ini and
 restart the display:
 
 ```sh
-echo 'USE_RANDOM_ALT="no"' >> /media/fat/tty2oledplus/tty2oled-user.ini
+echo 'RANDOMIZE_ALT_BANNERS="yes"' >> /media/fat/tty2oledplus/tty2oled-user.ini
 /media/fat/tty2oledplus/S60tty2oled restart
 ```
 
@@ -204,7 +204,7 @@ sent over when it restarts, so nothing needs reflashing.
 | `DIM_FADE_MS` | `6000` | How long going dim takes, `0`–`10000` ms — slow enough not to notice. Waking takes `CONTRAST_FADE_MS`. |
 | `DIM_WAKE` | `-1` | Brightness to wake to. `-1` means `CONTRAST`. |
 | `FLIP_MINUTES` | `5` | How often the console layout swaps sides, so no part of the panel stays lit. The swap uses `TRANSITION`. `0` never swaps. |
-| `TRANSITION` | `-2` | How one picture replaces the last. `-2` cross-fades, `-1` picks a random wipe each time, `0` none, `1`–`23` one particular wipe — the system ini lists all of them by name. |
+| `TRANSITION` | `-2` | How one picture replaces the last. `-2` cross-fades, `-1` picks a random wipe each time, `0` none, `1`–`23` one particular wipe, `30`–`39` a cross-fade that also slides the picture — the system ini and the settings editor list all of them by name. |
 | `TRANSITION_FADE_MS` | `800` | With `-2`: each fade, out and in. `0`–`4000` ms. |
 | `TRANSITION_BLANK_MS` | `1000` | With `-2`: how long the panel stays black between them. `0`–`4000` ms. |
 | `BOOTSCREEN_AS_MENU` | `yes` | The boot screen doubles as the menu's picture. `no` shows the artwork pack's `MENU` picture instead. |
@@ -213,6 +213,8 @@ sent over when it restarts, so nothing needs reflashing.
 | `SELF_UPDATE_SCREEN` | `yes` | The same, while tty2oled+ updates itself. |
 | `ROTATE` | `no` | Turn the whole display 180°. |
 | `USE_NAMES_TXT` | `yes` | Name cores as your MiSTer menu names them. |
+| `PRIORITIZE_USER_BANNERS` | `yes` | Look in `pics/user` before the artwork pack, so a picture you put there replaces the shipped one. `no` searches the pack first. |
+| `RANDOMIZE_ALT_BANNERS` | `no` | Where a core has `_altN` alternatives, dice between them on every load — upstream's behaviour. Off shows the same picture every time. |
 | `GAME_ROOTS` | SD, `usb0`–`usb5`, `cifs` | Where your games live, searched in order. |
 
 `coretypes.ini`, in the same folder, says which cores are consoles, which are
@@ -241,9 +243,32 @@ your computer; storing it is done on the MiSTer:
 
 Storing one takes a few seconds and no reflash.
 
+### Artwork
+
+All of it lives under `/media/fat/tty2oledplus/pics/`, one kind per folder:
+
+| folder | what | size |
+|---|---|---|
+| `pics/banner` | the core artwork pack — the full-screen picture | 256x64 |
+| `pics/alt` | its alternatives, `<core>_alt1.gsc`, `_alt2.gsc` … | 256x64 |
+| `pics/icon` | the console icons, for the split layout | 86x64 |
+| `pics/user` | **yours** | 256x64 |
+
+The first three are the release's and are replaced by every update. `pics/user`
+is yours and no update ever touches it — which is what makes it the place to
+put a picture of your own, rather than editing `pics/banner` and having the
+next release undo it. A file there named after the core replaces the pack's
+(`PRIORITIZE_USER_BANNERS`, on by default).
+
+A core with alternatives shows the same one every time unless you turn
+`RANDOMIZE_ALT_BANNERS` on, which dices between the picture and its
+alternatives on each load. Upstream does that by default; this fork does not,
+because a core that looked one way yesterday looking another way today reads
+as a fault rather than a feature.
+
 ### Icons
 
-`/media/fat/tty2oledplus/pics_pri/ICON/` holds the icon drawn for each system —
+`pics/icon` holds the icon drawn for each system —
 26 of them, covering the systems most people play:
 
 > 3DO · Atari 2600 / 5200 / 7800 · Atari Lynx · Game Boy · Game Boy Color ·
@@ -259,11 +284,11 @@ MiSTer names it: `MegaDrive.gsc`, `GBA.gsc`, `NES.gsc`.
 
 ```sh
 ./tools/png2gsc.py --out MegaDrive.gsc megadrive.png
-# then copy it into /media/fat/tty2oledplus/pics_pri/ICON/
+# then copy it into /media/fat/tty2oledplus/pics/icon/
 ```
 
 Core artwork — the full-screen picture — is **256x64**, named the same way, and
-goes in `/media/fat/tty2oledplus/pics/GSC/`:
+goes in `/media/fat/tty2oledplus/pics/user/`:
 
 ```sh
 ./tools/png2gsc.py --banner --out MegaDrive.gsc art.png

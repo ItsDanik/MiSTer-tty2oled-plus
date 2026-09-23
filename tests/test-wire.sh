@@ -14,7 +14,7 @@ HERE="$(cd "$(dirname "${0}")" && pwd)"
 ROOT="$(dirname "${HERE}")"
 FIX="${HERE}/fixtures"
 TMP="${FIX}/tmp"
-mkdir -p "${TMP}" "${TMP}/pics/ICON" "${TMP}/pics_pri/ICON"
+mkdir -p "${TMP}" "${TMP}/pics/icon" "${TMP}/pics/banner" "${TMP}/pics/alt" "${TMP}/pics/user"
 
 # Some containers have no xxd; tests/bin provides a stand-in. MiSTer has the
 # real thing, which is what the daemon uses.
@@ -60,8 +60,10 @@ SHOW_METADATA="yes"
 METADATA_INTERVAL="12"
 debug="false"
 debugfile="${TMP}/debuglog"
-iconfolder="${TMP}/pics/ICON"
-iconfolder_pri="${TMP}/pics_pri/ICON"
+iconfolder="${TMP}/pics/icon"
+bannerfolder="${TMP}/pics/banner"
+altbannerfolder="${TMP}/pics/alt"
+userbannerfolder="${TMP}/pics/user"
 
 dbug() { :; }
 
@@ -171,22 +173,120 @@ ok "icon payload is exactly 2752 bytes" \
    "$(sync_capture; stat -c%s "${CAPTURE}" | awk '{print $1-8}')" "2752"
 contains "CMDICON sent" "$(sync_capture; head -c 7 "${CAPTURE}")" "CMDICON"
 
-# ---------------------------------------------------------------------------
-section "console: pics_pri icon overrides the generated one"
-# ---------------------------------------------------------------------------
-{
-  echo "#define icon_width 86"; echo "#define icon_height 64"
-  echo "static unsigned char icon_bits[] = {"
-  head -c 2752 /dev/zero | xxd -p
-} > "${iconfolder_pri}/SNES.gsc"
-findicon "SNES"
-ok "pri folder wins" "${ICONFILE}" "${iconfolder_pri}/SNES.gsc"
-rm -f "${iconfolder_pri}/SNES.gsc"
-findicon "SNES"
-ok "falls back to generated" "${ICONFILE}" "${iconfolder}/SNES.gsc"
-
 findicon "NoSuchCore"
 ok "missing icon returns empty" "${ICONFILE}" ""
+
+# An icon has one home. pics/user is 256x64 banners named after the core, so
+# an 86x64 file of the same name in there is indistinguishable from one until
+# the firmware has read 2752 bytes of an 8192-byte picture.
+printf '#\n#\n#\n00\n' > "${userbannerfolder}/SNES.gsc"
+findicon "SNES"
+ok "a user banner is never read as an icon" "${ICONFILE}" "${iconfolder}/SNES.gsc"
+rm -f "${userbannerfolder}/SNES.gsc"
+
+# ---------------------------------------------------------------------------
+section "banners: pics/user, pics/banner and the order between them"
+# ---------------------------------------------------------------------------
+# The folders were flattened in 0.5.8b. pics/user is the user's own and is the
+# one folder no update writes into, which is what makes it the right place for
+# a replacement picture - editing pics/banner is undone by the next release.
+printf '#\n#\n#\n00\n' > "${bannerfolder}/NES.gsc"
+printf '#\n#\n#\n11\n' > "${userbannerfolder}/NES.gsc"
+
+PRIORITIZE_USER_BANNERS="yes"
+findbanner "NES"
+ok "yours wins by default" "${BANNERFILE}" "${userbannerfolder}/NES.gsc"
+PRIORITIZE_USER_BANNERS="no"
+findbanner "NES"
+ok "and the pack wins when told to" "${BANNERFILE}" "${bannerfolder}/NES.gsc"
+rm -f "${userbannerfolder}/NES.gsc"
+findbanner "NES"
+ok "either way the other is the fallback" "${BANNERFILE}" "${bannerfolder}/NES.gsc"
+PRIORITIZE_USER_BANNERS="yes"
+findbanner "NES"
+ok "both ways round" "${BANNERFILE}" "${bannerfolder}/NES.gsc"
+
+# The core name is trimmed a character at a time, so a core whose name carries
+# a suffix still finds the base picture.
+findbanner "NESabc"
+ok "a longer core name trims down to the base picture" "${BANNERFILE}" "${bannerfolder}/NES.gsc"
+
+# ...and the trimming runs per folder rather than across both, which is what
+# makes the priority absolute. Searching both folders at each length instead
+# would let the pack's longer match win over a shorter banner of yours - not
+# wrong exactly, but not something anyone could predict from a setting called
+# PRIORITIZE_USER_BANNERS.
+printf '#\n#\n#\n11\n' > "${userbannerfolder}/NES.gsc"
+printf '#\n#\n#\n11\n' > "${bannerfolder}/NESabc.gsc"
+findbanner "NESabc"
+ok "your shorter name still beats the pack's exact one" "${BANNERFILE}" "${userbannerfolder}/NES.gsc"
+PRIORITIZE_USER_BANNERS="no"
+findbanner "NESabc"
+ok "and the other way round when the pack comes first" "${BANNERFILE}" "${bannerfolder}/NESabc.gsc"
+PRIORITIZE_USER_BANNERS="yes"
+rm -f "${bannerfolder}/NESabc.gsc"
+rm -f "${userbannerfolder}/NES.gsc"
+
+findbanner "NoSuchCore"
+ok "no banner at all returns empty" "${BANNERFILE}" ""
+
+# "exact" turns the trimming off. update_all is looked up whole, or the prefix
+# search settles on some unrelated arcade set starting with "upd".
+printf '#\n#\n#\n00\n' > "${bannerfolder}/upd.gsc"
+findbanner "update_all" exact
+ok "an exact lookup does not trim" "${BANNERFILE}" ""
+findbanner "update_all"
+ok "and the trimming one would have" "${BANNERFILE}" "${bannerfolder}/upd.gsc"
+rm -f "${bannerfolder}/upd.gsc"
+
+# ---------------------------------------------------------------------------
+section "banners: the alternatives, and that they are off by default"
+# ---------------------------------------------------------------------------
+printf '#\n#\n#\n00\n' > "${altbannerfolder}/NES_alt1.gsc"
+printf '#\n#\n#\n00\n' > "${altbannerfolder}/NES_alt2.gsc"
+
+unset RANDOMIZE_ALT_BANNERS
+PICKED=""
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  PICKED="${PICKED}$(randomalt "${bannerfolder}/NES.gsc")\n"
+done
+ok "off by default: twenty loads, one picture" \
+   "$(printf "${PICKED}" | sort -u | wc -l | tr -d ' ')" "1"
+ok "and it is the banner itself" \
+   "$(randomalt "${bannerfolder}/NES.gsc")" "${bannerfolder}/NES.gsc"
+
+# On, every candidate has to be reachable - the primary included, which is
+# what upstream's "RANDOM % (count + 1)" amounted to. Twenty rolls of a fair
+# three-sided die miss a face about one time in 3000, and RANDOM is seeded
+# from the shell, so this is run until it has seen them all or given up.
+RANDOMIZE_ALT_BANNERS="yes"
+PICKED=""
+for i in $(seq 1 60); do
+  PICKED="${PICKED}$(randomalt "${bannerfolder}/NES.gsc")\n"
+done
+ok "on: the banner and both alternatives all come up" \
+   "$(printf "${PICKED}" | sort -u | tr '\n' ' ')" \
+   "${altbannerfolder}/NES_alt1.gsc ${altbannerfolder}/NES_alt2.gsc ${bannerfolder}/NES.gsc "
+
+# Alternatives of your own live beside your own banner, since pics/alt is the
+# pack's and an update replaces it.
+printf '#\n#\n#\n11\n' > "${userbannerfolder}/NES_alt9.gsc"
+PICKED=""
+for i in $(seq 1 60); do
+  PICKED="${PICKED}$(randomalt "${bannerfolder}/NES.gsc")\n"
+done
+contains "yours in pics/user are diced in too" \
+   "$(printf "${PICKED}" | sort -u | tr '\n' ' ')" "${userbannerfolder}/NES_alt9.gsc"
+rm -f "${userbannerfolder}/NES_alt9.gsc"
+
+# The alternatives are named after the picture that was found, not after the
+# core - it may have been trimmed down to a prefix on the way.
+findbanner "NESabc"
+ok "a trimmed match still finds its own alternatives" \
+   "$(for i in $(seq 1 60); do randomalt "${BANNERFILE}"; echo; done | sort -u | wc -l | tr -d ' ')" "3"
+
+RANDOMIZE_ALT_BANNERS="no"
+rm -f "${altbannerfolder}/NES_alt1.gsc" "${altbannerfolder}/NES_alt2.gsc" "${bannerfolder}/NES.gsc"
 
 # ---------------------------------------------------------------------------
 section "computer cores turn metadata mode off"
@@ -420,13 +520,22 @@ ok "every other fade defaults to 0.8s" \
 section "the artwork pack is one folder of one format"
 # ---------------------------------------------------------------------------
 # 0.4.10b finished upstream's half-done migration from 1bpp .xbm to 4bpp .gsc.
-# The daemon looks in pics_pri and pics/GSC and nowhere else now, so anything
-# that is not a .gsc in the pack is unreachable by construction, and a .gsc
-# that does not decode to exactly 8192 bytes is dropped by the firmware as a
-# truncated transfer - silently, which is why it is worth a test.
-ok "pics/ holds only GSC" "$(ls "${ROOT}/pics")" "GSC"
-ok "and nothing in it but .gsc files" \
-   "$(find "${ROOT}/pics" -type f ! -name '*.gsc' | head -n3 | tr '\n' ' ')" ""
+# The daemon looks in pics/user, pics/banner, pics/alt and pics/icon and
+# nowhere else, so anything that is not a .gsc in the pack is unreachable by
+# construction, and a .gsc that does not decode to exactly 8192 bytes is
+# dropped by the firmware as a truncated transfer - silently, which is why it
+# is worth a test.
+ok "pics/ holds the four folders" "$(ls "${ROOT}/pics" | tr '\n' ' ')" "alt banner icon user "
+ok "and nothing in them but .gsc files" \
+   "$(find "${ROOT}/pics/banner" "${ROOT}/pics/alt" "${ROOT}/pics/icon" -type f ! -name '*.gsc' | head -n3 | tr '\n' ' ')" ""
+
+# Alternatives are in pics/alt and nowhere else: the banner folder is one file
+# per core, which is what lets findbanner trim a core name down to a prefix
+# without ever landing on a variant.
+ok "no alternatives left among the banners" \
+   "$(ls "${ROOT}/pics/banner" | grep -c '_alt')" "0"
+ok "and the alt folder is nothing but" \
+   "$(ls "${ROOT}/pics/alt" | grep -vc '_alt[0-9]*\.gsc$')" "0"
 
 # The fifteen converted from .xbm, by name: these are the ones that would have
 # gone blank had the conversion been skipped, so they are pinned rather than
@@ -435,7 +544,7 @@ CONVERTED="A.ARKANOID a.astdelux A.COSMIC alienaru arkanoiduo"
 CONVERTED="${CONVERTED} contrae Cotton HyperOlympic jtsdram48 jtsdram96 quartet2a tokiob"
 BAD=""
 for n in ${CONVERTED} "Clean Sweep" "Diet Go Go" "Yie Ar Kung Fu"; do
-  f="${ROOT}/pics/GSC/${n}.gsc"
+  f="${ROOT}/pics/banner/${n}.gsc"
   if [ ! -e "${f}" ]; then BAD="${BAD} ${n}:missing"; continue; fi
   b="$(tail -n +4 "${f}" | xxd -r -p | wc -c)"
   [ "${b}" = "8192" ] || BAD="${BAD} ${n}:${b}"
@@ -448,7 +557,7 @@ ok "every picture converted from .xbm is a full 8192-byte .gsc" "${BAD}" ""
 # bytes of what renders as static, and it had been showing a transfer error for
 # as long as it has been in the pack. One python pass rather than 1905 pipes,
 # which is the difference between a second and a minute.
-SHORT="$(python3 - "${ROOT}/pics/GSC" <<'EOPY'
+SHORT="$(python3 - "${ROOT}/pics/banner" "${ROOT}/pics/alt" <<'EOPY'
 import glob, os, sys
 def decode(b):
     out = bytearray(); pending = None
@@ -460,7 +569,8 @@ def decode(b):
         else: pending = None
     return out
 bad = []
-for f in sorted(glob.glob(os.path.join(sys.argv[1], '*.gsc'))):
+files = [f for d in sys.argv[1:] for f in sorted(glob.glob(os.path.join(d, '*.gsc')))]
+for f in files:
     with open(f, 'rb') as fh:
         body = fh.read().split(b'\n', 3)
     n = len(decode(body[3])) if len(body) > 3 else 0
@@ -494,14 +604,13 @@ fi
 section "transitions: -2 reaches the firmware, and the ini lists every effect"
 # ---------------------------------------------------------------------------
 reset_capture
-TRANSITION="-2"; picturefolder="${TMP}/pics"; picturefolder_pri="${TMP}/pics_pri"
-USE_RANDOM_ALT="no"
+TRANSITION="-2"
+RANDOMIZE_ALT_BANNERS="no"
 newcore="NES"; META_ICON=""
-mkdir -p "${TMP}/pics/GSC"
-printf '#\n#\n#\n00\n' > "${TMP}/pics/GSC/NES.gsc"
+printf '#\n#\n#\n00\n' > "${TMP}/pics/banner/NES.gsc"
 senddata "NES" >/dev/null 2>&1
 contains "CMDCOR carries -2 as it is" "$(captured | grep -a '^CMDCOR')" "CMDCOR,NES,-2"
-rm -f "${TMP}/pics/GSC/NES.gsc"
+rm -f "${TMP}/pics/banner/NES.gsc"
 TRANSITION="-1"
 
 reset_capture
@@ -516,8 +625,23 @@ MAXEFFECT="$(sed -n 's/^const uint8_t minEffect=1, maxEffect=\([0-9]*\);.*/\1/p'
 CASES="$(awk '/^void oled_drawlogo\(uint8_t e\) *\{/{on=1} on && /^    case [0-9]+:/{n=$2; sub(":","",n); print n} on && /^    default:/{exit}' "${SKETCH}" | sort -n | tr '\n' ' ')"
 LISTED="$(sed -n '/^# How one picture replaces the last/,/^TRANSITION=/p' "${ROOT}/tty2oled-system.ini" \
           | grep -oE '(^#|[[:space:]]) +-?[0-9]+  [A-Za-z]' | grep -oE -- '-?[0-9]+' | sort -n | tr '\n' ' ')"
+# The fade-slides are not oled_drawlogo cases - they are the Fade with a
+# drift - so their numbers come from the header that defines them.
+FT="${ROOT}/MiSTer_SSD1322_USB/fadetransition.h"
+SLIDE_FIRST="$(sed -n 's/^#define EFFECT_SLIDE_FIRST  *\([0-9]*\).*/\1/p' "${FT}")"
+SLIDE_LAST="$(sed -n 's/^#define EFFECT_SLIDE_LAST  *\([0-9]*\).*/\1/p' "${FT}")"
+SLIDES="$(seq "${SLIDE_FIRST}" "${SLIDE_LAST}" | tr '\n' ' ')"
 ok "the sketch's effects are 1..maxEffect" "${CASES}" "$(seq 1 "${MAXEFFECT}" | tr '\n' ' ')"
-ok "and the ini lists exactly those, plus -2, -1 and 0" "${LISTED}" "-2 -1 0 ${CASES}"
+ok "and the ini lists exactly those, plus -2, -1, 0 and the fade-slides" \
+   "${LISTED}" "-2 -1 0 ${CASES}${SLIDES}"
+# They have to sit clear of the wipes, or adding a wipe would collide with one.
+ok "the fade-slides start above the last wipe" \
+   "$([ "${SLIDE_FIRST}" -gt "${MAXEFFECT}" ] && echo yes || echo no)" "yes"
+ok "and there are ten of them" "$((SLIDE_LAST - SLIDE_FIRST + 1))" "10"
+# The ini is what people read instead of the sketch, so each one has to say
+# which way it goes.
+DESCRIBED="$(sed -n '/^#   30  /,/^#   34  /p' "${ROOT}/tty2oled-system.ini" | grep -cE 'sliding (left|right|up|down|a random way)')"
+ok "each fade-slide says which way it goes" "${DESCRIBED}" "5"
 
 # ---------------------------------------------------------------------------
 section "an icon must not cut to the layout the transition is about to reach"
@@ -609,12 +733,10 @@ ok "the hold is armed before the icon is sent" \
 # ---------------------------------------------------------------------------
 section "BOOTSCREEN_AS_MENU: the menu asks for the boot screen, and sends no picture"
 # ---------------------------------------------------------------------------
-picturefolder="${TMP}/pics"; picturefolder_pri="${TMP}/pics_pri"
-USE_RANDOM_ALT="no"
+RANDOMIZE_ALT_BANNERS="no"
 META_ICON=""; TRANSITION="-2"
-mkdir -p "${TMP}/pics/GSC"
-printf '#\n#\n#\n00\n' > "${TMP}/pics/GSC/MENU.gsc"
-printf '#\n#\n#\n00\n' > "${TMP}/pics/GSC/NES.gsc"
+printf '#\n#\n#\n00\n' > "${bannerfolder}/MENU.gsc"
+printf '#\n#\n#\n00\n' > "${bannerfolder}/NES.gsc"
 
 reset_capture
 BOOTSCREEN_AS_MENU="yes"
@@ -638,7 +760,7 @@ unset BOOTSCREEN_AS_MENU
 senddata "MENU" >/dev/null 2>&1
 ok "an ini without the setting gets it on" "$(captured | grep -ac '^CMDBOOTPIC')" "1"
 ok "and the shipped ini has it on" "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${BOOTSCREEN_AS_MENU}")" "yes"
-rm -f "${TMP}/pics/GSC/MENU.gsc" "${TMP}/pics/GSC/NES.gsc"
+rm -f "${bannerfolder}/MENU.gsc" "${bannerfolder}/NES.gsc"
 TRANSITION="-1"
 
 # ---------------------------------------------------------------------------

@@ -88,7 +88,7 @@ ARCADE_FIELDS_ALL="Year Manufacturer Region Orientation Core Author Set MAME Gen
 # ttyUSB, the S3's native USB as ttyACM; there is never a fifth.
 TTYDEV_SPEC="/dev/ttyUSB0=/dev/ttyUSB0 (usual);/dev/ttyUSB1=/dev/ttyUSB1;/dev/ttyACM0=/dev/ttyACM0;/dev/ttyACM1=/dev/ttyACM1"
 
-TRANSITION_SPEC="-2=Fade (the default);-1=A random wipe each time;0=None;1=Left to right;2=Top to bottom;3=Right to left;4=Bottom to top;5=Alternate lines, opposite ways;6=Top half right, bottom half left;7=Four bands, alternating;8=Four quarters, crosswise;9=Particles;10=Diagonal, left to right;11=Slide in, left to right;12=Slide in, top to bottom;13=Slide in, right to left;14=Slide in, bottom to top;15=Top and bottom to the middle;16=Left and right to the middle;17=Middle out to top and bottom;18=Middle out to left and right;19=Warp, middle out to every edge;20=Clockwise sweep;21=Shaft;22=Waterfall;23=Chessboard of 8 squares"
+TRANSITION_SPEC="-2=Fade (the default);-1=A random wipe each time;0=None;1=Left to right;2=Top to bottom;3=Right to left;4=Bottom to top;5=Alternate lines, opposite ways;6=Top half right, bottom half left;7=Four bands, alternating;8=Four quarters, crosswise;9=Particles;10=Diagonal, left to right;11=Slide in, left to right;12=Slide in, top to bottom;13=Slide in, right to left;14=Slide in, bottom to top;15=Top and bottom to the middle;16=Left and right to the middle;17=Middle out to top and bottom;18=Middle out to left and right;19=Warp, middle out to every edge;20=Clockwise sweep;21=Shaft;22=Waterfall;23=Chessboard of 8 squares;30=Fade, sliding left;31=Fade, sliding left fast;32=Fade, sliding right;33=Fade, sliding right fast;34=Fade, sliding up;35=Fade, sliding up fast;36=Fade, sliding down;37=Fade, sliding down fast;38=Fade, sliding a random way;39=Fade, sliding a random way fast"
 
 settings_in() {  # settings_in <category>
   case "$1" in
@@ -99,7 +99,8 @@ COMPACT_YEAR_COMPANY|bool||Year and publisher on one row|"1989, Acclaim" on a si
 core_bootscreen_time|int|0 10000|Core boot screen (ms)|How long a console core's own artwork is held before the game's details replace it, when the core and the game are loaded together. 0 goes straight to the details.
 METADATA_INTERVAL|int|0 600|Arcade: seconds per screen|Artwork, then each page of the info card, then the artwork again - this long on each. 0 never swaps.
 ROTATE|bool||Upside down|Turn the whole display 180 degrees, for a panel mounted the other way up.
-USE_RANDOM_ALT|bool||Vary the artwork|Where a core has more than one picture, pick between them at random each time it loads.
+RANDOMIZE_ALT_BANNERS|bool||Vary the artwork|Where a core has alternative pictures, pick between them at random each time it loads, instead of always showing the same one.
+PRIORITIZE_USER_BANNERS|bool||Prefer your own artwork|Look in pics/user before the artwork pack, so a picture you put there replaces the shipped one. Off searches the pack first.
 EOS
     ;;
     console) cat <<'EOS'

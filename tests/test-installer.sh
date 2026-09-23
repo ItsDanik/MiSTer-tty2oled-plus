@@ -42,9 +42,15 @@ section "make-release.sh"
 # ===========================================================================
 
 SRC="${TMP}/src"
-mkdir -p "${SRC}/index" "${SRC}/pics/GSC" "${SRC}/fw/fw-lolin32" "${SRC}/fw/fw-esp32s3" "${SRC}/fw/fw-tiny"
+mkdir -p "${SRC}/index" "${SRC}/pics/banner" "${SRC}/pics/alt" "${SRC}/pics/icon" \
+         "${SRC}/pics/user" "${SRC}/fw/fw-lolin32" "${SRC}/fw/fw-esp32s3" "${SRC}/fw/fw-tiny"
 echo "00000000|Test Game|USA|1990|Test|Action|Test|" > "${SRC}/index/NES.idx"
-echo "#define x 1" > "${SRC}/pics/GSC/NES.gsc"
+echo "#define x 1" > "${SRC}/pics/banner/NES.gsc"
+echo "#define x 1" > "${SRC}/pics/alt/NES_alt1.gsc"
+echo "#define x 1" > "${SRC}/pics/icon/NES.gsc"
+echo "#define x 1" > "${SRC}/pics/icon/SNES.gsc"
+# The user's own. A release must never carry one: it would overwrite theirs.
+echo "#define x 1" > "${SRC}/pics/user/NES.gsc"
 # Stand-in firmware: the right name, and big enough to pass the size floor.
 head -c 300000 /dev/zero > "${SRC}/fw/fw-lolin32/MiSTer_SSD1322_USB.ino.merged.bin"
 head -c 300001 /dev/zero > "${SRC}/fw/fw-esp32s3/MiSTer_SSD1322_USB.ino.merged.bin"
@@ -82,9 +88,20 @@ done
 ok "the scripts archive has everything in the manifest" "${MISSING}" ""
 ok "tools are flattened, as they are on the MiSTer" "$(printf '%s\n' "${LISTING}" | grep -c '/tools/')" "0"
 ok "the title index goes in" "$(printf '%s\n' "${LISTING}" | grep -c 'titleindex/NES.idx')" "1"
-ok "and the drawn icons" "$(printf '%s\n' "${LISTING}" | grep -c 'pics_pri/ICON/.*\.gsc')" "$(ls "${ROOT}"/pics_pri/ICON/*.gsc | wc -l | tr -d ' ')"
+# The icons ride in the scripts archive, not the 80MB pack: 27 small files
+# that every update should carry, against artwork that is fetched only when it
+# is missing.
+ok "and the drawn icons" "$(printf '%s\n' "${LISTING}" | grep -c 'pics/icon/.*\.gsc')" "2"
 ok "everything unpacks under tty2oledplus/" "$(printf '%s\n' "${LISTING}" | grep -vc '^tty2oledplus/')" "0"
-ok "the artwork is in its own archive" "$(tar tzf "${D}/tty2oledplus-pics.tar.gz" | grep -c 'tty2oledplus/pics/GSC/NES.gsc')" "1"
+PICSLIST="$(tar tzf "${D}/tty2oledplus-pics.tar.gz")"
+ok "the artwork is in its own archive" "$(printf '%s\n' "${PICSLIST}" | grep -c 'tty2oledplus/pics/banner/NES.gsc')" "1"
+ok "with the alternatives beside it" "$(printf '%s\n' "${PICSLIST}" | grep -c 'tty2oledplus/pics/alt/NES_alt1.gsc')" "1"
+# pics/user is the user's own artwork and the one folder no release may write
+# into - the same reason tty2oled-user.ini is not in the manifest. The empty
+# folder goes in so a fresh install has somewhere to put a picture.
+ok "and nothing of the user's in either" \
+   "$(printf '%s\n%s\n' "${LISTING}" "${PICSLIST}" | grep -c 'pics/user/.')" "0"
+ok "though the folder itself is made" "$(printf '%s\n' "${PICSLIST}" | grep -c 'tty2oledplus/pics/user/$')" "1"
 ok "the notes carry this version's changelog" \
    "$(head -n1 "${TMP}/notes.md" | grep -c .)" "1"
 ok "and how to install it" "$(grep -c '^curl .*releases/latest/download/tty2oledplus_update.sh | bash$' "${TMP}/notes.md")" "1"
@@ -167,7 +184,7 @@ for f in ${MANIFEST_TOOLS}; do [ -x "${INSTALL}/$(basename "${f}")" ] || MISSING
 ok "every file in the manifest is installed, tools executable" "${MISSING}" ""
 ok "the installed version is the release's" "$(sed -n 's/^TTY2OLED_VERSION="\(.*\)".*/\1/p' "${INSTALL}/tty2oled-system.ini")" "${VERSION}"
 ok "the title index is installed" "$(yesno test -f "${INSTALL}/titleindex/NES.idx")" "yes"
-ok "the artwork pack is installed" "$(yesno test -f "${INSTALL}/pics/GSC/NES.gsc")" "yes"
+ok "the artwork pack is installed" "$(yesno test -f "${INSTALL}/pics/banner/NES.gsc")" "yes"
 ok "the display was flashed, once, with its own board's image" "$(flashed)" "tty2oledplus-lolin32.bin chip=esp32 port=free"
 ok "with a board id found behind stale ttyacks" "$(said 'reported: lolin32, firmware 0.3.0b')" "1"
 ok "the boot hook is added" "$(grep -c "${INSTALL}/S60tty2oled" "${FAT}/linux/user-startup.sh")" "1"
@@ -212,9 +229,9 @@ ok "a display already on this version is not reflashed" "$(flashed)" ""
 ok "an artwork pack already there is not fetched again" "$(said 'Installing the artwork pack')" "0"
 ok "the boot hook is not added twice" "$(grep -c "${INSTALL}/S60tty2oled" "${FAT}/linux/user-startup.sh")" "1"
 
-rm "${INSTALL}/pics/GSC/NES.gsc"
+rm "${INSTALL}/pics/banner/NES.gsc"
 T2OP_HWINF="HWLOLIN32;${VERSION};" install --pics
-ok "--pics fetches the artwork again" "$(yesno test -f "${INSTALL}/pics/GSC/NES.gsc")" "yes"
+ok "--pics fetches the artwork again" "$(yesno test -f "${INSTALL}/pics/banner/NES.gsc")" "yes"
 
 T2OP_HWINF="HWLOLIN32;${VERSION};" install --force
 ok "--force reflashes a current display" "$(flashed)" "tty2oledplus-lolin32.bin chip=esp32 port=free"

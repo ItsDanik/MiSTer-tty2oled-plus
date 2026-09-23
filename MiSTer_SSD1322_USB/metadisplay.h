@@ -917,7 +917,7 @@ static void meta_snapshot(void) {
 void meta_showCard(int effect) {
   // A Fade darkens the picture on the panel step by step, so it has to take
   // that picture before the card is rendered over it in the framebuffer.
-  if (effect == EFFECT_FADE) transition_prepare();
+  if (effect_is_fade(effect)) transition_prepare();
   meta_renderCard();
   meta_snapshot();
 
@@ -967,7 +967,7 @@ void meta_showConsole(void) {
 // layout is rendered over it.
 // ---------------------------------------------------------------------------
 void meta_transitionToConsole(int effect) {
-  if (effect == EFFECT_FADE) transition_prepare();   // the artwork, while it is there
+  if (effect_is_fade(effect)) transition_prepare();   // the artwork, while it is there
   meta_renderConsole();
   meta_snapshot();
 

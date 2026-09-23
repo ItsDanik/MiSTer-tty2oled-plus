@@ -259,6 +259,66 @@ rm -rf "${SCRIPTSPATH}"
 place_menu_scripts; ok "no Scripts folder, no complaint" "${?}" "0"
 unset SCRIPTSPATH TTY2OLED_PATH
 
+# ---------------------------------------------------------------------------
+section "S60tty2oled: the 0.5.8b artwork folders, moved on the next start"
+# ---------------------------------------------------------------------------
+# Here for the same reason place_menu_scripts is: the update that introduces
+# pics/banner is applied by the previous updater, which knows nothing about
+# moving anything - and which decides whether to fetch the 80MB pack by asking
+# whether the artwork is already there, so it does not bring the new one
+# either. Renames, not a download: the files are byte for byte the same.
+TTY2OLED_PATH="${TMP}/migr"
+mkdir -p "${TTY2OLED_PATH}/pics/GSC" "${TTY2OLED_PATH}/pics_pri/ICON"
+echo menu  > "${TTY2OLED_PATH}/pics/GSC/MENU.gsc"
+echo nes   > "${TTY2OLED_PATH}/pics/GSC/NES.gsc"
+echo alt   > "${TTY2OLED_PATH}/pics/GSC/NES_alt1.gsc"
+echo icon  > "${TTY2OLED_PATH}/pics_pri/ICON/NES.gsc"
+echo mine  > "${TTY2OLED_PATH}/pics_pri/NES.gsc"
+migrate_pics
+ok "the pack becomes pics/banner"        "$(cat "${TTY2OLED_PATH}/pics/banner/NES.gsc" 2>&1)" "nes"
+ok "its alternatives move to pics/alt"   "$(cat "${TTY2OLED_PATH}/pics/alt/NES_alt1.gsc" 2>&1)" "alt"
+ok "and are out of the banner folder"    "$(ls "${TTY2OLED_PATH}/pics/banner" | grep -c _alt)" "0"
+ok "the icons become pics/icon"          "$(cat "${TTY2OLED_PATH}/pics/icon/NES.gsc" 2>&1)" "icon"
+ok "your own banners become pics/user"   "$(cat "${TTY2OLED_PATH}/pics/user/NES.gsc" 2>&1)" "mine"
+ok "and nothing is left of the old names" \
+   "$(ls -d "${TTY2OLED_PATH}/pics/GSC" "${TTY2OLED_PATH}/pics_pri" 2>/dev/null | wc -l | tr -d ' ')" "0"
+
+# It runs on every start, so it has to be safe to run twice - and must never
+# overwrite a user banner with a stale copy of itself.
+migrate_pics
+ok "a second run changes nothing"        "$(cat "${TTY2OLED_PATH}/pics/user/NES.gsc" 2>&1)" "mine"
+ok "and the banner folder is intact"     "$(cat "${TTY2OLED_PATH}/pics/banner/NES.gsc" 2>&1)" "nes"
+
+# The other order: the new pack was unpacked beside the old folders. Then
+# there is nothing to move and the old ones are simply dropped - but only
+# because their replacements are there, so a half-finished update never leaves
+# a MiSTer with no artwork at all.
+mkdir -p "${TTY2OLED_PATH}/pics/GSC"
+echo stale > "${TTY2OLED_PATH}/pics/GSC/NES.gsc"
+migrate_pics
+ok "a new pack beside the old one drops the old" \
+   "$([ -d "${TTY2OLED_PATH}/pics/GSC" ] && echo yes || echo no)" "no"
+ok "keeping the new"                     "$(cat "${TTY2OLED_PATH}/pics/banner/NES.gsc" 2>&1)" "nes"
+
+# Yours is never overwritten by the migration - it is the one folder here
+# whose contents nobody but the user put there.
+mkdir -p "${TTY2OLED_PATH}/pics_pri"
+echo theirs > "${TTY2OLED_PATH}/pics_pri/NES.gsc"
+migrate_pics
+ok "a user banner already moved is not replaced" \
+   "$(cat "${TTY2OLED_PATH}/pics/user/NES.gsc")" "mine"
+
+# A fresh install has neither, and the folder the user drops artwork into has
+# to exist for them to find it.
+rm -rf "${TTY2OLED_PATH}"
+mkdir -p "${TTY2OLED_PATH}/pics/banner"
+migrate_pics
+ok "a fresh install still gets a pics/user to use" \
+   "$([ -d "${TTY2OLED_PATH}/pics/user" ] && echo yes || echo no)" "yes"
+rm -rf "${TTY2OLED_PATH}"
+migrate_pics; ok "and no pics at all is not an error" "${?}" "0"
+unset TTY2OLED_PATH
+
 rm -f "${PIDFILE}" "${PIDFILE_LEGACY}"
 daemonpid; ok "nothing running, nothing found" "${?}" "1"
 status >/dev/null; ok "status says not running" "${?}" "1"
@@ -402,8 +462,10 @@ UPDATE_ALL_SCREEN="yes"
 # What reaches the wire, with a picture and without one. The daemon writes
 # with ">", which truncates a regular file each time, so the wire is a pipe.
 TTYDEV="/dev/stdout"
-picturefolder="${TMP}/pics"; picturefolder_pri="${TMP}/pics_pri"
-mkdir -p "${picturefolder}/GSC" "${picturefolder_pri}"
+picturefolder="${TMP}/pics"
+bannerfolder="${picturefolder}/banner"; userbannerfolder="${picturefolder}/user"
+altbannerfolder="${picturefolder}/alt"
+mkdir -p "${bannerfolder}" "${userbannerfolder}" "${altbannerfolder}"
 SHOW_METADATA="yes"; TRANSITION="-2"; META_WIRE_LAST="CMDMETA,..."
 ok "no picture: metadata off, then the name as text" "$(sendupdateall | tr '\n' ' ')" "CMDMETAOFF update_all "
 sendupdateall >/dev/null
@@ -412,9 +474,9 @@ ok "and the metadata line is forgotten" "${META_WIRE_LAST}" "OFF"
 # A whole 256x64 picture: rows 0-53 pure 0x11, the band 0xff. What goes out
 # is the same 8192 bytes with the band black.
 { printf 'h1\nh2\nh3\n'; for i in $(seq 6912); do printf '11'; done; for i in $(seq 1280); do printf 'ff'; done; echo; } \
-  >"${picturefolder}/GSC/update_all.gsc"
+  >"${bannerfolder}/update_all.gsc"
 PIC="$(sendupdateall | tail -n +3 | xxd -p | tr -d '\n')"
-ok "picture in pics/GSC: sent as CMDCOR" "$(sendupdateall | head -2 | tr '\n' ' ')" "CMDMETAOFF CMDCOR,update_all,-2 "
+ok "picture in pics/banner: sent as CMDCOR" "$(sendupdateall | head -2 | tr '\n' ' ')" "CMDMETAOFF CMDCOR,update_all,-2 "
 ok "exactly one framebuffer of it" "$(( ${#PIC} / 2 ))" "8192"
 ok "the top 54 rows as drawn" "$(printf '%s' "${PIC:0:13824}" | tr -d 1)" ""
 ok "the band's 10 rows black, for the busy bar" "$(printf '%s' "${PIC:13824}" | tr -d 0)" ""
@@ -440,10 +502,10 @@ ok "and is not restarted every pass" "$(wc -c <"${WIRE}")" "0"
 rm -rf "${PROC_ROOT}/601"
 # Every write truncates this file, so what the whole pass sent is read off
 # stdout instead - with the picture out of the way, so it is all text.
-mv "${picturefolder}/GSC/update_all.gsc" "${TMP}/update_all.gsc.away"
+mv "${bannerfolder}/update_all.gsc" "${TMP}/update_all.gsc.away"
 ok "the downloader done, the bar stops and the banner is drawn again" \
    "$(TTYDEV=/dev/stdout updateall_pass | tr '\n' ' ')" "CMDBUSY,0 CMDMETAOFF update_all "
-mv "${TMP}/update_all.gsc.away" "${picturefolder}/GSC/update_all.gsc"
+mv "${TMP}/update_all.gsc.away" "${bannerfolder}/update_all.gsc"
 UPDATEALL_BUSY="no"    # that pass ran down a pipe, so its state stayed there
 : >"${WIRE}"; updateall_pass
 ok "once" "$(wc -c <"${WIRE}")" "0"

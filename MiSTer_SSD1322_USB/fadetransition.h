@@ -47,6 +47,16 @@ void pf_cancel(void);                   // pagefade.h's, included just after thi
 #define EFFECT_RANDOM   -1
 #define EFFECT_FADE     -2
 
+// The fade-slides: a Fade that also moves the picture a pixel or two every
+// palette step, so it drifts off one edge as it darkens and drifts in from
+// the other as it comes back. Ten of them, numbered 30..39 - clear of the
+// wipes (1..maxEffect) with room to spare, so adding a wipe cannot collide
+// with one. Each direction twice: "1" moves a pixel a step, "2" moves two,
+// which over TF_STEPS steps is 16 or 32 pixels of travel.
+#define EFFECT_SLIDE_FIRST  30
+#define EFFECT_SLIDE_LAST   39
+#define EFFECT_SLIDE_COUNT  (EFFECT_SLIDE_LAST - EFFECT_SLIDE_FIRST + 1)
+
 #define TFADE_MS_DEFAULT   800
 #define TBLANK_MS_DEFAULT  1000
 #define TFADE_MS_MAX       4000
@@ -72,6 +82,35 @@ uint8_t       tfStep       = 0;        // palette steps shown in this phase
 uint8_t      *tfSrc        = nullptr;  // what to show once the panel is dark
 int           tfType       = 0;        // and how to read it (XBM or GSC)
 bool          tfPrepared   = false;    // fadeBin already holds the old picture
+int8_t        tfSlideDX    = 0;        // pixels per palette step, -1/-2 is leftwards
+int8_t        tfSlideDY    = 0;        // and upwards
+int           tfSlideBaseX = 0;        // where the outward half starts from
+int           tfSlideBaseY = 0;
+int           tfSlidePosX  = 0;        // and where the last step drew it
+int           tfSlidePosY  = 0;
+
+// Where the picture sits at step `step` of a phase, in pixels.
+//
+// Going out it starts wherever the phase began - centred, normally - and
+// travels a step's worth at a time, so after all TF_STEPS it has moved
+// TF_STEPS * speed pixels. Coming in it has to *end* centred, so it starts
+// that same distance out on the opposite side and travels back: the same
+// direction of motion throughout, which is what makes the two halves read as
+// one movement rather than a bounce.
+static inline int tf_slideAt(uint8_t step, bool in, int8_t d, int base) {
+  return in ? -(int)d * (TF_STEPS - step) : base + (int)d * step;
+}
+
+// Every direction a fade-slide can take, in effect order: left, right, up,
+// down, each at one pixel a step and then two.
+static void tf_slideDirs(uint8_t idx, int8_t *dx, int8_t *dy) {
+  static const int8_t sx[4] = { -1,  1,  0,  0 };
+  static const int8_t sy[4] = {  0,  0, -1,  1 };
+  uint8_t dir   = (uint8_t)(idx >> 1);        // 0..3
+  int8_t  speed = (int8_t)((idx & 1) ? 2 : 1);
+  *dx = (int8_t)(sx[dir] * speed);
+  *dy = (int8_t)(sy[dir] * speed);
+}
 
 #ifdef ESP32X
   #define TF_PALETTE 1
@@ -88,6 +127,52 @@ bool          tfPrepared   = false;    // fadeBin already holds the old picture
       fb[i] = (uint8_t)((hi << 4) | lo);
     }
     oled.display();
+  }
+
+  // The same, with the picture offset by (dx, dy) pixels; anything that falls
+  // off an edge is gone and what moves in behind it is black.
+  //
+  // A row is 128 bytes of 4bpp pixels, high nibble to the left, so a vertical
+  // offset is whole rows and a horizontal one of two pixels is whole bytes -
+  // but an odd dx lands mid-byte, which is exactly why the one-pixel speeds
+  // exist. So this works a pixel at a time rather than memmove-ing rows: 16K
+  // nibble reads a step, against the 8K byte reads the plain fade does, and
+  // sixteen of them over the best part of a second.
+  static void tf_showShifted(uint8_t down, int dx, int dy) {
+    uint8_t *fb = oled.getBuffer();
+    if (!fb) return;
+    for (int y = 0; y < 64; y++) {
+      uint8_t *drow = fb + y * 128;
+      int sy = y - dy;
+      if (sy < 0 || sy >= 64) { memset(drow, 0, 128); continue; }
+      const uint8_t *srow = fadeBin + sy * 128;
+      for (int bx = 0; bx < 128; bx++) {
+        int sx = (bx << 1) - dx;
+        uint8_t hi = 0, lo = 0;
+        if (sx >= 0 && sx < 256)
+          hi = (sx & 1) ? (uint8_t)(srow[sx >> 1] & 0x0F) : (uint8_t)(srow[sx >> 1] >> 4);
+        int sx2 = sx + 1;
+        if (sx2 >= 0 && sx2 < 256)
+          lo = (sx2 & 1) ? (uint8_t)(srow[sx2 >> 1] & 0x0F) : (uint8_t)(srow[sx2 >> 1] >> 4);
+        hi = hi > down ? (uint8_t)(hi - down) : 0;
+        lo = lo > down ? (uint8_t)(lo - down) : 0;
+        drow[bx] = (uint8_t)((hi << 4) | lo);
+      }
+    }
+    oled.display();
+  }
+
+  // One entry point for both, so a caller never has to know which it wants:
+  // with no slide set this is the plain fade, byte for byte as it was.
+  static void tf_showStep(uint8_t down, uint8_t step, bool in) {
+    if (tfSlideDX == 0 && tfSlideDY == 0) {
+      tfSlidePosX = tfSlidePosY = 0;
+      tf_showDarkened(down);
+      return;
+    }
+    tfSlidePosX = tf_slideAt(step, in, tfSlideDX, tfSlideBaseX);
+    tfSlidePosY = tf_slideAt(step, in, tfSlideDY, tfSlideBaseY);
+    tf_showShifted(down, tfSlidePosX, tfSlidePosY);
   }
 
   static void tf_capture(void) {
@@ -130,6 +215,8 @@ void transition_fade(void) {
     tfPrepared   = false;
     tfState      = TF_OUT;
     tfStep       = 0;
+    tfSlideBaseX = tfSlideBaseY = 0;    // this half starts from where it is
+    tfSlidePosX  = tfSlidePosY  = 0;
     tfPhaseStart = millis();
     tfPhaseMs    = tfFadeMs;
     veil_fadeOver(0, tfFadeMs);
@@ -138,6 +225,12 @@ void transition_fade(void) {
     // means 16 - tfStep steps down, and the rest of the way out takes the
     // time those remaining steps would.
     uint8_t down = TF_STEPS - tfStep;
+    // Carry on from where the picture actually is rather than from centre, or
+    // turning a fade-slide around would jump it to the mirror of its own
+    // position before carrying on. Taken from the last step drawn, so it is
+    // right even when the new effect slides a different way from the old one.
+    tfSlideBaseX = tfSlidePosX - (int)tfSlideDX * down;
+    tfSlideBaseY = tfSlidePosY - (int)tfSlideDY * down;
     tfState      = TF_OUT;
     tfStep       = down;
     tfPhaseStart = millis() - (unsigned long)down * tfFadeMs / TF_STEPS;
@@ -151,6 +244,7 @@ void transition_fade(void) {
 // immediately.
 void transition_cancel(void) {
   tfPrepared   = false;
+  tfSlideDX    = tfSlideDY = 0;
   tfRender     = NULL;
   tfRenderHook = NULL;
   if (tfState == TF_IDLE) return;
@@ -164,7 +258,7 @@ void transition_tick(void) {
     case TF_OUT:
       due = tf_stepsDue();
 #ifdef TF_PALETTE
-      if (due > tfStep) { tfStep = due; tf_showDarkened(tfStep); }
+      if (due > tfStep) { tfStep = due; tf_showStep(tfStep, tfStep, false); }
 #else
       tfStep = due;
 #endif
@@ -205,7 +299,7 @@ void transition_tick(void) {
       // Take what was rendered - XBM or GSC, it is 4bpp in the framebuffer
       // now - and the first frame the panel sees of it is fully dark.
       tf_capture();
-      tf_showDarkened(TF_STEPS);
+      tf_showStep(TF_STEPS, 0, true);    // black either way; placed where it will come in from
 #else
       oled.display();                    // no palette steps: the veil is all there is
 #endif
@@ -219,7 +313,7 @@ void transition_tick(void) {
     case TF_IN:
       due = tf_stepsDue();
 #ifdef TF_PALETTE
-      if (due > tfStep) { tfStep = due; tf_showDarkened(TF_STEPS - tfStep); }
+      if (due > tfStep) { tfStep = due; tf_showStep((uint8_t)(TF_STEPS - tfStep), tfStep, true); }
 #else
       tfStep = due;
 #endif
@@ -236,6 +330,10 @@ void transition_tick(void) {
 // panel is plainly visible - the same flash the transition had.
 void transition_fadeIn(uint16_t ms) {
   tfPrepared = false;
+  // Never slides. This is the power-on screen coming up, not one picture
+  // replacing another, and there is nothing for it to slide in from.
+  tfSlideDX = tfSlideDY = 0;
+  tfSlideBaseX = tfSlideBaseY = tfSlidePosX = tfSlidePosY = 0;
   veil_fadeOver(0, 0);
 #ifdef TF_PALETTE
   tf_capture();
@@ -250,17 +348,48 @@ void transition_fadeIn(uint16_t ms) {
   tfState      = TF_IN;
 }
 
-// Every transition goes through here: -2 fades, -1 (or anything else below 0)
-// picks one of the wipes at random, and 0..maxEffect is that effect.
+// Every transition goes through here: -2 fades, 30..39 fades and slides with
+// it, -1 (or anything else below 0) picks one of the wipes at random, and
+// 0..maxEffect is that effect.
 void oled_transition(int e) {
   // A new picture ends any page fade: its steps are computed from a copy of
   // the panel as it was, and left running they would paint the old page's
   // rows back over the new picture.
   pf_cancel();
-  if (e == EFFECT_FADE) { transition_fade(); return; }
+  if (e >= EFFECT_SLIDE_FIRST && e <= EFFECT_SLIDE_LAST) {
+    uint8_t idx = (uint8_t)(e - EFFECT_SLIDE_FIRST);
+    // The last two are the random ones, and they pick a direction per
+    // transition rather than per step - a picture that changed its mind every
+    // sixteenth of a second would be a shake, not a slide. The low bit is the
+    // speed, so it survives the dice: 38 stays a one-pixel slide, 39 a two.
+    if (idx >= 8) idx = (uint8_t)((random(0, 4) << 1) | (idx & 1));
+    tf_slideDirs(idx, &tfSlideDX, &tfSlideDY);
+    transition_fade();
+    return;
+  }
+  if (e == EFFECT_FADE) { tfSlideDX = tfSlideDY = 0; transition_fade(); return; }
   transition_cancel();
   if (e < 0) e = random(minEffect, maxEffect + 1);
   oled_drawlogo((uint8_t)e);
+}
+
+// Is this effect one that fadetransition.h handles - a Fade, or a fade-slide?
+// The callers that have to snapshot the old picture before drawing the new
+// one (meta_showCard) ask this rather than testing for EFFECT_FADE.
+static inline bool effect_is_fade(int e) {
+  return e == EFFECT_FADE || (e >= EFFECT_SLIDE_FIRST && e <= EFFECT_SLIDE_LAST);
+}
+
+// Clamp an effect from the wire to something oled_transition understands:
+// -2, -1, 0..maxEffect, or one of the fade-slides. Anything below -2 becomes
+// a random wipe, anything above maxEffect that is not a fade-slide is pinned
+// to maxEffect. One copy, because there are four parsers and they used to
+// each have their own.
+static inline int effect_clamp(int e) {
+  if (e < EFFECT_FADE) return EFFECT_RANDOM;
+  if (e >= EFFECT_SLIDE_FIRST && e <= EFFECT_SLIDE_LAST) return e;
+  if (e > (int)maxEffect) return (int)maxEffect;
+  return e;
 }
 
 // CMDTFADE,<fade ms>,<blank ms> - the Fade transition's timings, 0..4000 each.

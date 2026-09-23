@@ -262,9 +262,9 @@ PILEOF
      "$(sed -n '3p' "${TMP}/banner.gsc")" "static unsigned char icon_bits[] = {"
   ok "banner line 4 is already data" \
      "$(sed -n '4p' "${TMP}/banner.gsc" | tr -d '0-9a-f\n' | wc -c)" "0"
-  if [ -f "${REPO}/pics/GSC/NES.gsc" ]; then
+  if [ -f "${REPO}/pics/banner/NES.gsc" ]; then
     ok "upstream artwork reduces to the same size" \
-       "$(tail -n +4 "${REPO}/pics/GSC/NES.gsc" | xxd -r -p | wc -c)" "8192"
+       "$(tail -n +4 "${REPO}/pics/banner/NES.gsc" | xxd -r -p | wc -c)" "8192"
   fi
   ok "--boot and --banner are not the same size" \
      "$( [ "$(tail -n +4 "${TMP}/boot.gsc" | xxd -r -p | wc -c)" \
@@ -558,10 +558,10 @@ ok "arcade is not filtered by METADATA_FIELDS" \
 
 # Every stub must be a real .gsc the firmware will accept, not a placeholder
 # the daemon sends as a truncated transfer.
-section "icon stubs are valid .gsc files"
+section "icons are valid .gsc files"
 bad=0
 count=0
-for f in "${REPO}"/pics_pri/ICON/*.gsc; do
+for f in "${REPO}"/pics/icon/*.gsc; do
   [ -e "${f}" ] || continue
   count=$((count + 1))
   n="$(tail -n +4 "${f}" | xxd -r -p | wc -c)"
@@ -578,20 +578,20 @@ ok "all are 2752 wire bytes"    "${bad}" "0"
 # whole point is that they get drawn over, and a test that fails the moment
 # someone draws an icon is testing the calendar, not the code.
 badhex=0
-for f in "${REPO}"/pics_pri/ICON/*.gsc; do
+for f in "${REPO}"/pics/icon/*.gsc; do
   [ -e "${f}" ] || continue
   if tail -n +4 "${f}" | tr -d '\n' | tr -d '0-9a-f' | grep -q .; then
     badhex=$((badhex + 1))
   fi
 done
 ok "pixel data is hex only"     "${badhex}" "0"
-ok "header says 86 wide"        "$(head -1 "${REPO}/pics_pri/ICON/GBA.gsc")" "#define icon_width 86"
+ok "header says 86 wide"        "$(head -1 "${REPO}/pics/icon/GBA.gsc")" "#define icon_width 86"
 
 # The names must be the ones CORENAME reports, or findicon looks for a file
 # that is not there. coretypes.ini is the shared source for both.
 for c in GBA VirtualBoy GameGear NEOGEO TGFX16 S32X MegaDrive MegaCD Saturn \
          PSX 3DO GBC AtariLynx WonderSwan WonderSwanColor Atari2600; do
-  ok "stub exists: ${c}" "$([ -e "${REPO}/pics_pri/ICON/${c}.gsc" ] && echo yes || echo no)" "yes"
+  ok "stub exists: ${c}" "$([ -e "${REPO}/pics/icon/${c}.gsc" ] && echo yes || echo no)" "yes"
 done
 
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n' "${PASS}" "${FAIL}"
