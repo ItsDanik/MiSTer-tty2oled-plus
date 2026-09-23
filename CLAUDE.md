@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1534 checks, no hardware needed. |
+| `tests/` | 1539 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -1216,6 +1216,16 @@ is what found the `FULLPATH` bug.
   when the outro begins. A test that measured the version fade from the start
   of the outro had to be rewritten - it drove the clock in two 500ms ticks and
   the bar only moves one step per tick however much clock it carries.
+- **A picture made of several transfers cannot be decided when the fade is
+  asked for.** The console layout needs the icon, which the daemon sends *after*
+  the metadata - so the snapshot `meta_showCard`'s idiom takes at request time
+  faded in with a black panel beside the text, and the icon appeared on top of
+  it afterwards. `tfRenderHook` composes it again at `TF_BLANK` instead: the
+  bottom of the fade is the latest possible moment and the panel is black and
+  idle there anyway, so a transfer still on the wire has the whole fade-out and
+  blank to land in. Taken into `tfRender` when the fade starts, exactly as
+  `srcBin` is, because the fade outlives the call that asked for it. The
+  snapshot is still what a wipe animates towards.
 - **A blocking read is a stopped animation.** `Serial.readBytes()` holds
   `loop()` until the bytes arrive, and a transfer is not one stream: the daemon
   writes the header, sleeps `WAITSECS`, then writes the payload, so a 2752-byte

@@ -733,6 +733,51 @@ int main() {
         meta_reset();
     }
 
+    section("an icon still in flight makes the fade-in");
+    {
+        // The daemon sends the console icon just after the metadata, so when a
+        // fade starts there may be no icon yet. Composing the layout only at
+        // the moment the fade was asked for meant it faded in with a black
+        // panel beside the text, and the icon appeared on top afterwards.
+        // Composing it again at the bottom of the fade - dead time the panel
+        // is not using - gives the transfer the whole fade-out and blank to
+        // arrive in.
+        auto pump = [](unsigned long ms) {
+            g_fakeMillis += ms; contrast_tick(); transition_tick();
+        };
+        meta_reset();
+        tEffect = EFFECT_FADE;
+        transition_parse("CMDTFADE,800,1000");
+        veil_fadeOver(255, 0);
+
+        metaHasIcon = false;                       // nothing has arrived yet
+        memset(iconBin, 0xFF, ICON_BYTES);         // the icon, when it does
+        meta_parse("CMDMETA,2,0,Sonic|System=MegaDrive");
+        okBool("the fade starts", meta_tick(), true);
+        okBool("with the layout composed fresh at black", tfRender != NULL, true);
+
+        // It lands part way through the fade-out, as it does on hardware.
+        pump(200);
+        metaHasIcon = true;
+
+        // Run to the bottom of the fade and look at what was composed. Not the
+        // framebuffer: entering TF_IN blacks that to show the first step. What
+        // the fade-in walks back up from is the copy tf_capture took, which is
+        // the composed picture itself.
+        for (int i = 0; i < 3000 && tfState != TF_IN; i++) pump(5);
+        int iconPixels = 0;
+        for (int y = 0; y < DispHeight; y++)
+            for (int x = meta_iconX() / 2; x < (meta_iconX() + ICON_W) / 2; x++)
+                if (fadeBin[y * 128 + x]) iconPixels++;
+        okBool("the icon is in the picture the fade-in reveals", iconPixels > 0, true);
+
+        for (int i = 0; i < 3000 && tfState != TF_IDLE; i++) pump(5);
+        okBool("and the fade finishes", tfState == TF_IDLE, true);
+        okBool("with no redraw left owed", metaIconRedraw, false);
+
+        tEffect = -1; metaHasIcon = false; meta_reset();
+    }
+
     section("computer mode does nothing");
     {
         meta_parse("CMDMETA,3,10,Amiga|System=Minimig");

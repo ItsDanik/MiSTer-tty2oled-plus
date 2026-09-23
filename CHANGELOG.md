@@ -4,6 +4,17 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.5.6b — 2026-09-23
+
+- **The system icon is part of the fade now, instead of appearing after it.**
+  The game's details faded in with a black panel where the icon goes, and the
+  icon then popped into place on top - because the icon is a separate transfer
+  that arrives just after the details, by which time the fade had already
+  decided what it was fading to. The layout is composed a second time at the
+  bottom of the fade, while the panel is black and doing nothing else, so the
+  icon has the whole fade-out and pause to arrive in and comes up with
+  everything else.
+
 ## 0.5.5b — 2026-09-23
 
 - **Fades no longer stall part way through.** A fade would manage two or three

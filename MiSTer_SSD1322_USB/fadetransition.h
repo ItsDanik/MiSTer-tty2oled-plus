@@ -57,6 +57,15 @@ enum { TF_IDLE, TF_OUT, TF_BLANK, TF_IN };
 uint16_t      tfFadeMs     = TFADE_MS_DEFAULT;
 uint16_t      tfBlankMs    = TBLANK_MS_DEFAULT;
 uint8_t       tfState      = TF_IDLE;
+
+// What composes the new picture when the fade reaches black. NULL copies the
+// captured srcBin, which is right for a picture that is already complete. A
+// layout built from several pieces sets tfRenderHook just before asking for
+// the transition, so it is composed at the bottom of the fade instead - see
+// TF_BLANK. Taken into tfRender when the fade starts, exactly as srcBin is,
+// because the fade outlives the call that asked for it.
+void        (*tfRenderHook)(void) = NULL;
+void        (*tfRender)(void)     = NULL;
 unsigned long tfPhaseStart = 0;        // when this phase's step 0 was
 uint16_t      tfPhaseMs    = TFADE_MS_DEFAULT; // and how long this phase fades
 uint8_t       tfStep       = 0;        // palette steps shown in this phase
@@ -112,6 +121,8 @@ void transition_prepare(void) {
 void transition_fade(void) {
   tfSrc  = srcBin;
   tfType = actPicType;
+  tfRender     = tfRenderHook;    // taken now, like srcBin, for the same reason
+  tfRenderHook = NULL;
   if (tfState == TF_IDLE) {
 #ifdef TF_PALETTE
     if (!tfPrepared) tf_capture();
@@ -139,7 +150,9 @@ void transition_fade(void) {
 // Abandon a fade in progress and put the veil back, for an effect that draws
 // immediately.
 void transition_cancel(void) {
-  tfPrepared = false;
+  tfPrepared   = false;
+  tfRender     = NULL;
+  tfRenderHook = NULL;
   if (tfState == TF_IDLE) return;
   tfState = TF_IDLE;
   veil_fadeOver(255, 0);
@@ -165,7 +178,16 @@ void transition_tick(void) {
 
     case TF_BLANK:
       if (millis() - tfPhaseStart < tfBlankMs) break;
-      {
+      // The new picture is composed here, at the bottom of the fade, and not
+      // before: this is the latest moment it can be, and the black phase is
+      // dead time the panel is not using for anything else. Anything that was
+      // still arriving when the fade began - the console icon, which the
+      // daemon sends just after the metadata - has had the whole fade-out and
+      // blank to get here, so it makes the fade-in rather than popping in
+      // afterwards.
+      if (tfRender) {
+        tfRender();               // compose it fresh, whatever it is made of now
+      } else {
         // Rendered, not drawn: oled_renderlogo() fills the framebuffer and
         // shows nothing. The plain draw (effect 0) also sends the frame to the
         // panel, which put the new picture up undarkened for one transfer's

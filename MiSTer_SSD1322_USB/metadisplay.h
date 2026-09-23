@@ -971,6 +971,15 @@ void meta_transitionToConsole(int effect) {
   meta_renderConsole();
   meta_snapshot();
 
+  // Composed again at the bottom of the fade rather than only here. The
+  // console icon is a separate transfer that the daemon sends just after the
+  // metadata, so at this moment it may still be on the wire - and a layout
+  // snapshotted without it faded in with a black panel beside the text and
+  // then had the icon appear on top of it, which is the pop this removes. The
+  // snapshot below is still what a wipe animates towards, and the fallback if
+  // the fade is cancelled before it reaches black.
+  tfRenderHook = meta_renderConsole;
+
   int savedType = actPicType;
   actPicType = GSC;                 // the layout is always 4bpp
   srcBin     = metaBin;
@@ -979,6 +988,7 @@ void meta_transitionToConsole(int effect) {
   actPicType = savedType;
 
   metaNeedsDraw = false;
+  metaIconRedraw = false;           // whatever arrives now makes the fade-in
 }
 
 // ---------------------------------------------------------------------------
