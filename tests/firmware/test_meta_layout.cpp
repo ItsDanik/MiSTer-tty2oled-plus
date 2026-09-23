@@ -1083,6 +1083,40 @@ int main() {
         meta_tick();
         okBool("flips back", metaFlipped, false);
 
+        // The flip is a change of picture like any other, so it uses
+        // TRANSITION - the layout jumping to the other side of the panel
+        // between two frames was the most abrupt thing console mode did, and
+        // it happens unattended, which is when it is most worth easing.
+        {
+            auto pump = [](unsigned long ms) {
+                g_fakeMillis += ms; contrast_tick(); transition_tick();
+            };
+            tEffect = EFFECT_FADE;
+            transition_parse("CMDTFADE,800,1000");
+            veil_fadeOver(255, 0);
+            metaLastFlip = g_fakeMillis;
+            bool wasFlipped = metaFlipped;
+
+            g_fakeMillis += 61000;
+            lastEffect = -999; lastSrcAtDraw = nullptr;
+            okBool("the flip draws", meta_tick(), true);
+            okBool("and the side changed", metaFlipped != wasFlipped, true);
+            okBool("through a transition, not a jump", tfState != TF_IDLE, true);
+            okBool("composed fresh at black, so the icon comes with it",
+                   tfRender != NULL, true);
+
+            // Nothing animates over it, and it finishes.
+            bool drewDuring = false;
+            for (int i = 0; i < 2000 && tfState != TF_IDLE; i++) {
+                pump(5);
+                if (meta_tick()) drewDuring = true;
+            }
+            okBool("nothing animates over the flip's fade", drewDuring, false);
+            okBool("and it finishes", tfState == TF_IDLE, true);
+            tEffect = -1;
+            metaFlipped = false;        // as the checks below expect to find it
+        }
+
         // 0 disables it.
         metaFlipMs = 0;
         metaLastFlip = g_fakeMillis;

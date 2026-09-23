@@ -4,6 +4,14 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.5.7b — 2026-09-23
+
+- **The side swap fades too.** Every `FLIP_MINUTES` the console layout moves to
+  the other side of the panel, and it did so between one frame and the next -
+  the most abrupt thing the display did, and the one that happens while nobody
+  is touching the MiSTer. It uses `TRANSITION` now, like every other change of
+  picture, so by default it cross-fades from one side to the other.
+
 ## 0.5.6b — 2026-09-23
 
 - **The system icon is part of the fade now, instead of appearing after it.**

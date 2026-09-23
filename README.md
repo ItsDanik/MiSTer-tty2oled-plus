@@ -203,7 +203,7 @@ sent over when it restarts, so nothing needs reflashing.
 | `DIM_CONTRAST` | `80` | Brightness to dim to, on the same scale as `CONTRAST`. |
 | `DIM_FADE_MS` | `6000` | How long going dim takes, `0`–`10000` ms — slow enough not to notice. Waking takes `CONTRAST_FADE_MS`. |
 | `DIM_WAKE` | `-1` | Brightness to wake to. `-1` means `CONTRAST`. |
-| `FLIP_MINUTES` | `5` | How often the console layout swaps sides. `0` never swaps. |
+| `FLIP_MINUTES` | `5` | How often the console layout swaps sides, so no part of the panel stays lit. The swap uses `TRANSITION`. `0` never swaps. |
 | `TRANSITION` | `-2` | How one picture replaces the last. `-2` cross-fades, `-1` picks a random wipe each time, `0` none, `1`–`23` one particular wipe — the system ini lists all of them by name. |
 | `TRANSITION_FADE_MS` | `800` | With `-2`: each fade, out and in. `0`–`4000` ms. |
 | `TRANSITION_BLANK_MS` | `1000` | With `-2`: how long the panel stays black between them. `0`–`4000` ms. |

@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1539 checks, no hardware needed. |
+| `tests/` | 1546 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -588,7 +588,9 @@ A fade is only started on the transitions, not every tick, and during one the
 panel is written only when the level actually changes.
 
 **Side swapping** mirrors the console layout every `FLIP_MINUTES` so no region
-holds the same lit pixels indefinitely. `meta_iconX`/`meta_textX`/`meta_textW`
+holds the same lit pixels indefinitely, and transitions like any other change
+of picture - `metaFlipped` is toggled before `meta_transitionToConsole`, so the
+render at the bottom of the fade composes the new side. `meta_iconX`/`meta_textX`/`meta_textW`
 are the only things that know which side is which. The icon x must stay
 **even**: the framebuffer is 4bpp, so a pixel column maps to a whole byte only
 at even x, and `meta_blitIcon` copies whole bytes. 0 and 170 both are.

@@ -1150,7 +1150,12 @@ bool meta_tick(void) {
     metaFlipped  = !metaFlipped;
     metaLastFlip = now;
     titleScrollX = 0;             // the column width changed; restart the marquee
-    meta_showConsole();
+    // Transitioned, like every other change of picture. The layout jumping to
+    // the other side of the panel between two frames is the most abrupt thing
+    // the console mode does, and it happens while nobody is touching the
+    // MiSTer - so it is the one most worth easing. metaFlipped is already
+    // toggled, so the render at the bottom of the fade composes the new side.
+    meta_transitionToConsole(tEffect);
     return true;
   }
 
