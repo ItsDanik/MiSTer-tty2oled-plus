@@ -694,6 +694,35 @@ int main() {
         okBool("CMDCBOOT,0 holds nothing", coreBootHolding, false);
         okBool("and the layout is drawn at once", meta_tick(), true);
 
+        // The sequence a real MiSTer actually produces, taken from the daemon's
+        // own log: the core is published seconds before the game, so the hold
+        // is armed while there is no metadata at all, and the artwork goes up
+        // full-screen. The clock has to run from the artwork, not from the
+        // game's arrival, or every game would wait out a fresh hold.
+        meta_reset();
+        tEffect = 0;
+        meta_parseCoreBoot("CMDCBOOT,3000");      // armed with metaKind still OFF
+        okBool("armed before any metadata", coreBootHolding, true);
+        meta_tick();                              // artwork is up: stamps the clock
+        okBool("the clock starts with no metadata at all", coreBootSince != 0, true);
+
+        g_fakeMillis += 1000;                     // a second later the game lands
+        meta_parse("CMDMETA,2,0,Sonic|System=MegaDrive");
+        okBool("two seconds still owed, so nothing is drawn", meta_tick(), false);
+        g_fakeMillis += 2100;
+        okBool("then the layout arrives", meta_tick(), true);
+        okBool("and the hold is spent", coreBootHolding, false);
+
+        // A game that turns up long after the hold has run is not made to wait
+        // for a second one.
+        meta_reset();
+        meta_parseCoreBoot("CMDCBOOT,3000");
+        meta_tick();                              // stamp
+        g_fakeMillis += 60000;                    // a minute of staring at artwork
+        meta_parse("CMDMETA,2,0,Streets|System=MegaDrive");
+        okBool("a late game is drawn at once", meta_tick(), true);
+        tEffect = -1;
+
         // A new core change while one is still held replaces it rather than
         // stacking: meta_reset clears the hold with everything else.
         meta_parse("CMDMETA,2,0,Streets|System=MegaDrive");

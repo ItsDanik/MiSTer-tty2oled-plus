@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.5.3b"
+#define BuildVersion "0.5.4b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -2841,8 +2841,15 @@ void oled_readicon(void) {
   // before meta_tick could transition into it. That is why loading a ROM into
   // a core that was already running changed the screen with no transition at
   // all.
-  if (metaHasIcon && metaKind==MKIND_CONSOLE && !coreBootHolding && !metaNeedsDraw)
-    meta_showConsole();
+  if (metaHasIcon && metaKind==MKIND_CONSOLE && !coreBootHolding && !metaNeedsDraw) {
+    // Only when the panel is settled. A transition already running is on its
+    // way to this exact layout, and drawing it here put it on the panel at
+    // full brightness for a frame - a flash, mid-fade, before the fade then
+    // overwrote it. The daemon sends the icon just after the metadata, so the
+    // transition the metadata started is almost always still running.
+    if (tfState == TF_IDLE && !pf_active()) meta_showConsole();
+    else                                    metaIconRedraw = true;
+  }
 #endif  // HAS_METADISPLAY
 }
 

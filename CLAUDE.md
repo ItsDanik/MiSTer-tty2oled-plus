@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1522 checks, no hardware needed. |
+| `tests/` | 1530 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -1216,6 +1216,23 @@ is what found the `FULLPATH` bug.
   when the outro begins. A test that measured the version fade from the start
   of the outro had to be rewritten - it drove the clock in two 500ms ticks and
   the bar only moves one step per tick however much clock it carries.
+- **MiSTer publishes the core seconds before the game, so "a core launched
+  with its game" is not a thing the daemon ever sees.** The log of a real load
+  is `CMDMETAOFF (kind=console game=no)`, `CMDCOR`, and only then - a second or
+  two later - `CMDMETA`. `sendcoreboot` required `META_GAME=yes`, so
+  `CMDCBOOT` was never sent on this hardware at all and the pause before the
+  details appeared was MiSTer's own delay, not the setting. It is armed on
+  every console core change now, and the hold is timed from when the *artwork*
+  reaches the panel rather than from when the game arrives - which also means a
+  game that turns up after it has elapsed is drawn at once. Read the daemon's
+  own debug log before believing a feature fires.
+- **An icon landing mid-transition put the layout on the panel at full
+  brightness for a frame.** The daemon sends the icon just after the metadata,
+  and the metadata has by then started a transition towards that very layout,
+  so `oled_readicon` composing it "because nothing is owed a first draw" was a
+  flash in the middle of a fade. It waits for `tfState == TF_IDLE` and no page
+  fade, and sets `metaIconRedraw` otherwise - a plain redraw afterwards, not
+  another transition, because it is the same picture with the icon in it.
 - **The icon arrives after every CMDMETA, not just on a core change.**
   `refreshmeta` sends one too, so `oled_readicon` composing the split layout
   the moment an icon landed cut straight to the new game and cleared

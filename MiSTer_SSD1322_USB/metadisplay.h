@@ -231,6 +231,11 @@ bool      metaNeedsDraw    = false;
 // While the hold is on, nothing else may draw the layout underneath it -
 // not meta_tick honouring metaNeedsDraw, not the icon arriving - or the
 // artwork would be replaced before it had been looked at.
+// An icon that arrived while the panel was busy. The layout it belongs to is
+// already on its way in - or already up - so it must not be drawn now, but it
+// does have to be drawn eventually or the panel beside the text stays black.
+bool          metaIconRedraw  = false;
+
 bool          coreBootHolding = false;  // a core picture is owed its moment
 unsigned long coreBootMs      = 0;      // how long to hold it for
 unsigned long coreBootSince   = 0;      // when it reached the panel; 0 = not yet
@@ -328,6 +333,7 @@ void meta_reset(void) {
   metaCompact = 0;
   metaHasIcon = false;
   metaNeedsDraw = false;
+  metaIconRedraw = false;
   coreBootHolding = false;
   coreBootSince = 0;
   metaShowingCard = false;
@@ -1117,6 +1123,15 @@ bool meta_tick(void) {
   // thing the marquee would be animating.
   if (tfState != TF_IDLE) return false;
 
+  // The core boot hold starts counting the moment the artwork reaches the
+  // panel - the first tick after its transition goes idle - and that is here,
+  // above everything to do with kinds, because at this point there is usually
+  // no metadata at all: MiSTer publishes the core a second or two before the
+  // game. Counting from the artwork rather than from the game's arrival is
+  // what makes a game that turns up late appear at once instead of waiting
+  // out a hold that has long since run.
+  if (coreBootHolding && coreBootSince == 0) coreBootSince = now;
+
   // Swap the layout's sides periodically so no part of the panel holds the
   // same lit pixels indefinitely. Console only: the arcade card and the
   // full-screen artwork already use the whole width.
@@ -1158,16 +1173,20 @@ bool meta_tick(void) {
     // Nothing below this runs while it is up: the marquee and the pager have
     // nothing to animate yet, and the first draw is the thing being delayed.
     if (coreBootHolding) {
-      // Reaching here at all means the transition that brought the artwork in
-      // has finished - the guard above returns while one is running - so this
-      // is the first tick on which the picture is actually on the panel.
-      if (coreBootSince == 0) {               // it is up now - start counting
-        coreBootSince = now;
-        return false;
-      }
+      // coreBootSince was stamped above, when the artwork landed. If the game
+      // arrived after the hold had already run, this is past at once.
       if (now - coreBootSince < coreBootMs) return false;
       coreBootHolding = false;
       meta_transitionToConsole(tEffect);      // clears metaNeedsDraw
+      return true;
+    }
+
+    // An icon that could not be drawn when it arrived, because a transition
+    // was already on its way to this very layout. A plain redraw, not another
+    // transition: it is the same picture, with the icon in it.
+    if (metaIconRedraw) {
+      metaIconRedraw = false;
+      meta_showConsole();
       return true;
     }
 

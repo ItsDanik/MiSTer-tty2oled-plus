@@ -4,6 +4,24 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.5.4b — 2026-09-23
+
+- **No more flash before the fade.** The game's details appeared for an instant
+  at full brightness just before fading in. The console icon is sent
+  immediately after the details, by which time the fade towards those very
+  details is already running, and the display was composing the layout the
+  moment the icon landed - putting it on the panel for one frame before the
+  fade overwrote it. The icon now waits for the panel to settle and redraws
+  once, after.
+- **The core boot screen actually works now.** It was only armed when the game
+  was already known at the moment the core changed, and on a real MiSTer that
+  almost never happens: the core is published a second or two before the game.
+  So the setting did nothing, and the pause before the details appeared was
+  MiSTer's own. It is armed on every console core change now, and timed from
+  the moment the artwork reaches the panel - so the artwork is guaranteed
+  `core_bootscreen_time` on screen, and a game that arrives after that has
+  already elapsed is still drawn at once rather than waiting out a second one.
+
 ## 0.5.3b — 2026-09-23
 
 - **Loading a ROM into a core that is already running now transitions too.**

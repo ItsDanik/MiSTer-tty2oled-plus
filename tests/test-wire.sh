@@ -553,10 +553,14 @@ sendcoreboot
 ok "0 sends nothing at all" "$(sync_capture; stat -c%s "${CAPTURE}")" "0"
 core_bootscreen_time="3000"
 
+# Not conditional on the game. MiSTer publishes the core a second or two before
+# the game, so at the moment of a core change there is usually nothing to show
+# but the artwork - and that is exactly what the hold is protecting. Requiring
+# a game here meant CMDCBOOT was never sent on a real MiSTer at all.
 reset_capture
 META_GAME="no"
 sendcoreboot
-ok "a core with no game sends nothing" "$(sync_capture; stat -c%s "${CAPTURE}")" "0"
+contains "a console core with no game yet still arms the hold" "$(captured)" "CMDCBOOT,3000"
 META_GAME="yes"
 
 reset_capture
@@ -576,9 +580,9 @@ core_bootscreen_time="3000"
 # soon as it lands, so it has to come after the hold is armed or it would draw
 # the layout a moment before the artwork replaced it.
 ok "the hold is armed before the icon is sent" \
-   "$(grep -n 'sendcoreboot\|sendicon "\${META_ICON}"' "${ROOT}/tty2oled.sh" \
-      | head -n2 | cut -d: -f2 | tr -d ' ' | paste -sd' ')" \
-   "sendcoreboot sendicon\"\${META_ICON}\""
+   "$(grep -n 'sendcoreboot$\|sendicon "\${META_ICON}"' "${ROOT}/tty2oled.sh" \
+      | head -n2 | cut -d: -f2 | sed 's/^ *//;s/\[.*&& //' | paste -sd' ')" \
+   "sendcoreboot sendicon \"\${META_ICON}\""
 
 # ---------------------------------------------------------------------------
 section "BOOTSCREEN_AS_MENU: the menu asks for the boot screen, and sends no picture"

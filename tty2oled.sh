@@ -154,13 +154,16 @@ senddata() {
   # Metadata first: the firmware needs to know which layout to compose
   # before the picture arrives, and the console icon has to be in place
   # before CMDCOR triggers the first paint of the split layout.
-  if sendmeta "${newcore}" force; then
-    # Before the icon, not after: the icon would otherwise compose the layout
-    # in the gap between the two commands, a moment before the artwork
-    # replaced it.
-    sendcoreboot
-    sendicon "${META_ICON}"
-  fi
+  # sendmeta answers 0 when it put game details on the wire and 1 when it sent
+  # CMDMETAOFF instead - which is the usual case here, because MiSTer publishes
+  # the core a second or two before the game. The hold has to be armed either
+  # way: it is about the core's artwork, which is going up regardless, and the
+  # game will arrive against it whenever MiSTer gets round to saying so.
+  sendmeta "${newcore}" force; local metaon="${?}"
+  # Before the icon, not after: the icon composes the layout as it lands, and
+  # would put it on the panel a moment before the artwork replaced it.
+  sendcoreboot
+  [ "${metaon}" -eq 0 ] && sendicon "${META_ICON}"
 
   # The menu's picture is the boot screen, which lives on the display - so
   # there is nothing to send but the request. At power-on the boot screen is
@@ -349,20 +352,22 @@ sendicon() {
 # replaces it - the core boot screen.
 #
 # Sent only from senddata, which runs on a core change, and only for a console
-# core that already knows its game: that is the case the setting is about, a
-# core launched with its ROM already chosen by a frontend or a .mgl, where the
-# artwork used to be skipped entirely. A game loaded into a core that was
-# already running never reaches here, so it still appears at once.
+# core - the only kind with a layout that would otherwise cover the artwork.
+#
+# Deliberately not conditional on the game being known yet. MiSTer usually
+# publishes the core first and the game a second or two later, so at this point
+# the daemon has nothing to show but the core; the hold is what guarantees the
+# artwork a minimum time on the panel whenever the game does turn up. It runs
+# from the moment the artwork reaches the panel, so a game that arrives after
+# it has already expired is drawn at once and nothing is delayed.
 #
 # Deciding here rather than in the firmware is the point. Only the daemon can
 # tell a core change from a game change; only the firmware knows when the
-# transition finished and the artwork is actually on the panel, which is when
-# the hold starts. Send nothing and there is no hold, which is what
-# core_bootscreen_time=0 does.
+# transition finished and the artwork is actually on the panel. Send nothing
+# and there is no hold, which is what core_bootscreen_time=0 does.
 sendcoreboot() {
   local ms="${core_bootscreen_time:-3000}"
   [ "${META_KIND}" = "console" ] || return 1
-  [ "${META_GAME:-no}" = "yes" ]  || return 1
   case "${ms}" in ''|*[!0-9]*) return 1 ;; esac
   [ "${ms}" -gt 0 ] || return 1
   dbug "Sending: CMDCBOOT,${ms}"
