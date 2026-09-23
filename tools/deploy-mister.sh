@@ -162,8 +162,21 @@ ssh "${MISTER}" "mkdir -p ${REMOTE}"
 # shellcheck disable=SC2086
 scp -q ${FILES} ${TOOLS} "${MISTER}:${REMOTE}/"
 
-# The uninstaller goes to the Scripts menu instead: it has to outlive the
-# folder it removes, and that is where a user looks for it.
+# The menu scripts go to BOTH places, which is not a belt-and-braces choice
+# but the only arrangement that survives a daemon restart.
+#
+# /media/fat/Scripts is where a user looks for them, and where the uninstaller
+# has to live to outlive the folder it removes. But place_menu_scripts in
+# S60tty2oled copies them from the install folder into Scripts on every start,
+# cmp first - which is how a MiSTer updated by an installer older than these
+# names still ends up with them in its menu. Copy only into Scripts, as this
+# did, and the next daemon start finds the install folder's older copy
+# different and puts *that* back: a deploy silently reverted its own menu
+# scripts to whatever a release had last left behind. The release does copy
+# them into the install folder (make-release.sh packs them there), so only the
+# deploy was ever wrong, and only the copy in the menu.
+# shellcheck disable=SC2086
+scp -q ${MANIFEST_MENU} "${MISTER}:${REMOTE}/"
 # shellcheck disable=SC2086
 ssh "${MISTER}" "mkdir -p /media/fat/Scripts"
 # shellcheck disable=SC2086

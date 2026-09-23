@@ -263,19 +263,27 @@ ok "its socket directory is cleaned up" "$(ls "${TMPDIR}" | wc -l | tr -d ' ')" 
 
 SENT="$(grep '^SCP' "${LOG}" | head -n1)"
 UNSENT=""
-# The three menu entries are the files that do not go into the install folder:
-# they belong in the Scripts menu, and the uninstaller in particular has to
-# outlive the folder it removes.
+# The three menu entries go to both places, so they are checked separately
+# below rather than against the install-folder list.
 for f in ${LIST}; do
   case "${f}" in */tty2oledplus_update.sh|*/tty2oledplus_settings.sh|*/tty2oledplus_uninstall.sh) continue ;; esac
   case "${SENT}" in *" ${f}"*) ;; *) UNSENT="${UNSENT} ${f}" ;; esac
 done
 ok "every script and tool is sent" "${UNSENT}" ""
+# Both places, and this pair of assertions used to say the opposite - that the
+# menu scripts go to Scripts and NOT into the install folder. That was wrong,
+# and the test pinned it: place_menu_scripts in S60tty2oled copies them from
+# the install folder into Scripts on every daemon start, cmp first, so a deploy
+# that put them only in Scripts had its own fresh copy overwritten by the older
+# one still sitting in the install folder the moment it restarted the daemon.
+# It went unnoticed because the release is packed the right way - make-release
+# puts them in the install folder - so only a deploy ever reverted them, and
+# only the copy in the menu, which nothing else reads.
 for f in tty2oledplus_update.sh tty2oledplus_settings.sh tty2oledplus_uninstall.sh; do
   ok "${f} goes to the Scripts menu" \
      "$(grep -c "^SCP .*tools/${f} .*:/media/fat/Scripts/\$" "${LOG}")" "1"
-  ok "and not into the install folder" \
-     "$(grep '^SCP' "${LOG}" | grep -c "${f} .*:/media/fat/tty2oledplus/")" "0"
+  ok "and into the install folder, for place_menu_scripts to place from" \
+     "$(grep '^SCP' "${LOG}" | grep -c "tools/${f} .*:/media/fat/tty2oledplus/")" "1"
 done
 ok "the default coretypes.ini goes to a fresh MiSTer" "$(grep -c '^SCP.* coretypes.ini ' "${LOG}")" "1"
 # The daemon sources it, and a first deploy used to leave it missing.

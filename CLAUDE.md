@@ -1166,6 +1166,22 @@ is what found the `FULLPATH` bug.
   path is still swept, safely because of that check, so a deploy can still stop
   a daemon the previous version of the script started. `children` reads ppids
   out of `/proc` instead of parsing `ps`.
+- **Two scripts placing the same file, and only one of them told.** The menu
+  scripts have to be in `/media/fat/Scripts` *and* in the install folder:
+  `place_menu_scripts` in `S60tty2oled` copies install folder -> Scripts on
+  every daemon start (`cmp` first), which is the only thing that can give the
+  new names to a MiSTer updated by an installer older than them.
+  `deploy-mister.sh` copied them to Scripts **only**, so the daemon restart at
+  the end of its own run found the install folder's older copy different and
+  put that back: every deploy silently reverted its own menu scripts to
+  whatever a release had last left there. `make-release.sh` packs them into the
+  install folder, so the release path was always right and only the deploy was
+  wrong - which is why it survived three releases. Found by running the
+  editor on the MiSTer after deploying it and counting the settings: 25, from a
+  version that had 35, still listing a setting deleted two releases earlier.
+  `test-deploy.sh` had **pinned the bug** with an assertion that the menu
+  scripts go to Scripts "and not into the install folder". A test can be wrong;
+  when behaviour and test agree and reality does not, suspect both.
 - **Moving a path means finding everything that reads it.** The daemon's pid
   file moved to its own name, and `deploy-mister.sh` went on checking the old
   one by hand - every plain deploy would have reported a healthy daemon as "did
