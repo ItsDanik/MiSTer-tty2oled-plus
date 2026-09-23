@@ -184,7 +184,6 @@ sent over when it restarts, so nothing needs reflashing.
 |---|---|---|
 | `SHOW_METADATA` | `yes` | Master switch. `no` shows core artwork only. |
 | `METADATA_INTERVAL` | `12` | Arcade: seconds per screen — artwork, each card page in turn, then the artwork again. `0` never swaps. |
-| `SHOW_CONSOLE_SPLIT` | `yes` | Console: text left, system icon right. |
 | `METADATA_FIELDS` | `System Year Genre Region Format` | Which console fields show, and in what order. Four fit at once; the rest page every 2.5s. Available: System Region Year Company Genre Developer Format. |
 | `METADATA_PINNED` | `System Year` | Fields that stay put while the rest page under them. |
 | `COMPACT_YEAR_COMPANY` | `yes` | Fold the publisher into the year: `1989, Acclaim` on one row. |

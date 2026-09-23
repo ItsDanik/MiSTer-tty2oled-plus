@@ -138,6 +138,33 @@ upstream_installed() {
   [ -e "${FAT}/tty2oled/tty2oled.sh" ] || [ -e "${FAT}/tty2oled/S60tty2oled" ]
 }
 
+# Has something else claimed the display?
+#
+# /tmp/tty2oled_sleep is a mutex on the serial port, not a preference: the
+# daemon honours it by not writing at all, and MiSTer SAM takes it for the
+# whole of an attract session because its own module drives the panel directly.
+# Our daemon stepping aside is not enough - this script asks the display its
+# version and may then flash it, and a flash while something else is mid-write
+# is the one failure here that needs a USB cable and a workstation to undo.
+#
+# Deliberately not silent and not a wait: whoever holds it is a program the
+# user started, so the user is the one who can stop it.
+#
+# Parsed out of the installed ini rather than sourced - this runs as root from
+# a menu, and reading a path should not be able to run anything - and rather
+# than hardcoded, because a user who moved SLEEPFILE would otherwise have this
+# watching a file nothing writes. The literal is the fallback for a first
+# install, where there is no ini yet.
+sleepfile_path() {
+  local p=""
+  p="$(sed -n 's/^SLEEPFILE="\([^"]*\)".*/\1/p' "${INSTALL}/tty2oled-system.ini" 2>/dev/null | tail -n1)"
+  printf '%s' "${p:-/tmp/tty2oled_sleep}"
+}
+
+display_claimed() {
+  [ -f "$(sleepfile_path)" ]
+}
+
 installed_version() {
   sed -n 's/^TTY2OLED_VERSION="\([^"]*\)".*/\1/p' "${INSTALL}/tty2oled-system.ini" 2>/dev/null
 }
@@ -285,6 +312,17 @@ main() {
       ${FAT}/tty2oled/S60tty2oled stop
     and comment out its line in ${FAT}/linux/user-startup.sh so it does not
     come back at boot. Then run this again."
+  fi
+
+  if display_claimed; then
+    die "Something else has the display: $(sleepfile_path) exists.
+    MiSTer SAM does this for as long as an attract session runs - it drives the
+    panel itself - and this update asks the display its version and may reflash
+    it, which must not happen while another program is writing to the port.
+    Stop it first (for SAM, exit it from the Scripts menu), then run this again.
+    If nothing is using the display, the file was left behind and removing it is
+    safe:
+      rm $(sleepfile_path)"
   fi
 
   # Stopped before the display is asked anything: the daemon owns the port.

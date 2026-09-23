@@ -321,6 +321,29 @@ ok "or anything installed" "$(grep -c '# marker' "${INSTALL}/tty2oled.sh")" "1"
 ok "and upstream's files are left where they are" "$([ -e "${FAT}/tty2oled/S60tty2oled" ] && echo kept)" "kept"
 rm -rf "${FAT}/tty2oled"
 
+# Something else holding the display. /tmp/tty2oled_sleep is a mutex on the
+# serial port - MiSTer SAM takes it for a whole attract session and drives the
+# panel itself - and our daemon standing aside is not enough here: this script
+# asks the display its version and may then reflash it. A flash landing while
+# another program is mid-write is the one failure in this script that needs a
+# USB cable and a workstation to undo.
+#
+# The path comes out of the installed ini rather than a literal, so the fake
+# install names one inside the sandbox: the suite must not depend on - or
+# create - a file in the real /tmp.
+SLEEPY="${TMP}/claimed_sleep"
+sed -i "s|^SLEEPFILE=.*|SLEEPFILE=\"${SLEEPY}\"|" "${INSTALL}/tty2oled-system.ini"
+: > "${SLEEPY}"
+T2OP_HWINF="HWLOLIN32;0.1;" install; RC="${?}"
+rm -f "${SLEEPY}"
+sed -i 's|^SLEEPFILE=.*|SLEEPFILE="/tmp/tty2oled_sleep"|' "${INSTALL}/tty2oled-system.ini"
+ok "a claimed display is refused" "${RC}" "1"
+ok "saying what has it" "$(said 'Something else has the display')" "1"
+ok "reading the path from the ini, not a literal" "$(said "${SLEEPY}")" "2"
+ok "before our daemon is touched" "$(grep -c 'init stop' "${CALLS}")" "0"
+ok "and before the display is flashed" "$(grep -c 'flash' "${CALLS}")" "0"
+ok "or anything installed" "$(grep -c '# marker' "${INSTALL}/tty2oled.sh")" "1"
+
 section "installer: a pinned version"
 
 set_installed_version "0.0.1b"

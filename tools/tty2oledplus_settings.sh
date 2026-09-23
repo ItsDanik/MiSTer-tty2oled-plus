@@ -81,7 +81,6 @@ settings_in() {  # settings_in <category>
   case "$1" in
     display) cat <<'EOS'
 SHOW_METADATA|bool||Game details|Off shows only the core's artwork, as a display with no game information does.
-SHOW_CONSOLE_SPLIT|bool||Console split layout|The console layout: text on one side, the system's icon on the other.
 USE_NAMES_TXT|bool||Core names from names.txt|Name cores the way your MiSTer menu names them rather than by their internal name.
 COMPACT_YEAR_COMPANY|bool||Year and publisher on one row|"1989, Acclaim" on a single row instead of two.
 METADATA_INTERVAL|int|0 600|Arcade: seconds per screen|Artwork, then each page of the info card, then the artwork again - this long on each. 0 never swaps.

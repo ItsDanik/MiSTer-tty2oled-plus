@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1457 checks, no hardware needed. |
+| `tests/` | 1475 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -973,6 +973,47 @@ is what found the `FULLPATH` bug.
   handshake meanwhile. Reproducing it - erase the region, reset, start the
   daemon - showed the display answering fine. The difference between the
   reproduction and the real run was `ssh -t`, and that was it.
+- **`/tmp/tty2oled_sleep` is a mutex, not a courtesy.** It reads like a "be
+  quiet" flag, and upstream's comment ("touch it and the daemon goes to
+  sleep") encourages that reading. It is not: MiSTer SAM's own module
+  (`Scripts/.MiSTer_SAM/MiSTer_SAM_tty2oled`) *sources this fork's ini to learn
+  `TTYDEV`* and then drives the panel itself - `CMDCOR` with raw picture bytes
+  through the same `tail -n +4 | xxd -r -p` idiom, `CMDTXT`, `CMDCLST` - and
+  reads the `ttyack;` tokens back off the port. Two writers pushing 8KB
+  payloads and both consuming one ack stream is the `waitforack` corruption
+  upstream chased through three rounds of `cDelay` tuning. So nothing may write
+  to the port while the file exists, and "let the update screens draw anyway"
+  is exactly the wrong fix - `tty2oledplus_update.sh` refuses instead, because
+  a flash landing mid-write is the one failure here that needs a USB cable and
+  a workstation to undo.
+- **SAM writes a deadline into that file and nobody ever read it.**
+  `tty_display` puts an epoch - the running game's start, its timer, ten
+  seconds' grace - into the file on every game change. Neither side reads it
+  back, so a SAM that is killed or crashes left the daemon blocked on an
+  `inotifywait -e delete` that never fires: the panel frozen until somebody
+  removed the file by hand. `sleepmode_pass` honours it now, with
+  `SLEEP_STALE_GRACE` (60s) on top, because the deadline only covers the game
+  that was running when it was written and so falls due during any slow core
+  load while SAM is perfectly healthy. Releasing early hands the port back to
+  two writers, which is the thing the file exists to prevent.
+- **Coming back from sleep is a full redraw, like a re-enumeration.** SAM draws
+  over everything for the whole session and signs off with `CMDSWSAVER,1` and a
+  `CMDCLST`, so the screensaver is left on whatever SAM wanted rather than what
+  the ini says. `oldcore`, `META_WIRE_LAST` and `DEFERRED_DONE` are all cleared
+  on release for the same reasons `serialready` clears them.
+- **SAM's paths are hardcoded to upstream**, `/media/fat/tty2oled`, including
+  the two inis it sources for `TTYDEV`. On a tty2oled+ install its module dies
+  in `tty_init` - but `tty_start` has already touched the sleep file, and the
+  module's exit trap does not remove it. So with SAM's `ttyenable="Yes"` the
+  panel went dead for the whole session: daemon parked, SAM's driver dead.
+  The stale-deadline release is what recovers it. `ttyenable` ships `"No"`, so
+  this only reaches users who turned it on.
+- **A setting in the ini is not a setting that works.** `SHOW_CONSOLE_SPLIT`
+  was in the ini, in the README's table and in the settings editor's menu for
+  three releases, and *no script ever read it*: turning it off did nothing.
+  `test-settings.sh` only checked that an offered key existed in the ini, which
+  it did. It now also requires a consumer in `tty2oled.sh` or
+  `tty2oled-meta.sh`. Existing is not the same as being read.
 - **A ROM set lives on the SD card or on USB, and the path does not say
   which.** MiSTer reports `FULLPATH` relative to the SD card - `games/GBA` on
   the SD, `../usb0/games/PSX` on USB - so resolving from `/media/fat` alone

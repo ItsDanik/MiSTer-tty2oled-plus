@@ -201,6 +201,26 @@ for c in ${CATEGORIES}; do
 done
 ok "no setting is offered under a name the ini does not use" "${MISSING}" ""
 
+# Being in the ini is not enough: something has to read it. SHOW_CONSOLE_SPLIT
+# passed the check above for three releases while no script anywhere looked at
+# it, so the editor offered a switch, the README documented it, and turning it
+# off did nothing at all. A setting the user can change has to reach a consumer.
+#
+# The daemon and the metadata script between them are every consumer there is -
+# the init script and the tools read paths, not preferences. A name that is
+# only ever assigned is not a reader, so the assignment lines in the ini itself
+# do not count, and neither does a line that merely sets a default of the same
+# name somewhere else.
+UNREAD=""
+for c in ${CATEGORIES}; do
+  while IFS= read -r r; do
+    k="$(field "${r}" 1)"
+    grep -qE "[$]\{?${k}\b" "${ROOT}/tty2oled.sh" "${ROOT}/tty2oled-meta.sh" \
+      || UNREAD="${UNREAD} ${k}"
+  done < <(settings_in "${c}")
+done
+ok "and every setting offered is read by the daemon or the metadata script" "${UNREAD}" ""
+
 # Each record has to have all five fields, or the menu shows a blank label or
 # edits nothing at all.
 MALFORMED=""

@@ -575,6 +575,100 @@ waitforcorename() {
 }
 
 # ---------------------------------------------------------------------------
+# Sleep mode: something else has claimed the display
+# ---------------------------------------------------------------------------
+#
+# ${SLEEPFILE} is a mutex, not a courtesy. MiSTer SAM drives the panel itself:
+# its own module, Scripts/.MiSTer_SAM/MiSTer_SAM_tty2oled, sources this ini to
+# learn TTYDEV and then writes CMDCOR, CMDTXT, CMDCLST and raw picture bytes
+# straight to the port - and reads the acks back off it. Two writers pushing
+# 8KB payloads and both consuming one ack stream is the waitforack corruption
+# upstream chased through three rounds of cDelay tuning. So while the file is
+# there this daemon does not touch the port at all.
+#
+# SAM takes it in tty_start, before it launches its module, and releases it in
+# tty_exit, after it kills it.
+
+# Has the holder gone away without releasing it?
+#
+# SAM writes an epoch deadline into the file - the running game's start, plus
+# its timer, plus ten seconds - and rewrites it on every game change. Nothing
+# has ever read it, on either side. Without it, a SAM that is killed, crashes
+# or loses power leaves the file behind and this daemon waits on a delete that
+# never comes: the panel keeps whatever SAM last drew until somebody removes
+# the file by hand or restarts the daemon.
+#
+# The deadline only covers the game that was running when it was written, so it
+# falls due during any slow core load while SAM is perfectly healthy - a CD
+# game, a big core. SLEEP_STALE_GRACE is the margin on top of it, and it wants
+# to be generous: releasing early hands the port back to two writers, which is
+# the thing the file exists to prevent. Waiting too long only costs a display
+# that was already frozen a little more time.
+#
+# A file with no usable number in it - upstream's own "touch", or anything
+# else that borrows the mechanism - has no deadline and is waited on for ever,
+# exactly as before.
+sleepmode_expired() {
+  local deadline="" now="${EPOCHSECONDS:-$(date +%s)}"
+  deadline="$(head -c 32 "${SLEEPFILE}" 2>/dev/null | tr -dc '0-9')"
+  [ -n "${deadline}" ] || return 1
+  [ "${now}" -gt "$(( deadline + ${SLEEP_STALE_GRACE:-60} ))" ]
+}
+
+# One pass of the main loop while the display belongs to somebody else.
+# Returns 1 when it is ours again; the caller then runs a normal pass.
+sleepmode_pass() {
+  local rc=0
+  [ -f "${SLEEPFILE}" ] || return 1
+
+  if sleepmode_expired; then
+    echo "tty2oled: ${SLEEPFILE} is past its deadline by more than ${SLEEP_STALE_GRACE:-60}s - taking the display back."
+    dbug "Stale ${SLEEPFILE}, removing it and resuming"
+    rm -f "${SLEEPFILE}"
+    return 1
+  fi
+
+  [ "${SLEEPING:-no}" = "yes" ] || dbug "The tty2oled daemon is sleeping!"
+  SLEEPING="yes"
+
+  # The wait has to time out, or the deadline above is never re-read. Same
+  # exit-code guard as waitforcorename: 0 is the delete and 2 the timeout, and
+  # both have already waited. Anything else is inotifywait returning at once -
+  # an unwatchable path, or no inotify-tools at all - and a branch of this loop
+  # that does not block is a branch that eats a core. That it did not spin
+  # before was an accident of the settling sleep below sitting under it.
+  if [ "${debug}" = "false" ]; then
+    inotifywait -qq -t "${SLEEP_POLL:-5}" -e delete "${SLEEPFILE}" 2>/dev/null
+  else
+    inotifywait -t "${SLEEP_POLL:-5}" -e delete "${SLEEPFILE}"
+  fi
+  rc=$?
+  [ "${rc}" -eq 0 ] || [ "${rc}" -eq 2 ] || sleep "${SLEEP_POLL:-5}"
+
+  # Still held: go round again rather than settling and redrawing.
+  [ -f "${SLEEPFILE}" ] && return 0
+
+  # Released. SLEEPMODEDELAY is a settling delay, not a poll interval: at the
+  # moment the file goes the holder is still finishing up, and /tmp/CORENAME
+  # may hold a core that is on its way out rather than the one we are about to
+  # be looking at.
+  sleep "${SLEEPMODEDELAY:-2}"
+  SLEEPING="no"
+
+  # Nothing on the panel came from us. SAM has been drawing its own pictures
+  # and text over everything for the whole session, and signs off with
+  # CMDSWSAVER,1 and a CMDCLST - so the screensaver is on whatever SAM wanted
+  # rather than whatever the ini says, and the firmware's metadata state is
+  # whatever it was left as. Clearing all three is what makes the next pass a
+  # full redraw, exactly as a re-enumerated display gets in serialready.
+  dbug "${SLEEPFILE} is gone, redrawing everything"
+  oldcore=""
+  META_WIRE_LAST=""
+  DEFERRED_DONE="no"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # update_all screen
 # ---------------------------------------------------------------------------
 
@@ -773,16 +867,9 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
     # how the pass after it becomes a full redraw.
     serialready || continue
     if [ -r ${corenamefile} ]; then							# proceed if file exists and is readable (-r)
-      if [ -f ${SLEEPFILE} ]; then							# Sleepmode = Yes
-        dbug "The tty2oled daemon is sleeping!"
-        if [ "${debug}" = "false" ]; then
-          inotifywait -qq -e delete "${SLEEPFILE}"		  # Sleepmode is waiting it here
-        elif [ "${debug}" = "true" ]; then
-          inotifywait -e delete "${SLEEPFILE}"			  # Sleepmode is waiting it here
-        fi
-        sleep ${SLEEPMODEDELAY}
-      fi
-      if [ ! -f ${SLEEPFILE} ]; then				  # Sleepmode = No
+      # Sleep mode: the display belongs to something else - see sleepmode_pass.
+      # Nothing below this may write to the port while it is held.
+      if ! sleepmode_pass; then
         # update_all takes the screen over whatever core is loaded, and our
         # own updater over that - it is about to stop this daemon.
         selfupdate_pass && { deferred_setup; continue; }

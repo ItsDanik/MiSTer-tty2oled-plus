@@ -529,5 +529,88 @@ ok "the daemon's wait times out for it even with the update_all screen off" \
 
 TTYDEV="/dev/null"; unset PROC_ROOT
 
+# ---------------------------------------------------------------------------
+section "sleep mode: the display belongs to something else"
+# ---------------------------------------------------------------------------
+#
+# /tmp/tty2oled_sleep is a mutex. MiSTer SAM drives the panel itself for the
+# whole of an attract session - its module writes CMDCOR, CMDTXT and raw
+# picture bytes to the same port and reads the acks back - so while the file is
+# there this daemon must not touch the port at all.
+#
+# SAM writes an epoch deadline into it and rewrites it on every game change.
+# Before this was read, a SAM that was killed left the file behind and the
+# daemon waited on a delete that never came: the panel stayed frozen until
+# somebody removed the file by hand.
+
+SLEEPFILE="${TMP}/tty2oled_sleep"
+SLEEP_POLL="1"
+SLEEP_STALE_GRACE="2"
+SLEEPMODEDELAY="0.3"
+
+# Recomputed at every use, never captured once: each assertion below blocks for
+# a poll interval, so a timestamp taken at the top of the section is already
+# seconds stale by the time the later ones read it - and every one of these
+# turns on how far "now" is from the deadline.
+now() { printf '%s' "${EPOCHSECONDS:-$(date +%s)}"; }
+
+rm -f "${SLEEPFILE}"
+sleepmode_pass; ok "no sleep file: the pass is ours" "${?}" "1"
+
+# A plain "touch" - upstream's own documented way in, and anything else that
+# borrows the mechanism. No deadline, so it is waited on for ever.
+: >"${SLEEPFILE}"
+T0="$(tenths)"; sleepmode_pass; RC="${?}"; T1="$(tenths)"
+ok "an empty sleep file holds the display" "${RC}" "0"
+ok "and the pass brakes the loop" "$(( T1 - T0 >= 8 ))" "1"
+
+# The same, for a holder that is alive and up to date.
+printf '%s\n' "$(( $(now) + 300 ))" >"${SLEEPFILE}"
+sleepmode_pass; ok "a deadline in the future holds it too" "${?}" "0"
+ok "and the file is left alone" "$(test -f "${SLEEPFILE}" && echo yes)" "yes"
+
+# Past the deadline but inside the grace. The deadline only covers the game
+# that was running when it was written, so it falls due during any slow core
+# load while SAM is perfectly healthy - releasing here would hand the port back
+# to two writers, which is the thing the file exists to prevent.
+printf '%s\n' "$(( $(now) - 1 ))" >"${SLEEPFILE}"
+sleepmode_pass; ok "just past the deadline still holds it" "${?}" "0"
+ok "and still does not touch the file" "$(test -f "${SLEEPFILE}" && echo yes)" "yes"
+
+# Past the grace as well: the holder is gone and is not coming back.
+oldcore="something"; META_WIRE_LAST="something"; DEFERRED_DONE="yes"
+printf '%s\n' "$(( $(now) - SLEEP_STALE_GRACE - 1 ))" >"${SLEEPFILE}"
+sleepmode_pass; ok "past the grace, the display is ours again" "${?}" "1"
+ok "and the stale file is removed" "$(test -f "${SLEEPFILE}" && echo yes)" ""
+
+# Released normally, while we are waiting on it. SAM has been drawing over
+# everything all session and signs off with CMDSWSAVER,1 and a CMDCLST, so the
+# screensaver is on whatever SAM wanted rather than whatever the ini says and
+# nothing on the panel came from us. The next pass has to be a full redraw.
+if [ "${HAVE_INOTIFY}" = "yes" ]; then
+  oldcore="something"; META_WIRE_LAST="something"; DEFERRED_DONE="yes"
+  printf '%s\n' "$(( $(now) + 300 ))" >"${SLEEPFILE}"
+  ( sleep 0.3; rm -f "${SLEEPFILE}" ) &
+  sleepmode_pass; ok "the delete hands the display back" "${?}" "1"
+  ok "the core is forgotten, forcing a redraw" "${oldcore}" ""
+  ok "the last metadata line is forgotten too" "${META_WIRE_LAST}" ""
+  ok "and the deferred settings are re-sent" "${DEFERRED_DONE}" "no"
+  wait
+else
+  skip "waking on the delete" "no inotify-tools"
+fi
+
+# No inotify-tools: inotifywait fails and returns at once. Every branch of the
+# main loop has to block, or the daemon eats a core - and this branch only ever
+# avoided that by accident, because the settling sleep happened to sit under
+# it. Shadowing the command is how the workstation plays a machine without it.
+rm -f "${SLEEPFILE}"; printf '%s\n' "$(( $(now) + 300 ))" >"${SLEEPFILE}"
+inotifywait() { return 127; }
+T0="$(tenths)"; sleepmode_pass; RC="${?}"; T1="$(tenths)"
+unset -f inotifywait
+ok "with no inotifywait it still holds the display" "${RC}" "0"
+ok "and still brakes the loop rather than spinning" "$(( T1 - T0 >= 8 ))" "1"
+rm -f "${SLEEPFILE}"
+
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n\n' "${PASS}" "${FAIL}"
 [ "${FAIL}" -eq 0 ]
