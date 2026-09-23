@@ -170,7 +170,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1475 checks, no hardware needed. |
+| `tests/` | 1473 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
@@ -237,8 +237,8 @@ download is the part that takes minutes, so it gets the whole panel:
 downloader from `/tmp/ua_downloader_{bin,latest.zip,dd.pyz}`, so that is what
 `downloader_running` matches - except with `--list-dbs`, a query the settings
 screen makes, which is not an update. The bar is `busybar.h`, the boot sweep
-at full width ticked from `loop()`; it waits out a Fade, holds the screensaver
-off, and stops dead on any command `boot_quietCommand` does not list.
+at full width ticked from `loop()`; it waits out a Fade and stops dead on any
+command `boot_quietCommand` does not list.
 
 The console title marquees when it overflows the column, and the field list
 pages every 2.5s when there are more than three. Both only redraw when
@@ -417,7 +417,7 @@ own; the two cannot run together, and `pf_start` gives way to a picture fade
 in progress instead of sharing it. `meta_tick` returns early while one runs,
 because the marquee redraws the whole frame and would undo the steps between
 them. Anything that takes the panel - a new picture through
-`oled_transition`, `meta_reset`, the screensaver - cancels it, and a cancel
+`oled_transition`, `meta_reset` - cancels it, and a cancel
 mid-fade-out still performs the redraw it was asked for, so the page it was
 turning to is not lost. Half its length, capped at 400ms, because the console
 pager turns every 2.5s and a fade still running when the next page is due
@@ -462,7 +462,7 @@ Both run on the firmware's own clock, so the daemon sends them once at startup
 (`senddim`, `sendflip`) rather than driving them.
 
 **Every contrast change fades** (`contrastfade.h`). Nothing but that header
-calls `oled.setContrast()`: `CMDCON`, dimming, waking, the screensaver and the
+calls `oled.setContrast()`: `CMDCON`, dimming, waking and the
 picture paths all ask `contrast_fadeTo()`, and `contrast_tick()` in `loop()`
 moves the panel there over `CONTRAST_FADE_MS`. A fade always starts from
 where the panel is, so a new target mid-fade turns around instead of
@@ -483,8 +483,8 @@ level under the veil without disturbing it. Re-shows (`CMDSORG`, the tilt
 sensor) do not fade in; the panel is already lit and blacking it would
 flicker.
 
-**The panel's level is two faders multiplied**: the base (`CONTRAST`, dimming,
-the screensaver) and the *veil*, which only the Fade transition and the boot fade-in move. Kept
+**The panel's level is two faders multiplied**: the base (`CONTRAST` and
+dimming) and the *veil*, which only the Fade transition and the boot fade-in move. Kept
 apart so neither knows about the other - a transition on a dimmed panel goes
 80 -> 0 -> 80, and a dim that starts mid-transition lands correctly once the
 veil lifts. With the veil at 255 the panel gets exactly the base level.
@@ -539,9 +539,10 @@ sketch. `test-wire.sh` checks the list against the `case` labels of
 `oled_drawlogo` and `maxEffect`, so an effect added to one and not the other
 fails the suite.
 
-**Dimming** is not upstream's screensaver - that moves a logo around to shift
-which pixels are lit, and the two compose. This only lowers contrast after
-`DIM_AFTER` seconds with nothing drawn, and restores it on the next draw.
+**Dimming** and the side swap are the fork's whole burn-in story, since
+upstream's moving-logo screensaver was removed in 0.4.9b. Dimming lowers
+contrast after `DIM_AFTER` seconds with nothing drawn, and restores it on the
+next draw - and unlike the screensaver it leaves the game on the screen.
 The dim level is `DIM_CONTRAST`, an absolute 0..255 like `CONTRAST` and
 capped at the waking level. It used to be `DIM_PERCENT`, a share of the waking
 level, so the same number meant a different brightness for every `CONTRAST`;
@@ -570,7 +571,12 @@ at even x, and `meta_blitIcon` copies whole bytes. 0 and 170 both are.
 
 ## The wire protocol this fork adds
 
-Upstream's commands are unchanged. These are additions, all ESP32-only:
+Upstream's commands are unchanged, with one exception: `CMDSAVER` and
+`CMDSWSAVER` are accepted and ignored since the screensaver was removed in
+0.4.9b. They have to be *accepted* rather than simply unknown, because an
+unknown command is drawn on the panel as text - and a daemon older than the
+firmware sends `CMDSAVER` on every startup, as does MiSTer SAM around its own
+session. These are the fork's additions, all ESP32-only:
 
 | command | payload |
 |---|---|
@@ -997,10 +1003,10 @@ is what found the `FULLPATH` bug.
   load while SAM is perfectly healthy. Releasing early hands the port back to
   two writers, which is the thing the file exists to prevent.
 - **Coming back from sleep is a full redraw, like a re-enumeration.** SAM draws
-  over everything for the whole session and signs off with `CMDSWSAVER,1` and a
-  `CMDCLST`, so the screensaver is left on whatever SAM wanted rather than what
-  the ini says. `oldcore`, `META_WIRE_LAST` and `DEFERRED_DONE` are all cleared
-  on release for the same reasons `serialready` clears them.
+  its own pictures and text over everything for the whole session and clears
+  the panel on its way out (`CMDCLST`), so nothing on it came from us.
+  `oldcore`, `META_WIRE_LAST` and `DEFERRED_DONE` are all cleared on release
+  for the same reasons `serialready` clears them.
 - **SAM's paths are hardcoded to upstream**, `/media/fat/tty2oled`, including
   the two inis it sources for `TTYDEV`. On a tty2oled+ install its module dies
   in `tty_init` - but `tty_start` has already touched the sleep file, and the
@@ -1083,7 +1089,7 @@ is what found the `FULLPATH` bug.
   slow: 8192 bytes into a 256-byte RX ring is a short `readBytes`, which draws
   the transfer-error bitmap.
 - **Startup order is boot time.** The daemon used to run `checkversion`, the
-  clock, the screensaver, the dimming and the side-swap settings in front of
+  clock, the dimming and the side-swap settings in front of
   the first picture. None of them change what that picture looks like, and
   `checkversion` blocks for up to two seconds when the display cannot answer
   `CMDHWINF` yet. Contrast and rotation are the only two the picture depends on
@@ -1115,7 +1121,7 @@ is what found the `FULLPATH` bug.
   and clears `oldcore`, `META_WIRE_LAST` and `DEFERRED_DONE`. All three,
   because a re-enumerated board has rebooted into its boot screen with the
   firmware's own defaults - so the core picture, the metadata line that
-  `sendmeta` de-duplicates, and the time/screensaver/dimming/flip settings that
+  `sendmeta` de-duplicates, and the time/dimming/flip settings that
   lived in the RAM the reset cleared all have to go out again.
 - **A pid file is not evidence, and this one was shared with upstream.**
   `S60tty2oled` wrote `/run/tty2oled-daemon.pid`, which is the path upstream's
@@ -1391,8 +1397,7 @@ takes the panel.
 `bootHolding` is what says the power-on screen is still up. The daemon's setup
 commands leave it set (`boot_quietCommand`: contrast, fade times, dimming,
 clock, version query, `CMDMETAOFF`, `CMDBOOTPIC`); **everything else clears
-it, commands nobody has heard of included**, and so does the screensaver
-starting and any re-show. The asymmetry is deliberate: a stale "still up"
+it, commands nobody has heard of included**, and so does any re-show. The asymmetry is deliberate: a stale "still up"
 would make the next `CMDBOOTPIC` skip its transition and leave whatever had
 been drawn meanwhile as the menu's picture, while a wrongly cleared one only
 costs a transition.
@@ -1427,8 +1432,8 @@ what `xxd -r -p` makes of a `.gsc`. `test_meta_layout` checks the array is
 rather than drawing a strip of stale buffer above the band.
 
 `tty2oled_logo` in `bitmaps.h` is upstream's 120x46 XBM and is now unused. It
-is kept, commented, because it is upstream's asset; `tty2oled_logo32` is a
-different bitmap and the screensaver still uses it.
+is kept, commented, because it is upstream's asset. The 32px logos beside it
+and the flying-toaster set went with the screensaver in 0.4.9b.
 
 Images stored before the band existed are 8192 bytes. `boot_begin` accepts
 both sizes and `boot_load` reads `BOOTIMG_BYTES` either way, so a legacy image

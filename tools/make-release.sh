@@ -27,8 +27,6 @@
 #   tty2oledplus_update.sh      the installer itself, and the Scripts menu updater
 #   tty2oledplus_install.sh     the starter a user drops into Scripts; it
 #                               fetches and runs the installer above
-#   update_tty2oledplus.sh      the same bytes under the name the updater had
-#                               before 0.4.8b - see LEGACY_UPDATER below
 #
 # Both archives unpack to tty2oledplus/, the install folder's own name.
 
@@ -129,17 +127,6 @@ done < <(find "${FWDIR:-MiSTer_SSD1322_USB}" -name 'MiSTer_SSD1322_USB.ino.merge
 # --- The rest --------------------------------------------------------------
 cp tools/tty2oledplus_update.sh tools/tty2oledplus_install.sh "${OUT}/"
 
-# The updater every install older than 0.4.8b has in its Scripts menu fetches
-# an asset called exactly update_tty2oledplus.sh. Drop that name and those
-# MiSTers get "Could not download update_tty2oledplus.sh" and have to be
-# reinstalled by hand, so it is published once more under the old name. The
-# copy is byte for byte the new updater: it installs the new scripts, and the
-# new S60tty2oled then places the new menu entries and sweeps the old ones.
-#
-# ONE RELEASE ONLY. Delete this block and its test in the release after
-# 0.4.8b; by then every install that updates at all has the new name.
-LEGACY_UPDATER="update_tty2oledplus.sh"
-cp tools/tty2oledplus_update.sh "${OUT}/${LEGACY_UPDATER}"
 printf '%s\n' "${VERSION}" > "${OUT}/VERSION"
 ( cd "${OUT}" && sha256sum -- * | grep -v ' SHA256SUMS$' > SHA256SUMS )
 

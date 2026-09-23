@@ -170,7 +170,7 @@ So to change something the editor does not cover, put it in the user ini and
 restart the display:
 
 ```sh
-echo 'SCREENSAVER="yes"' >> /media/fat/tty2oledplus/tty2oled-user.ini
+echo 'USE_TEXT_PICTURE="yes"' >> /media/fat/tty2oledplus/tty2oled-user.ini
 /media/fat/tty2oledplus/S60tty2oled restart
 ```
 
@@ -204,7 +204,6 @@ sent over when it restarts, so nothing needs reflashing.
 | `UPDATE_ALL_SCREEN` | `yes` | Say so on the panel while `update_all` runs. |
 | `UPDATE_ALL_TEXT` | `Updating System ...` | What it says while the download is running. |
 | `SELF_UPDATE_SCREEN` | `yes` | The same, while tty2oled+ updates itself. |
-| `SCREENSAVER` | `no` | The moving-logo screensaver. Separate from dimming, and the two can be used together. |
 | `ROTATE` | `no` | Turn the whole display 180°. |
 | `USE_NAMES_TXT` | `yes` | Name cores as your MiSTer menu names them. |
 | `GAME_ROOTS` | SD, `usb0`–`usb5`, `cifs` | Where your games live, searched in order. |

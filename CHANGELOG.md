@@ -4,6 +4,55 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.4.9b — 2026-09-23
+
+- **The screensaver is gone.** Upstream's moving-logo screensaver - the five
+  picture screens, the starfield and the flying toasters - is removed from the
+  firmware and from the settings. It never worked properly beside this fork's
+  game display: its idle timer was reset only by the picture paths, and a
+  metadata screen is not one, so on a console game it would take the panel
+  after its start delay and never give it back until you changed core - a game
+  change was not enough. Brightness dimming (`DIM_AFTER`) and the side swap
+  (`FLIP_MINUTES`) are what protect the panel now, and unlike the screensaver
+  they leave the game on screen. `SCREENSAVER` and its seven
+  `SCREENSAVER_SCREEN_*` settings no longer do anything; leaving them in your
+  user ini is harmless. The firmware still accepts `CMDSAVER` and `CMDSWSAVER`
+  and ignores them, so a daemon older than the firmware, and MiSTer SAM, do
+  not paint the command on the panel as text.
+- **SD mode is gone.** `USBMODE` selected a serial protocol that no firmware in
+  this repository speaks, and every feature this fork has was switched off when
+  it was set to `no`. The setting, its guards and the command-line arguments
+  that set it are removed.
+- **The pre-0.4.8b updater name is no longer published.** 0.4.8b shipped
+  `update_tty2oledplus.sh` one last time so installs predating the Scripts-menu
+  rename could reach it; as promised, that copy is dropped here. An install
+  that has updated at least once since 0.4.8b has the new name and is
+  unaffected. One still on 0.4.7b or earlier has to be installed again by hand,
+  with `tty2oledplus_install.sh` from this release.
+- **Sleep mode is a mutex, and is treated as one.** `/tmp/tty2oled_sleep` is
+  how another program claims the display; MiSTer SAM takes it for a whole
+  attract session and drives the panel itself. SAM also writes a deadline into
+  the file, which nothing has ever read - so a SAM that was killed left the
+  display frozen on whatever it drew last, until you removed the file by hand
+  or restarted the daemon. The deadline is honoured now, with a minute's grace
+  past it before the display is taken back. Coming back is a full redraw, which
+  also puts right the screensaver setting SAM changes behind your back. The
+  wait no longer blocks for ever, and no longer spins on a MiSTer without
+  inotify-tools.
+- **`tty2oledplus_update` refuses to run while something else has the
+  display**, rather than updating over it. It asks the display its version and
+  may reflash it, and a flash landing while another program is writing is the
+  one failure here that needs a USB cable and a workstation to undo. It says
+  what to stop, and how to clear the file if it was simply left behind.
+- **`SHOW_CONSOLE_SPLIT` is removed.** It was in the ini, the README and the
+  settings editor, and no script ever read it: turning it off did nothing. The
+  console split layout is what a console game looks like, and `SHOW_METADATA`
+  is the switch that turns the whole thing off.
+- **The settings file is shorter.** Upstream's changelog for it, a prompt
+  helper and seventeen colour variables nothing called, and eight settings that
+  were read by nothing - including one defined twice with two different values
+  - are all out. Nothing that was doing anything was removed.
+
 ## 0.4.8b — 2026-09-23
 
 - **A settings editor in the Scripts menu.** **tty2oledplus_settings** puts

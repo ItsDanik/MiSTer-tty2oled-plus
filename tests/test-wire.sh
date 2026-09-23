@@ -56,7 +56,6 @@ sync_capture() { sleep 0.25; }
 # --- Daemon settings the functions read -------------------------------------
 TTYDEV="${FIFO}"
 WAITSECS="0"
-USBMODE="yes"
 SHOW_METADATA="yes"
 METADATA_INTERVAL="12"
 debug="false"
@@ -232,13 +231,6 @@ SHOW_METADATA="no"
 sendmeta "dkong"
 ok "disabled sends nothing" "$(sync_capture; stat -c%s "${CAPTURE}")" "0"
 SHOW_METADATA="yes"
-
-reset_capture
-USBMODE="no"
-sendmeta "dkong"
-ok "SD mode sends nothing" "$(sync_capture; stat -c%s "${CAPTURE}")" "0"
-USBMODE="yes"
-
 
 # ---------------------------------------------------------------------------
 section "identical metadata is not resent"
@@ -427,8 +419,7 @@ ok "every other fade defaults to 0.8s" \
 section "transitions: -2 reaches the firmware, and the ini lists every effect"
 # ---------------------------------------------------------------------------
 reset_capture
-TRANSITION="-2"; USBMODE="yes"
-picturefolder="${TMP}/pics"; picturefolder_pri="${TMP}/pics_pri"
+TRANSITION="-2"; picturefolder="${TMP}/pics"; picturefolder_pri="${TMP}/pics_pri"
 USE_GSC_PICTURE="yes"; USE_US_PICTURE="no"; USE_TEXT_PICTURE="no"; USE_RANDOM_ALT="no"
 newcore="NES"; META_ICON=""
 mkdir -p "${TMP}/pics/GSC"

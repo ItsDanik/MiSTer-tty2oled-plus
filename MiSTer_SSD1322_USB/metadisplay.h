@@ -224,9 +224,11 @@ unsigned long metaLastFlip = 0;
 // ---------------------------------------------------------------------------
 // Dimming
 // ---------------------------------------------------------------------------
-// Unrelated to upstream's screensaver, which moves a logo around. This only
-// lowers the contrast after a period with nothing drawn, and restores it on
-// the next draw. 0 disables it. Both directions fade (contrastfade.h).
+// Lowers the contrast after a period with nothing drawn, and restores it on
+// the next draw. 0 disables it. Both directions fade (contrastfade.h). With
+// upstream's logo-shuffling screensaver gone, this and FLIP_MINUTES are the
+// fork's burn-in protection: one dims the panel, the other moves the console
+// layout from side to side.
 //
 // The dim level is a contrast, 0..255, the same scale as CONTRAST - not a
 // percentage of it, which is what it was: "50" then meant a different
@@ -953,9 +955,8 @@ void meta_activity(void) {
 // ---------------------------------------------------------------------------
 // meta_dimTick - lower the contrast once nothing has been drawn for a while.
 //
-// Separate from upstream's screensaver, which moves a logo around to shift
-// which pixels are lit. This only lowers brightness, so it composes with it
-// rather than replacing it.
+// Lowering brightness is half the burn-in story; meta_flipTick moving the
+// layout from side to side is the other half, and the two are independent.
 // ---------------------------------------------------------------------------
 static void meta_dimTick(unsigned long now) {
   if (metaDimAfterMs == 0) return;      // disabled

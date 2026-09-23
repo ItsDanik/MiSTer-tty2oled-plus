@@ -117,7 +117,6 @@ section "the daemon reports both versions and flags a mismatch"
 # a FIFO to talk to instead of a serial port.
 TTYDEV="${TMP}/version-fifo"
 WAITSECS="0"
-USBMODE="yes"
 debug="false"
 debugfile="${TMP}/debuglog"
 dbug() { :; }

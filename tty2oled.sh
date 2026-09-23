@@ -62,6 +62,13 @@
 #
 #
 
+# 2026-09-23 Removed upstream's screensaver and SD mode (fork)
+#            The screensaver reset its idle timer only from the picture paths,
+#            so a metadata screen never reset it and never came back once it
+#            fired; dimming and FLIP_MINUTES are the burn-in protection now.
+#            SD mode gated every feature this fork has behind USBMODE and spoke
+#            a protocol no sketch in this repository implements.
+#
 # 2026-09-20 Game metadata display (fork)
 #            Sends per-game metadata ahead of the picture so the display can
 #            show arcade info cards and the console split layout.
@@ -97,7 +104,6 @@ cmdwait() { sleep "${CMDWAITSECS:-${WAITSECS}}"; }
 # CMDCON, so that one fades at the user's speed too rather than the firmware's
 # default.
 sendfade() {
-  [ "${USBMODE}" = "yes" ] || return 0
   dbug "Sending: CMDFADE,${CONTRAST_FADE_MS:-800}"
   echo "CMDFADE,${CONTRAST_FADE_MS:-800}" >${TTYDEV}
   cmdwait
@@ -106,7 +112,6 @@ sendfade() {
 # The Fade transition's timings. Sent before the first picture, which may be
 # the first thing to use them.
 sendtfade() {
-  [ "${USBMODE}" = "yes" ] || return 0
   dbug "Sending: CMDTFADE,${TRANSITION_FADE_MS:-800},${TRANSITION_BLANK_MS:-1000}"
   echo "CMDTFADE,${TRANSITION_FADE_MS:-800},${TRANSITION_BLANK_MS:-1000}" >${TTYDEV}
   cmdwait
@@ -114,46 +119,14 @@ sendtfade() {
 
 # Send Contrast-Data function
 sendcontrast() {
-  if [ "${USBMODE}" = "yes" ]; then # Check the tty2xxx mode
-    dbug "Sending: CMDCON,${CONTRAST}"
-    echo "CMDCON,${CONTRAST}" >${TTYDEV} # Send Contrast Command and Value
-    cmdwait
-  else
-    echo "att" >${TTYDEV}       # Send an "att" to the MiSTer annoucing another Command
-    sleep ${WAITSECS}           # sleep needed here ?!
-    echo "CONTRAST" >${TTYDEV}  # Send "CONTRAST" annoucing the OLED Contrast Data as next
-    sleep ${WAITSECS}           # sleep needed here ?!
-    echo ${CONTRAST} >${TTYDEV} # Send Contrast Value
-  fi
-}
-
-# Send Screensaver function
-sendscreensaver() {
-  if [ "${SCREENSAVER}" = "yes" ]; then # Check screensaver mode
-
-    SCREENSAVER_MODE="0"
-    [ "${SCREENSAVER_SCREEN_TTY2OLED}" = "yes" ] && let SCREENSAVER_MODE=${SCREENSAVER_MODE}+1
-    [ "${SCREENSAVER_SCREEN_MISTER}" = "yes" ] && let SCREENSAVER_MODE=${SCREENSAVER_MODE}+2
-    [ "${SCREENSAVER_SCREEN_CORE}" = "yes" ] && let SCREENSAVER_MODE=${SCREENSAVER_MODE}+4
-    [ "${SCREENSAVER_SCREEN_TIME}" = "yes" ] && let SCREENSAVER_MODE=${SCREENSAVER_MODE}+8
-    [ "${SCREENSAVER_SCREEN_DATE}" = "yes" ] && let SCREENSAVER_MODE=${SCREENSAVER_MODE}+16
-    [ "${SCREENSAVER_SCREEN_STARS}" = "yes" ] && let SCREENSAVER_MODE=${SCREENSAVER_MODE}+32
-    [ "${SCREENSAVER_SCREEN_TOAST}" = "yes" ] && let SCREENSAVER_MODE=${SCREENSAVER_MODE}+64
-    # echo "ScreenSaverMode: ${SCREENSAVER_MODE}"
-    dbug "Sending: CMDSAVER,${SCREENSAVER_MODE},${SCREENSAVER_IVAL},${SCREENSAVER_START}"
-    echo "CMDSAVER,${SCREENSAVER_MODE},${SCREENSAVER_IVAL},${SCREENSAVER_START}" >${TTYDEV} # Send Screensaver Command and Values
-
-  else
-    dbug "Sending: CMDSAVER,0,0,0"
-    echo "CMDSAVER,0,0,0" >${TTYDEV} # Send Screensaver Command and Values
-  fi
+  dbug "Sending: CMDCON,${CONTRAST}"
+  echo "CMDCON,${CONTRAST}" >${TTYDEV} # Send Contrast Command and Value
   cmdwait
 }
 
 # Rotate Display function
 sendrotation() {
-  if [ "${USBMODE}" = "yes" ]; then # Check the tty2xxx mode
-    if [ "${ROTATE}" = "yes" ]; then
+  if [ "${ROTATE}" = "yes" ]; then
       dbug "Sending: CMDROT,1"
       echo "CMDROT,1" >${TTYDEV} # Send Rotation if set to "yes"
       cmdwait
@@ -170,15 +143,13 @@ sendrotation() {
     #  sleep ${WAITSECS}
     #  echo "CMDSORG" > ${TTYDEV}						# Show Start Screen rotated
     #  sleep 4
-    fi
   fi
 }
 
-# USB Send-Picture-Data function
+# Send-Picture-Data function
 senddata() {
   newcore="${1}"
   unset picfnam
-  if [ "${USBMODE}" = "yes" ]; then                       # Check the tty2xxx mode
 
     # Metadata first: the firmware needs to know which layout to compose
     # before the picture arrives, and the console icon has to be in place
@@ -230,12 +201,9 @@ senddata() {
       echo "CMDCOR,${1},${TRANSITION}" >${TTYDEV}    # Send CORECHANGE" Command and Corename
       sleep ${WAITSECS}                              # sleep needed here ?!
       tail -n +4 "${picfnam}" | xxd -r -p >${TTYDEV} # The Magic, send the Picture-Data up from Line 4 and proces
-    else                                             # No Picture available!
-      echo "${1}" >${TTYDEV}                         # Send just the CORENAME
-    fi                                               # End if Picture check
-  else                                               # SD/Standard Mode ? Just send the Corename
-    echo "${1}" >${TTYDEV}                           # Instruct the device to load the appropriate picture from SD card
-  fi
+  else                                               # No Picture available!
+    echo "${1}" >${TTYDEV}                           # Send just the CORENAME
+  fi                                                 # End if Picture check
 }
 
 # ---------------------------------------------------------------------------
@@ -285,7 +253,6 @@ sendmeta() {
   local corename="${1}" force="${2:-}" kindnum="" payload="" label="" value="" f="" wire=""
 
   [ "${SHOW_METADATA}" = "yes" ] || return 1
-  [ "${USBMODE}" = "yes" ]       || return 1
 
   # "force" is set on a core change, which is the only time the leftover-state
   # guard in build_meta applies.
@@ -379,7 +346,6 @@ sendicon() {
 # behaviour running off its own clock, so they are sent once at startup rather
 # than driven from here.
 senddim() {
-  [ "${USBMODE}" = "yes" ] || return 0
   # DIM_PERCENT was a share of CONTRAST; DIM_CONTRAST is a level of its own.
   # The system ini no longer sets the old name, so if it is set at all it came
   # from the user's own ini - and would otherwise be ignored without a word.
@@ -392,7 +358,6 @@ senddim() {
 }
 
 sendflip() {
-  [ "${USBMODE}" = "yes" ] || return 0
   local secs=$(( ${FLIP_MINUTES:-5} * 60 ))
   dbug "Sending: CMDFLIP,${secs}"
   echo "CMDFLIP,${secs}" >${TTYDEV}
@@ -405,7 +370,6 @@ sendflip() {
 # acknowledges every other command with "ttyack;", so read ';'-delimited
 # tokens - upstream's own idiom - until the board id turns up.
 checkversion() {
-  [ "${USBMODE}" = "yes" ] || return 0
   local tok="" fwver="" tries=0
   exec 3<"${TTYDEV}" || { dbug "Cannot open ${TTYDEV} for reading"; return 0; }
   echo "CMDHWINF" >${TTYDEV}
@@ -440,8 +404,8 @@ checkversion() {
 
 # The rest of the startup handshake, run once the first core picture is on the
 # panel rather than in front of it. None of it changes what that picture looks
-# like: the version check is a log line, and the time, screensaver, dimming and
-# side-swap settings are all firmware behaviour on the firmware's own clock,
+# like: the version check is a log line, and the time, dimming and side-swap
+# settings are all firmware behaviour on the firmware's own clock,
 # minutes away from mattering. Together they cost a second of sleeps, and
 # checkversion alone blocks for up to two more when the display is still
 # booting and cannot answer CMDHWINF yet.
@@ -452,7 +416,6 @@ deferred_setup() {
 
   checkversion												# Scripts and firmware in step?
   sendtime													# Set time and date
-  sendscreensaver											# Set Screensaver
   senddim													# Set idle dimming
   sendflip													# Set console side swapping
 
@@ -531,7 +494,7 @@ serialready() {
   # Nothing on the panel came from us any more. Clearing all three is what
   # makes the next pass a full redraw: oldcore forces the core picture and its
   # icon, META_WIRE_LAST defeats the identical-line check in sendmeta, and
-  # DEFERRED_DONE re-sends the time, screensaver, dimming and side swap, all of
+  # DEFERRED_DONE re-sends the time, dimming and side swap, all of
   # which lived in the RAM the reset cleared. The update_all screen and its
   # busy bar went with it too, so they are shown again if it is still running.
   oldcore=""
@@ -701,7 +664,6 @@ downloader_running() {
 # The busy bar in the band under the update_all picture: the boot screen's
 # sweep, run by the firmware until told to stop.
 sendbusy() {
-  [ "${USBMODE}" = "yes" ] || return 0
   local arg="${1}"
   # A label takes the panel: the firmware blacks the picture and writes the
   # message above the bar. Without one the picture stays and only the bar runs.
@@ -720,28 +682,26 @@ sendbusy() {
 # recognise - the same thing a missing core banner gets.
 sendupdateall() {
   local name="update_all" pic="" f=""
-  if [ "${USBMODE}" = "yes" ]; then
-    # Out of the split layout / card first, or the card alternation would
-    # keep drawing the previous game over the picture.
-    if [ "${SHOW_METADATA}" = "yes" ]; then
-      dbug "Sending: CMDMETAOFF (update_all)"
-      echo "CMDMETAOFF" >${TTYDEV}
-      sleep ${WAITSECS}
-      META_WIRE_LAST="OFF"
-    fi
-    for f in "${picturefolder_pri}/${name}.gsc" "${picturefolder_pri}/${name}.xbm" \
-             "${picturefolder}/GSC/${name}.gsc" "${picturefolder}/XBM/${name}.xbm"; do
-      [ -e "${f}" ] && { pic="${f}"; break; }
-    done
-    if [ -n "${pic}" ]; then
-      dbug "Sending: CMDCOR,${name},${TRANSITION} (${pic})"
-      echo "CMDCOR,${name},${TRANSITION}" >${TTYDEV}
-      sleep ${WAITSECS}
-      # The first 6912 bytes are the top 54 rows; the band's 1280 are sent
-      # black. As one stream, so the firmware reads exactly 8192 bytes.
-      { tail -n +4 "${pic}" | xxd -r -p | head -c 6912; head -c 1280 /dev/zero; } >${TTYDEV}
-      return 0
-    fi
+  # Out of the split layout / card first, or the card alternation would
+  # keep drawing the previous game over the picture.
+  if [ "${SHOW_METADATA}" = "yes" ]; then
+    dbug "Sending: CMDMETAOFF (update_all)"
+    echo "CMDMETAOFF" >${TTYDEV}
+    sleep ${WAITSECS}
+    META_WIRE_LAST="OFF"
+  fi
+  for f in "${picturefolder_pri}/${name}.gsc" "${picturefolder_pri}/${name}.xbm" \
+           "${picturefolder}/GSC/${name}.gsc" "${picturefolder}/XBM/${name}.xbm"; do
+    [ -e "${f}" ] && { pic="${f}"; break; }
+  done
+  if [ -n "${pic}" ]; then
+    dbug "Sending: CMDCOR,${name},${TRANSITION} (${pic})"
+    echo "CMDCOR,${name},${TRANSITION}" >${TTYDEV}
+    sleep ${WAITSECS}
+    # The first 6912 bytes are the top 54 rows; the band's 1280 are sent
+    # black. As one stream, so the firmware reads exactly 8192 bytes.
+    { tail -n +4 "${pic}" | xxd -r -p | head -c 6912; head -c 1280 /dev/zero; } >${TTYDEV}
+    return 0
   fi
   dbug "Sending: ${name} (as text)"
   echo "${name}" >${TTYDEV}
@@ -845,17 +805,7 @@ if [ "${#}" -ge 1 ]; then # Command Line Parameter given, override Parameter
   if [ -n "${2}" ]; then                                  # Parameter 2 Baudrate
     BAUDRATE=${2}                                         # Set Baudrate
   fi                                                      # end if Parameter 3
-  if [ -n "${3}" ]; then                                  # Parameter 3 SD or USB Mode
-    if [ "${3}" = "SD" ]; then                            # Parameter 3 = "SD" ?
-      USBMODE="no"                                        # Un-Set USBMODE
-    elif [ "${3}" = "USB" ]; then                         # Parameter 3 = "USB" ?
-      USBMODE="yes"                                       # Set USBMODE
-    else                                                  # Parameter not "USB" or "SD"!
-      echo "Parameter 3 invalid"                          # Parameter 3 wrong
-    fi                                                    # end if USB Mode
-  fi                                                      # end if Parameter 3
   echo "Using Interface: ${TTYDEV} with ${BAUDRATE} Baud" # Device Output
-  echo "USBMODE: ${USBMODE}"                              # Mode Output
 fi                                                        # end if command line Parameter
 
 # Let's go
@@ -875,7 +825,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
         selfupdate_pass && { deferred_setup; continue; }
         updateall_pass && { deferred_setup; continue; }
         newcore=$(<${corenamefile})				  # get CORENAME
-        if [ "${SHOW_METADATA}" = "yes" ] && [ "${USBMODE}" = "yes" ]; then
+        if [ "${SHOW_METADATA}" = "yes" ]; then
           # Metadata mode. Loading a ROM does not modify /tmp/CORENAME, so
           # watching that file alone never notices a game change - which is
           # why the display used to sit on the core screen forever. Watch the

@@ -2,7 +2,7 @@
 // fades rather than jumps.
 //
 // Contrast used to be set with oled.setContrast() from about ten places - the
-// CMDCON handler, idle dimming and waking, the screensaver, and the picture
+// CMDCON handler, idle dimming and waking, and the picture
 // paths re-asserting it - and each one jumped. Now they all say where the
 // level should go, contrast_fadeTo(), and contrast_tick() in the main loop
 // moves the panel there over fadeMs, the ini's CONTRAST_FADE_MS.
@@ -15,7 +15,7 @@
 // would stall a fade that is under way.
 //
 // Two levels are faded independently and multiplied: the base - CONTRAST,
-// dimming, the screensaver, everything above - and the veil, 255 unless a
+// dimming, everything above - and the veil, 255 unless a
 // Fade transition (fadetransition.h) is darkening the panel between two
 // pictures. Kept apart so neither has to know about the other: a transition
 // on a dimmed panel goes 80 -> 0 -> 80 rather than 80 -> 0 -> 255, and a dim

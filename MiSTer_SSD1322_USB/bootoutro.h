@@ -103,6 +103,7 @@ static inline void boot_barDraw(int head, int startX) {
 bool boot_quietCommand(const char *cmd) {
   static const char *const quiet[] = {
     "CMDFADE", "CMDTFADE", "CMDCON", "CMDDIM", "CMDFLIP", "CMDSAVER",
+    "CMDSWSAVER",
     "CMDSETTIME", "CMDHWINF", "CMDMETAOFF", "CMDBOOTPIC", "CMDBOOTINF",
     "CMDTZONE", "CMDNULL",
   };
@@ -193,7 +194,7 @@ void boot_outroTick(void) {
 
 // CMDBOOTPIC,<core>,<effect> - the boot image is this core's picture. Put
 // into logoBin like any core picture, so everything that redraws the core's
-// picture later - the screensaver's picture screen, CMDSPIC - shows it too.
+// picture later - CMDSPIC, the tilt sensor's re-show - shows it too.
 // If the power-on screen is still up, that is already what the panel shows:
 // there is nothing to transition.
 void boot_showAsCore(int effect) {

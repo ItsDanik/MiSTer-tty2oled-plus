@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.4.8b"
+#define BuildVersion "0.4.9b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -304,51 +304,6 @@ bool timer10pos;                             // Positive Timer 10 sec Signal
 bool timer30pos;                             // Positive Timer 30 sec Signal
 bool timer60pos;                             // Positive Timer 60 sec Signal
 
-// ScreenSaver
-bool ScreenSaverEnabled=false;
-bool ScreenSaverActive=false;
-int ScreenSaverTimer=0;                      // ScreenSaverTimer
-int ScreenSaverInterval=60;                  // Interval for ScreenSaverTimer
-bool ScreenSaverPos;                         // Positive Signal ScreenSaver
-int ScreenSaverMode=0;                       // ScreenSaver Drawing Color
-int ScreenSaverLogoTimer=0;                  // ScreenSaverLogo-Timer
-int ScreenSaverLogoTime=60;                  // ScreenSaverLogoTime
-#ifdef USE_NODEMCU
-const int ScreenSaverMaxScreens=3;           // Max ScreenSavers ESP8266 => 3 (bit)
-#endif
-#ifdef ESP32X
-const int ScreenSaverMaxScreens=5;           // Max ScreenSavers ESP32 => 5 (bit)
-#endif
-int ScreenSaverActiveScreens[ScreenSaverMaxScreens]; // Array contains Pointer to Active ScreeenSavers (1=tty2oled,2=MiSTer,3=Core,4=Time,5=Date)
-int ScreenSaverCountScreens=0;               // How many ScreenSaver Screens are Active?
-const int ScreenSaverContrast=1;             // Contrast Value for ScreenSaver Mode
-
-// Animated Screensaver only for ESP32
-#ifdef ESP32X
-bool ShowScreenSaverAnimated=false;
-#define MinAnimatedScreenSaver 1
-#define MaxAnimatedScreenSaver 2
-int ShowAnimatedScreenSaverNo=MinAnimatedScreenSaver;
-
-// Star Field Simulation
-bool ShowScreenSaverStarField=false;          // Star Field ScreenSaver yes/no
-const int starCount = 512;                    // Number of Stars in the Star Field ESP32
-const int maxDepth = 32;                      // Maximum Distance away for a Star
-double stars[starCount][3];                   // The Star Field - StarCount Stars represented as X, Y and Z Cooordinates
-#define SCRSTARS 1
-
-// Flying Toaster
-bool ShowScreenSaverToaster=false;            // Flying Toasters ScreenSaver yes/no
-#define TOAST_FLYERS   5 // Number of flying things
-#define TOAST_MPIX 16    // Micropixel
-#define TOAST_DELAY 50   // Toaster Delay
-struct Flyer {       // Array of flying things
-  int16_t x, y;      // Top-left position * 16 (for subpixel pos updates)
-  int8_t  depth;     // Stacking order is also speed, 12-24 subpixels/frame
-  uint8_t frame;     // Animation frame; Toasters cycle 0-3, Toast=255
-} flyer[TOAST_FLYERS];
-#define SCRTOASTER 2
-#endif  // ESP32 Screensaver
 
 // I2C Hardware
 bool hasMIC=false;                            // tty2oled has a MIC184 Sensor (all d.to Boards)
@@ -375,9 +330,6 @@ void oled_showStartScreen(bool waitForHost = false);
 void oled_setTime(void);
 void oled_setcdelay(void);
 void oled_showcdelay(void);
-void oled_switchscreensaver(void);
-void oled_readnsetscreensaver(void);
-void oled_showScreenSaverPicture(void);
 void oled_showSmallCorePicture(int xpos, int ypos);
 void oled_showSystemHardware(void);
 void oled_sendHardwareInfo(void);
@@ -404,12 +356,9 @@ void oled_settempzone(void);
 void oled_readnsetpowerled(void);
 void oled_playnote(void);
 void oled_playtone(void);
-void oled_drawScreenSaverStarField(void);
 void oled_showtime(void);
 void oled_enableOTA (void);
 int getRandom(int lower, int upper);
-void oled_drawScreenSaverStarField(void);
-void oled_drawScreenSaverToaster(void);
 void oled_readnsetedtiv(void);
 void oled_setttyack(void);
 
@@ -595,21 +544,6 @@ void setup(void) {
   }
 #endif  // USE_ESP32DEV
 
-// Setup Animated Screensaver
-#ifdef ESP32X
-  for (int i = 0; i < starCount; i++) {                            // Initialise the StarField with random Stars
-    stars[i][0] = getRandom(-25, 25);
-    stars[i][1] = getRandom(-25, 25);
-    stars[i][2] = getRandom(0, maxDepth);
-  }
-
-  for (int i=0; i<TOAST_FLYERS; i++) {                             // Randomize initial flyer states
-    flyer[i].x     = (-32 + random(255+32)) * TOAST_MPIX;
-    flyer[i].y     = (-32 + random(63+32)) * TOAST_MPIX;
-    flyer[i].frame = random(3) ? random(4) : 255;                  // 66% toaster, else toast
-    flyer[i].depth = 10 + random(TOAST_MPIX);                      // Speed and stacking order
-  }
-#endif // ESP32X
 
 // Tilt Sensor Rotation via Tilt-Sensor Pin
   RotationDebouncer.attach(TILT_PIN,INPUT_PULLUP);         // Attach the debouncer to a pin with INPUT mode
@@ -709,19 +643,15 @@ void loop(void) {
   if (timer30pos) Serial.println("Blink-30s");
   if (timer60pos) Serial.println("Blink-60s");
   if (blinkpos) {
-    Serial.printf("ScreenSaverEnabled: %s, ScreenSaverActive: %s, ", ScreenSaverEnabled ? "true" : "false", ScreenSaverActive ? "true" : "false");
-    Serial.printf("ScreenSaverLogoTimer: %d, ScreenSaverTimer: %d\n", ScreenSaverLogoTimer, ScreenSaverTimer);
-  }  
-  if (ScreenSaverPos) Serial.println("ScreenSaverTimer");
 #endif
 */
 
 #ifdef HAS_METADISPLAY
   // Metadata animation: arcade alternation and console scrolling.
-  // Suppressed while the start screen is up or the screensaver owns the
-  // display, and skipped entirely when serial data is waiting so an incoming
-  // picture transfer is never delayed by a scroll tick.
-  if (!startScreenActive && !ScreenSaverActive && !Serial.available()) {
+  // Suppressed while the start screen is up, and skipped entirely when serial
+  // data is waiting so an incoming picture transfer is never delayed by a
+  // scroll tick.
+  if (!startScreenActive && !Serial.available()) {
     meta_tick();
   }
 #endif
@@ -881,16 +811,16 @@ void loop(void) {
     else if (newCommand.startsWith("CMDROT")) {                            // Command from Serial to set Rotation
       oled_readnsetrotation();                                             // Set Rotation
     }
-    
-    else if (newCommand.startsWith("CMDSWSAVER")) {                        // Command from Serial to set Screensaver
-      oled_switchscreensaver();                                            // Enable/Disable Screensaver
-    }
-    
-    else if (newCommand.startsWith("CMDSAVER")) {                          // Command from Serial to set Screensaver
-      oled_readnsetscreensaver();                                          // Set Screensaver Settings & Enable/Disable
+
+    // Accepted and ignored. This fork has no screensaver - dimming and the
+    // side swap are its burn-in protection - but a daemon older than the
+    // firmware still sends CMDSAVER on every startup, and MiSTer SAM sends
+    // CMDSWSAVER around its own session. Falling through to the unknown-command
+    // branch would draw the command itself on the panel as text.
+    else if (newCommand.startsWith("CMDSAVER") || newCommand.startsWith("CMDSWSAVER")) {
     }
 
-    else if (newCommand.startsWith("CMDSTTYACK")) {                        // Command from Serial to set Screensaver
+    else if (newCommand.startsWith("CMDSTTYACK")) {                        // Command from Serial to set the TTYACK behaviour
       oled_setttyack();                                                    // Enable/Disable sendiung TTYACK
     }
 
@@ -1003,9 +933,7 @@ void loop(void) {
     else {
       actCorename=newCommand;
       actPicType=NONE;
-      ScreenSaverTimer=0;                        // Reset ScreenSaver-Timer
-      ScreenSaverLogoTimer=0;                    // Reset ScreenSaverLogo-Timer
-      oled_showcorename();
+              oled_showcorename();
     }  // end ifs
 
     if (sendTTYACK) {                                 // Send ACK?
@@ -1016,39 +944,6 @@ void loop(void) {
 
     updateDisplay=false;                              // Clear Update-Display Flag
   } // endif updateDisplay
-
-// ---------------------------------------------------
-// ---------- ScreenSaver if Active -----------------
-// ---------------------------------------------------
-  // ScreenSaver Logo-Timer
-  // Not while the busy bar runs: something is visibly happening, and the bar
-  // is the one thing on the panel worth watching.
-  if (ScreenSaverEnabled && !ScreenSaverActive && !busyActive && blinkpos) ScreenSaverLogoTimer++;
-  ScreenSaverActive = (ScreenSaverLogoTimer>=ScreenSaverLogoTime) && ScreenSaverEnabled;
-  if (ScreenSaverActive) { bootHolding = false; busy_cancel(); busy_forgetLabel(); pf_cancel(); }   // it draws over whatever was there
-  
-  // ScreenSaver Timer
-  if (ScreenSaverActive && blinkpos) ScreenSaverTimer++;
-  ScreenSaverPos = (ScreenSaverTimer == ScreenSaverInterval) && blinkpos;
-  if (ScreenSaverTimer>=ScreenSaverInterval) ScreenSaverTimer=0;
-
-#ifdef USE_NODEMCU
-  if (ScreenSaverActive && ScreenSaverPos) {    // Screensaver each 60secs
-    oled_showScreenSaverPicture();
-  }
-#endif
-
-#ifdef ESP32X
-  if (ScreenSaverActive && !ShowScreenSaverStarField && !ShowScreenSaverToaster && !ShowScreenSaverAnimated && ScreenSaverPos) {    // Screensaver each 60secs
-    oled_showScreenSaverPicture();
-  }
-  if (ScreenSaverActive && (ShowScreenSaverStarField || (ShowScreenSaverAnimated && (ShowAnimatedScreenSaverNo==SCRSTARS) ))) {                       // StarField ScreenSaver
-    oled_drawScreenSaverStarField();
-  }
-  if (ScreenSaverActive && (ShowScreenSaverToaster || (ShowScreenSaverAnimated && (ShowAnimatedScreenSaverNo==SCRTOASTER) ))) {                         // Flying Toasters ScreenSaver
-    oled_drawScreenSaverToaster();
-  }
-#endif
 
 // ---------------------------------------------------
 } // End Main Loop
@@ -1323,217 +1218,7 @@ void oled_showcdelay(void) {
 }
 
 
-// --------------------------------------------------------------
-// ---------------- Switch Screensaver On/Off -------------------
-// --------------------------------------------------------------
-void oled_switchscreensaver(void) {
-  String xT="";
-  int x;
-#ifdef XDEBUG
-  Serial.println("Called Command CMDSWSAVER");
-#endif
-  xT=newCommand.substring(newCommand.indexOf(',')+1);
-#ifdef XDEBUG
-  Serial.printf("\nReceived Text: %s\n", (char*)xT.c_str());
-#endif
-  
-  x=xT.toInt();                               // Convert Value
-  if (x<0) x=0;                               // Range checks
-  if (x>1) x=1;
 
-  if (x==0) {
-#ifdef XDEBUG
-    Serial.println("Switch ScreenSaver off.");
-#endif
-    ScreenSaverEnabled = false;
-    ScreenSaverTimer=0;                       // Reset Screensaver-Timer
-    ScreenSaverLogoTimer=0;                   // Reset ScreenSaverLogo-Timer
-  }  // endif
-
-  if (x==1) {
-    if (ScreenSaverMode>0) {
-#ifdef XDEBUG
-      Serial.printf("Switch ScreenSaver on, Mode: %i.\n", ScreenSaverMode);
-#endif
-      ScreenSaverEnabled = true;
-      ScreenSaverTimer=0;                     // Reset Screensaver-Timer
-      ScreenSaverLogoTimer=0;                 // Reset ScreenSaverLogo-Timer
-    }
-    else {
-#ifdef XDEBUG
-      Serial.println("ScreenSaver unset!");
-#endif
-    }
-  }  //endif
-}
-
-
-// --------------------------------------------------------------
-// ----------------- Set ScreenSaver Mode -----------------------
-// --------------------------------------------------------------
-void oled_readnsetscreensaver(void) {
-  String TextIn="",mT="",iT="",lT="";
-  int d1,d2,m,i,l,b;
-#ifdef XDEBUG
-  Serial.println("Called Command CMDSAVER");
-#endif
-  TextIn=newCommand.substring(9);
-#ifdef XDEBUG
-  Serial.printf("Received Text: %s\n", (char*)TextIn.c_str());
-#endif
- 
-  //Searching for the "," delimiter
-  d1 = TextIn.indexOf(',');                 // Find location of first ","
-  d2 = TextIn.indexOf(',', d1+1 );          // Find location of second ","
-  //Create Substrings
-  mT = TextIn.substring(0, d1);             // Get String for Mode/Color
-  iT = TextIn.substring(d1+1, d2);          // Get String for Interval
-  lT = TextIn.substring(d2+1);              // Get String for Logo-Time
-
-  m=mT.toInt();                             // Convert Mode
-  i=iT.toInt();                             // Convert Interval
-  l=lT.toInt();                             // Convert Logo-Time
-
-  if (m<0) m=0;                             // Check & Set Mode
-  if (m>255) m=255;                         // Check & Set Mode (8 Bits = 0..255)
-  if (i<5) i=5;                             // Check&Set Minimum Interval
-  if (i>600) i=600;                         // Check&Set Maximiun Interval
-  if (l<20) l=20;                           // Check&Set Minimum Logo-Time
-  if (l>600) l=600;                         // Check&Set Maximiun Logo-Time
-
-  // Get&Set Active ScreenSaverScreens
-  ScreenSaverCountScreens=0;                                               // Reset Counter   
-  for (b=0; b<ScreenSaverMaxScreens; b++) ScreenSaverActiveScreens[b]=0;   // Clear Array
-  for (b=0; b<ScreenSaverMaxScreens; b++) {
-    if (bitRead(m,b)) {                                                    // Read Bits out of Mode and if Bit is "1"...
-      ScreenSaverActiveScreens[ScreenSaverCountScreens]=b+1;               // ...write the value in the Screens-Array[0..x] and..
-      ScreenSaverCountScreens++;                                           // ...count up the Counter.
-    }
-  }
-#ifdef ESP32X    
-  ShowScreenSaverStarField=bitRead(m,5) && !bitRead(m,6);                  // StarField ScreenSaver active ?
-  ShowScreenSaverToaster=!bitRead(m,5) && bitRead(m,6);                    // Toaster ScreenSaver active ?
-  ShowScreenSaverAnimated=bitRead(m,5) && bitRead(m,6);                    // All Animated ScreenSaver
-#endif
-
-#ifdef XDEBUG
-  Serial.printf("Active ScreenSaverScreens: %i\n", ScreenSaverCountScreens);
-  for (b=0; b<ScreenSaverMaxScreens; b++) {
-    Serial.printf("ScreenSaver Array Value No.%i: %i\n", b, ScreenSaverActiveScreens[b]);
-  }
-  if (ShowScreenSaverStarField) Serial.printf("ScreenSaver StarField active!\n");
-#endif
-  
-#ifdef XDEBUG
-  Serial.printf("Created Strings: M:%s I:%s L:%s\n", (char*)mT.c_str(), (char*)iT.c_str(), (char*)lT.c_str());
-  Serial.printf("Values: M:%i T:%i L:%i\n", m, i, l);
-#endif
-
-  ScreenSaverMode=m;
-  ScreenSaverTimer=0;                       // Reset Screensaver-Timer
-  ScreenSaverLogoTimer=0;                   // Reset ScreenSaverLogo-Timer
-
-  if (m==0) {
-#ifdef XDEBUG
-    Serial.println("ScreenSaver Disabled!");
-#endif
-    ScreenSaverEnabled=false;
-  }
-  else{
-#ifdef XDEBUG
-    Serial.println("ScreenSaver Enabled!");
-#endif
-    ScreenSaverEnabled=true;
-    ScreenSaverInterval=i;                    // Set ScreenSaverTimer Interval
-#ifdef USE_NODEMCU
-    ScreenSaverLogoTime=l-i;                  // Set ScreenSaverLogoTime (First Screensaver shown after ScreenSaverLogoTime-ScreenSaverInterval+ScreenSaverInterval)
-#endif
-#ifdef ESP32X
-    if (ShowScreenSaverStarField || ShowScreenSaverToaster || ShowScreenSaverAnimated) {
-      ScreenSaverLogoTime=l;                  // Set ScreenSaverLogoTime (Screensaver shown after ScreenSaverLogoTime)
-    }
-    else {
-      ScreenSaverLogoTime=l-i;                // Set ScreenSaverLogoTime (First Screensaver shown after ScreenSaverLogoTime-ScreenSaverInterval+ScreenSaverInterval)
-    }
-#endif
-  }
-}
-
-
-// --------------------------------------------------------------
-// ------------ Show ScreenSaver Pictures/Time  -----------------
-// --------------------------------------------------------------
-void oled_showScreenSaverPicture(void) {
-  int l,x,y;
-  String actTime="";
-  contrast_fadeTo(ScreenSaverContrast);                         // Set Contrast for ScreenSaver Mode
-
-  l=ScreenSaverActiveScreens[random(ScreenSaverCountScreens)];  // Get random Screen out of the Active-Screens-Array[0..x]
-#ifdef XDEBUG
-  Serial.printf("Screen: %i\n", l);
-#endif
-
-  switch (l) {
-    case 1:                                             // Show tiny tty2oled Logo
-      oled.clearDisplay();
-      x=random(DispWidth - tty2oled_logo32_width);
-      y=random(DispHeight - tty2oled_logo32_height);
-      oled.drawXBitmap(x, y, tty2oled_logo32, tty2oled_logo32_width, tty2oled_logo32_height, SSD1322_WHITE);
-      oled.display();
-    break;
-    case 2:                                             // Show tiny MiSTer Logo
-      oled.clearDisplay();
-      x=random(DispWidth - mister_logo32_width);
-      y=random(DispHeight - mister_logo32_height);
-      oled.drawXBitmap(x, y, mister_logo32, mister_logo32_width, mister_logo32_height, SSD1322_WHITE);
-      oled.display();
-    break;
-    case 3:                                             // Show 1/4 Version of the actual Core
-      x=random(DispWidth - DispWidth/2);
-      y=random(DispHeight - DispHeight/2);
-      oled_showSmallCorePicture(x,y);
-    break;
-#ifdef ESP32X
-    case 4:                                             // Show Time for ESP32
-      oled.clearDisplay();
-      if (timeIsSet) {
-        u8g2.setFont(u8g2_font_luBS24_tf);
-        actTime=rtc.getTime("%H:%M");
-        x=random(DispWidth - u8g2.getUTF8Width(actTime.c_str()));
-        y=random(u8g2.getFontAscent(), DispHeight);
-        u8g2.setCursor(x,y);
-        u8g2.print(actTime);
-      }
-      else {
-        oled_showcenterredtext("Time not set!",9);
-      }
-      oled.display();
-    break;
-    case 5:                                            // Show Date for ESP32
-      oled.clearDisplay();
-      if (timeIsSet) {
-        u8g2.setFont(u8g2_font_luBS14_tf);
-        actTime=rtc.getTime("%d-%b-%y");
-        x=random(DispWidth - u8g2.getUTF8Width(actTime.c_str()));
-        y=random(u8g2.getFontAscent(), DispHeight);
-        u8g2.setCursor(x,y);
-        u8g2.print(actTime);
-      }
-      else {
-        oled_showcenterredtext("Date not set!",9);
-      }
-      oled.display();
-    break;
-#endif
-    default:
-      oled.clearDisplay();
-      x=random(DispWidth - tty2oled_logo32_width);
-      y=random(DispHeight - tty2oled_logo32_height);
-      oled.drawXBitmap(x, y, tty2oled_logo32, tty2oled_logo32_width, tty2oled_logo32_height, SSD1322_WHITE);
-      oled.display();
-    break;
-  } //end switch
-}
 
 
 // --------------------------------------------------------------
@@ -1754,8 +1439,6 @@ void oled_showcorename() {
   Serial.println("Called Command CMDSNAM");
 #endif
 
-  //ScreenSaverTimer=0;                        // Reset ScreenSaver-Timer
-  //ScreenSaverLogoTimer=0;                    // Reset ScreenSaverLogo-Timer
   contrast_fadeTo(contrast);
   oled_showcenterredtext(actCorename,9);
 }
@@ -1999,8 +1682,6 @@ void oled_showpic(void) {
   Serial.println("Called Command CMDSPIC");
 #endif
 
-  ScreenSaverTimer=0;                        // Reset ScreenSaver-Timer
-  ScreenSaverLogoTimer=0;                    // Reset ScreenSaverLogo-Timer
   contrast_fadeTo(contrast);
 
   if (newCommand.length()>7) {                       // Parameter added?
@@ -2100,11 +1781,6 @@ void oled_drawlogo(uint8_t e) {
   Serial.printf("Draw Logo with Transition Effect No. %d\n",e);
 #endif
 
-  ScreenSaverTimer=0;                        // Reset ScreenSaver-Timer
-  ScreenSaverLogoTimer=0;                    // Reset ScreenSaverLogo-Timer
-#ifdef ESP32X  
-  ShowAnimatedScreenSaverNo=random(MinAnimatedScreenSaver, MaxAnimatedScreenSaver+1);
-#endif
   contrast_fadeTo(contrast);
 
   switch (e) {
@@ -2496,8 +2172,6 @@ void oled_drawlogo(uint8_t e) {
 // takes - at contrast 0, which on this panel is nowhere near dark enough to
 // hide it, so it flashed just before every fade-in.
 void oled_renderlogo(void) {
-  ScreenSaverTimer=0;                        // Reset ScreenSaver-Timer
-  ScreenSaverLogoTimer=0;                    // Reset ScreenSaverLogo-Timer
   oled.clearDisplay();
   if (actPicType == XBM) oled.drawXBitmap(0, 0, srcBin, DispWidth, DispHeight, SSD1322_WHITE);
   if (actPicType == GSC) oled.draw4bppBitmap(srcBin);
@@ -3075,94 +2749,7 @@ void oled_readnsetedtiv(void) {
 // -------------- ESP32 Functions -------------------- 
 #ifdef ESP32X  // OTA, Reset and Time are only for ESP32
 
-// --------------------------------------------------------------
-// ----------- Draw the ScreenSaver Flying Toaster --------------
-// --------------------------------------------------------------
-void oled_drawScreenSaverToaster() {
-  uint8_t i, f;
-  int16_t x, y;
-  bool resort = false;     // By default, don't re-sort depths
 
-  oled.clearDisplay();
-  for(i=0; i<TOAST_FLYERS; i++) { // For each flyer...
-    // First draw each item...
-    f = (flyer[i].frame == 255) ? 4 : (flyer[i].frame++ & 3); // Frame #
-    x = flyer[i].x / TOAST_MPIX;
-    y = flyer[i].y / TOAST_MPIX;
-    oled.drawBitmap(x, y, tmask[f], 32, 32, SSD1322_BLACK);
-    oled.drawBitmap(x, y, timg[f], 32, 32, SSD1322_WHITE);
-
-    // Update position..
-    flyer[i].x -= flyer[i].depth * 2; // Update position based on depth,
-    flyer[i].y += flyer[i].depth;     // for a sort of pseudo-parallax effect.
-
-    // ..checking if item moved off screen the re-set it.
-    if((flyer[i].y >= (64*TOAST_MPIX)) || (flyer[i].x <= (-32*TOAST_MPIX))) {
-      //flyer[i].x = (-32 + random(255+32)) * TOAST_MPIX;
-      flyer[i].x = (-32 + random(256+32+32)) * TOAST_MPIX;
-      if (flyer[i].x >= 256 * TOAST_MPIX) {
-        flyer[i].y = (-32 + random(63+32)) * TOAST_MPIX;
-        flyer[i].x = 256 * TOAST_MPIX;      
-      }
-      else {
-        flyer[i].y = (-32) * TOAST_MPIX;
-      }
-      flyer[i].frame = random(3) ? random(4) : 255; // 66% toaster, else toast
-      flyer[i].depth = 10 + random(TOAST_MPIX);
-      resort = true;
-    }
-  }
-  oled.display();
-  delay(TOAST_DELAY);
-}
-
-
-// --------------------------------------------------------------
-// ------ Calculate Random Values, used by the StarField --------
-// --------------------------------------------------------------
-int getRandom(int lower, int upper) {
-    return lower + static_cast<int>(rand() % (upper - lower + 1));      // return a random number between lower and upper bound
-}
-
-
-// --------------------------------------------------------------
-// -------------- Draw the ScreenSaver StarField ----------------
-// --------------------------------------------------------------
-void oled_drawScreenSaverStarField() {
-  int origin_x = oled.width() / 2;
-  int origin_y = oled.height() / 2;
-  int x,y,s,c;
-  double k;
-  
-   oled.clearDisplay();
-  // Iterate through the stars reducing the z co-ordinate in order to move the Star closer.
-  for (int i = 0; i < starCount; ++i) {
-    stars[i][2] -= 0.19;
-    // if the star has moved past the screen (z < 0) reposition it far away with random x and y positions.
-    if (stars[i][2] <= 0) {
-      stars[i][0] = getRandom(-25, 25);
-      stars[i][1] = getRandom(-25, 25);
-      stars[i][2] = maxDepth;
-    }
-
-    // Convert the 3D coordinates to 2D using perspective projection.
-    k = oled.width() / stars[i][2];
-    x = static_cast<int>(stars[i][0] * k + origin_x);
-    y = static_cast<int>(stars[i][1] * k + origin_y);
-
-    // Draw the star (if it is visible in the screen). Distant stars are smaller and brighter than closer stars.
-    if ((0 <= x and x < oled.width()) and (0 <= y and y < oled.height())) {
-      s = (1 - stars[i][2] / maxDepth) * 4;     // Star Size
-      //c = (1 - stars[i][2] / maxDepth) * 20;  // Color
-	  c = stars[i][2] / -2 + 16;                // Star Color, z=32..0 => c=0..16 
-      if (c<0) c=0;
-      if (c>15) c=15;
-      oled.fillRect(x, y, s, s, c);
-      //oled.fillRect(x, y, s, s, 15);
-    }
-  }
-  oled.display();
-}
 
 // --------------------------------------------------
 // ----------------- Show Time ---------------------- 

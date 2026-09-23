@@ -62,19 +62,14 @@ D="${TMP}/dist"
 # that changes its mind with $LANG is no test.
 ok "with version-free asset names, so latest/download finds them" \
    "$(cd "${D}" && LC_ALL=C ls | LC_ALL=C sort | tr '\n' ' ')" \
-   "SHA256SUMS VERSION tty2oledplus-esp32s3.bin tty2oledplus-lolin32.bin tty2oledplus-pics.tar.gz tty2oledplus.tar.gz tty2oledplus_install.sh tty2oledplus_update.sh update_tty2oledplus.sh "
-# One release only: an install older than 0.4.8b has an updater that fetches
-# an asset by that exact name, and would fail on a release without it. The
-# copy is the new updater, byte for byte.
-ok "the pre-0.4.8b updater name is published too" \
-   "$(cmp -s "${D}/update_tty2oledplus.sh" "${D}/tty2oledplus_update.sh" && echo same)" "same"
+   "SHA256SUMS VERSION tty2oledplus-esp32s3.bin tty2oledplus-lolin32.bin tty2oledplus-pics.tar.gz tty2oledplus.tar.gz tty2oledplus_install.sh tty2oledplus_update.sh "
 # GitHub compares asset names without case: tty2oledplus_install.sh beside
 # tty2oledplus_installer.sh failed the upload of v0.4.1b with "already exists".
 ok "no two asset names differ only in case" \
    "$(cd "${D}" && ls | tr '[:upper:]' '[:lower:]' | sort | uniq -d)" ""
 ok "VERSION says which" "$(cat "${D}/VERSION")" "${VERSION}"
 ok "every asset matches SHA256SUMS" "$(cd "${D}" && sha256sum -c --quiet SHA256SUMS 2>&1)" ""
-ok "SHA256SUMS lists all eight" "$(grep -c '' "${D}/SHA256SUMS")" "8"
+ok "SHA256SUMS lists all seven" "$(grep -c '' "${D}/SHA256SUMS")" "7"
 
 LISTING="$(tar tzf "${D}/tty2oledplus.tar.gz")"
 MISSING=""
