@@ -21,3 +21,7 @@ dist/
 
 # Python bytecode from running tools/*.py.
 __pycache__/
+
+# A boot screen of your own, converted and stored on the display by
+# tty2oledplus_settings. Yours, not the repo's.
+pics/boot.png

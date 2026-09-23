@@ -4,12 +4,15 @@
 # MISTER - it is installed as /media/fat/Scripts/tty2oledplus_uninstall.sh and
 # appears in the Scripts menu as tty2oledplus_uninstall.
 #
-#   --keep-settings    save tty2oled-user.ini and coretypes.ini beside the
-#                      install as *.saved instead of removing them
+#   --keep-settings    save what is yours - tty2oled-user.ini, coretypes.ini,
+#                      pics/boot.png and pics/user - into
+#                      /media/fat/tty2oledplus-saved instead of removing it
 #   --keep-bootimage   leave a boot image stored on the display alone
 #   --dry-run          list what would go, change nothing
-#   --yes              do not ask (the Scripts menu has no keyboard when
-#                      fb_terminal=0, so it never asks there anyway)
+#   --yes              do not ask. Without it this asks twice - whether to go
+#                      on, and what to do with your own files - through dialog
+#                      where there is a screen for it, and refuses to run at
+#                      all where it cannot ask
 #
 # What it removes, in order:
 #   - the stored boot screen on the display, so it boots to its built-in logo
@@ -39,6 +42,10 @@
 # /media/fat with a stand-in init script and no display.
 FAT="${T2OP_FAT:-/media/fat}"
 INSTALL="${FAT}/tty2oledplus"
+# Where "keep mine" puts them: one folder beside the install, not a scatter of
+# *.saved files, because what is kept is no longer only two inis - pics/user
+# is a folder and boot.png is a picture.
+SAVEDIR="${FAT}/tty2oledplus-saved"
 INIT="${T2OP_INIT:-${INSTALL}/S60tty2oled}"
 
 say()  { printf '\n==> %s\n' "$1"; }
@@ -157,6 +164,77 @@ unhook() {
   mv "${tmp}" "${f}" && note "removed the boot hook from ${f}"
 }
 
+# --- Asking first ----------------------------------------------------------
+# This removes things that cannot be put back, so it asks twice: once whether
+# to go on at all, and once what to do with the files that are the user's own
+# rather than ours.
+#
+# Through dialog when there is one, because of what the Scripts menu is: with
+# fb_terminal=1 this runs under agetty on tty2, and the input is as often a
+# pad as a keyboard - arrows and one button. dialog's yesno and menu are
+# exactly that shape, highlight and press A. A typed "y" is not: it needs a
+# keyboard, and a pad cannot answer it at all.
+#
+# Sets CONFIRM_KEEP to yes or no. Returns 1 for cancel, and cancel is the
+# default everywhere - the No button, Escape, and a dialog that fails to run.
+CONFIRM_KEEP="no"
+have_dialog() { [ "${T2OP_NO_DIALOG:-no}" != "yes" ] && command -v dialog >/dev/null 2>&1 && [ -t 0 ]; }
+
+confirm_removal() {
+  CONFIRM_KEEP="no"
+  if have_dialog; then
+    # --defaultno so the highlighted button is the one that changes nothing.
+    dialog --clear --title "Uninstall tty2oled+" --defaultno \
+      --yesno "This removes tty2oled+ from ${FAT}:
+
+  - the install folder, artwork and title index
+  - the display's stored boot image
+  - the startup entry and the Scripts menu entries
+
+The display's firmware is left alone.
+
+Are you sure?" 16 66 || { clear; return 1; }
+
+    local out tmp
+    tmp="$(mktemp /tmp/tty2oledplus-uninstall.XXXXXX)"
+    dialog --clear --title "Your own files" --default-item keep \
+      --menu "Keep the files that are yours rather than ours?
+
+Your settings (tty2oled-user.ini, coretypes.ini), your own
+banners in pics/user, and your boot.png." 16 66 3 \
+      keep   "Keep them - saved to $(basename "${SAVEDIR}")" \
+      delete "Remove everything, mine included" \
+      cancel "Cancel - change nothing" 2> "${tmp}"
+    local rc=$?
+    out="$(cat "${tmp}")"; rm -f "${tmp}"
+    clear
+    [ "${rc}" -eq 0 ] || return 1
+    case "${out}" in
+      keep)   CONFIRM_KEEP="yes"; return 0 ;;
+      delete) CONFIRM_KEEP="no";  return 0 ;;
+      *)      return 1 ;;
+    esac
+  fi
+
+  # No dialog, or nothing to draw in. With fb_terminal=0 the Scripts menu runs
+  # this with the OSD showing its output and no terminal at all, so there is
+  # no way to ask - and something this destructive must not proceed on
+  # silence. --yes is the way to say it outright.
+  if [ ! -t 0 ]; then
+    printf '    Nothing can be asked here - there is no terminal to ask in.\n'
+    printf '    Run it again with --yes, or set fb_terminal=1 in MiSTer.ini\n'
+    printf '    so the Scripts menu gives it a screen to draw on.\n'
+    return 1
+  fi
+  printf '    This removes the install, your settings and the boot hook. Type y to go on: '
+  local answer; read -r answer
+  case "${answer}" in y|Y|yes|YES) ;; *) return 1 ;; esac
+  printf '    Keep your settings and your own artwork? [y/N]: '
+  read -r answer
+  case "${answer}" in y|Y|yes|YES) CONFIRM_KEEP="yes" ;; esac
+  return 0
+}
+
 # In main() and called on the last line, because this script deletes itself:
 # bash reads a script as it runs it.
 main() {
@@ -178,10 +256,9 @@ main() {
 
   say "Removing tty2oled+ from ${FAT}"
   [ "${DRYRUN}" = "yes" ] && note "dry run - nothing will be changed"
-  if [ "${assume_yes}" = "no" ] && [ "${DRYRUN}" = "no" ] && [ -t 0 ]; then
-    printf '    This removes the install, your settings and the boot hook. Type y to go on: '
-    local answer; read -r answer
-    case "${answer}" in y|Y|yes|YES) ;; *) die "Nothing was changed." ;; esac
+  if [ "${assume_yes}" = "no" ] && [ "${DRYRUN}" = "no" ]; then
+    confirm_removal || die "Nothing was changed."
+    [ "${CONFIRM_KEEP}" = "yes" ] && keep_settings="yes"
   fi
 
   if [ "${keep_bootimage}" = "no" ]; then
@@ -199,13 +276,27 @@ main() {
   fi
 
   if [ "${keep_settings}" = "yes" ]; then
-    say "Keeping your settings"
-    local f
-    for f in tty2oled-user.ini coretypes.ini; do
+    # Everything here is the user's own work, not ours: two inis they edited,
+    # the banners they drew, and the boot screen they chose. pics/banner,
+    # pics/alt and pics/icon are the release's and are not kept - a new
+    # install brings them back.
+    say "Keeping what is yours"
+    local f kept=0
+    for f in tty2oled-user.ini coretypes.ini pics/boot.png pics/user; do
       [ -e "${INSTALL}/${f}" ] || continue
-      if [ "${DRYRUN}" = "yes" ]; then note "would save ${FAT}/tty2oledplus-${f}.saved"
-      else cp "${INSTALL}/${f}" "${FAT}/tty2oledplus-${f}.saved" && note "saved ${FAT}/tty2oledplus-${f}.saved"; fi
+      if [ "${DRYRUN}" = "yes" ]; then note "would save ${SAVEDIR}/$(basename "${f}")"
+      else
+        mkdir -p "${SAVEDIR}" 2>/dev/null
+        cp -r "${INSTALL}/${f}" "${SAVEDIR}/" && { note "saved ${SAVEDIR}/$(basename "${f}")"; kept=$((kept + 1)); }
+      fi
     done
+    if [ "${DRYRUN}" = "no" ]; then
+      if [ "${kept}" -gt 0 ]; then
+        note "put them back by copying them into ${INSTALL} after installing again."
+      else
+        note "nothing of yours to keep - no edited settings and no artwork of your own."
+      fi
+    fi
   fi
 
   # Before the folder goes: the record of what was done to MiSTer.ini is in it.

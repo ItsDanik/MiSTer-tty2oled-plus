@@ -57,8 +57,10 @@ import argparse
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
+import zlib
 
 ICON_W, ICON_H = 86, 64
 BOOT_W, BOOT_H = 256, 54
@@ -139,6 +141,242 @@ def load_grey_pillow(path, w, h, stretch, dither, invert):
     # tobytes() rather than getdata(): mode "L" is one byte per pixel, and
     # getdata() is deprecated in Pillow 14.
     return list(img.tobytes())
+
+
+# ---------------------------------------------------------------------------
+# The standard-library backend
+# ---------------------------------------------------------------------------
+# A MiSTer has neither Pillow nor ImageMagick, and tty2oledplus_settings runs
+# this there to turn a boot.png into the boot screen. zlib is in the standard
+# library and the rest of PNG is a 13-byte header, one filter byte per
+# scanline and an optional palette, so the decoder is worth more than the
+# dependency would be.
+#
+# Interlaced PNGs are refused rather than half-read: Adam7 is seven passes of
+# this same work for a format nothing writes by default.
+
+_PNG_SIG = b"\x89PNG\r\n\x1a\n"
+
+
+def _png_chunks(data):
+    if data[:8] != _PNG_SIG:
+        die("not a PNG file (no PNG signature)")
+    i = 8
+    while i + 8 <= len(data):
+        (length,) = struct.unpack(">I", data[i:i + 4])
+        kind = data[i + 4:i + 8]
+        body = data[i + 8:i + 8 + length]
+        if len(body) != length:
+            die("PNG is truncated")
+        yield kind, body
+        i += 8 + length + 4          # +4 for the CRC, which zlib already covers
+    return
+
+
+def _paeth(a, b, c):
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    if pa <= pb and pa <= pc:
+        return a
+    return b if pb <= pc else c
+
+
+def _png_unfilter(raw, width, height, bpp, stride):
+    """Undo the per-scanline filter. Returns one bytearray of all the rows."""
+    out = bytearray(height * stride)
+    prev = bytearray(stride)
+    pos = 0
+    for y in range(height):
+        ft = raw[pos]
+        pos += 1
+        line = bytearray(raw[pos:pos + stride])
+        pos += stride
+        if ft == 1:
+            for i in range(bpp, stride):
+                line[i] = (line[i] + line[i - bpp]) & 0xFF
+        elif ft == 2:
+            for i in range(stride):
+                line[i] = (line[i] + prev[i]) & 0xFF
+        elif ft == 3:
+            for i in range(stride):
+                a = line[i - bpp] if i >= bpp else 0
+                line[i] = (line[i] + ((a + prev[i]) >> 1)) & 0xFF
+        elif ft == 4:
+            for i in range(stride):
+                a = line[i - bpp] if i >= bpp else 0
+                c = prev[i - bpp] if i >= bpp else 0
+                line[i] = (line[i] + _paeth(a, prev[i], c)) & 0xFF
+        elif ft != 0:
+            die(f"PNG uses filter type {ft}, which is not one of 0-4")
+        out[y * stride:(y + 1) * stride] = line
+        prev = line
+    return out
+
+
+def _png_samples(line, depth, count):
+    """The `count` samples packed into one scanline, each scaled to 0..255."""
+    if depth == 8:
+        return list(line[:count])
+    if depth == 16:
+        return [line[i * 2] for i in range(count)]      # high byte is enough
+    out = []
+    per = 8 // depth
+    mask = (1 << depth) - 1
+    scale = 255 // mask                                  # 1->255, 2->85, 4->17
+    for i in range(count):
+        b = line[i // per]
+        shift = 8 - depth * (i % per + depth // depth)
+        shift = 8 - depth - depth * (i % per)
+        out.append(((b >> shift) & mask) * scale)
+    return out
+
+
+def png_read_grey(path):
+    """Decode a PNG to (width, height, [grey 0..255]), compositing on black."""
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError as e:
+        die(f"cannot read {path} ({e.__class__.__name__})")
+
+    width = height = depth = ctype = interlace = None
+    palette = b""
+    trns = b""
+    idat = bytearray()
+    for kind, body in _png_chunks(data):
+        if kind == b"IHDR":
+            width, height, depth, ctype, _comp, _filt, interlace = \
+                struct.unpack(">IIBBBBB", body[:13])
+        elif kind == b"PLTE":
+            palette = body
+        elif kind == b"tRNS":
+            trns = body
+        elif kind == b"IDAT":
+            idat += body
+        elif kind == b"IEND":
+            break
+    if width is None:
+        die("PNG has no header chunk")
+    if interlace:
+        die("interlaced PNGs are not supported - save it without interlacing")
+    if not width or not height:
+        die("PNG has no pixels")
+
+    try:
+        raw = zlib.decompress(bytes(idat))
+    except zlib.error as e:
+        die(f"PNG image data will not decompress ({e})")
+
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(ctype)
+    if channels is None:
+        die(f"PNG colour type {ctype} is not one this understands")
+    if ctype == 3 and not palette:
+        die("PNG says it is paletted but carries no palette")
+
+    bits = channels * depth
+    stride = (width * bits + 7) // 8
+    bpp = max(1, bits // 8)
+    if len(raw) < height * (stride + 1):
+        die("PNG image data is shorter than its own header says")
+    rows = _png_unfilter(raw, width, height, bpp, stride)
+
+    # Straight off the ITU-R BT.601 luma weights, the same ones Pillow's
+    # convert("L") uses, so the three backends agree on a colour picture.
+    grey = []
+    for y in range(height):
+        line = rows[y * stride:(y + 1) * stride]
+        s = _png_samples(line, depth, width * channels)
+        for x in range(width):
+            if ctype == 0:
+                r = g = b = s[x]
+                a = 255
+            elif ctype == 4:
+                r = g = b = s[x * 2]
+                a = s[x * 2 + 1]
+            elif ctype == 3:
+                idx = s[x] // (255 // ((1 << depth) - 1)) if depth < 8 else s[x]
+                off = idx * 3
+                if off + 2 >= len(palette):
+                    die(f"PNG palette has no entry {idx}")
+                r, g, b = palette[off], palette[off + 1], palette[off + 2]
+                a = trns[idx] if idx < len(trns) else 255
+            else:
+                r, g, b = s[x * channels], s[x * channels + 1], s[x * channels + 2]
+                a = s[x * channels + 3] if ctype == 6 else 255
+            # Composited onto black, so transparency reads as background
+            # rather than as white - what the other two backends do. Per
+            # channel and before the luma, in that order and rounded, because
+            # that is the order Pillow composites in and the three backends
+            # are held to the same output.
+            if a != 255:
+                r = (r * a + 127) // 255
+                g = (g * a + 127) // 255
+                b = (b * a + 127) // 255
+            grey.append((r * 299 + g * 587 + b * 114 + 500) // 1000)
+    return width, height, grey
+
+
+def _resample(src, sw, sh, dw, dh):
+    """Area-average to dw x dh. Degenerates to nearest when scaling up."""
+    if (sw, sh) == (dw, dh):
+        return list(src)
+    out = []
+    for y in range(dh):
+        y0, y1 = y * sh // dh, max(y * sh // dh + 1, (y + 1) * sh // dh)
+        for x in range(dw):
+            x0, x1 = x * sw // dw, max(x * sw // dw + 1, (x + 1) * sw // dw)
+            total = n = 0
+            for yy in range(y0, y1):
+                row = yy * sw
+                for xx in range(x0, x1):
+                    total += src[row + xx]
+                    n += 1
+            out.append(total // n)
+    return out
+
+
+def load_grey_pure(path, w, h, stretch, dither, invert):
+    sw, sh, grey = png_read_grey(path)
+
+    if stretch or (sw, sh) == (w, h):
+        pixels = _resample(grey, sw, sh, w, h)
+    else:
+        # Fit and centre on black, scaling up as well as down - the same
+        # "scaled to fit" both other backends do.
+        scale = min(w / sw, h / sh)
+        fw, fh = max(1, int(sw * scale + 0.5)), max(1, int(sh * scale + 0.5))
+        fitted = _resample(grey, sw, sh, fw, fh)
+        pixels = [0] * (w * h)
+        ox, oy = (w - fw) // 2, (h - fh) // 2
+        for y in range(fh):
+            row = (y + oy) * w + ox
+            pixels[row:row + fw] = fitted[y * fw:(y + 1) * fw]
+
+    if invert:
+        pixels = [255 - p for p in pixels]
+
+    if dither:
+        # Floyd-Steinberg onto the sixteen levels, in floats so the error
+        # carries. Small enough to be instant at 256x64.
+        buf = [float(p) for p in pixels]
+        for y in range(h):
+            for x in range(w):
+                i = y * w + x
+                old = buf[i]
+                new = level(max(0, min(255, int(round(old))))) * 17
+                buf[i] = new
+                err = old - new
+                if x + 1 < w:
+                    buf[i + 1] += err * 7 / 16
+                if y + 1 < h:
+                    if x:
+                        buf[i + w - 1] += err * 3 / 16
+                    buf[i + w] += err * 5 / 16
+                    if x + 1 < w:
+                        buf[i + w + 1] += err * 1 / 16
+        pixels = [max(0, min(255, int(round(v)))) for v in buf]
+
+    return pixels
 
 
 def load_grey_magick(path, w, h, stretch, dither, invert):
@@ -239,10 +477,11 @@ def main():
     ap.add_argument("--header", action="store_true",
                     help="write a C header for the firmware to compile in "
                          "instead of a .gsc; the array is named after --out")
-    ap.add_argument("--backend", choices=("auto", "pillow", "magick"),
+    ap.add_argument("--backend", choices=("auto", "pillow", "magick", "pure"),
                     default="auto",
                     help="image library to use; auto is Pillow when installed, "
-                         "ImageMagick otherwise")
+                         "then ImageMagick, then the built-in PNG reader - "
+                         "which is what a MiSTer has, having neither")
     args = ap.parse_args()
 
     if args.boot and args.banner:
@@ -269,15 +508,21 @@ def main():
                 import PIL  # noqa: F401
                 backend = "pillow"
             except ImportError:
-                backend = "magick"
+                backend = "magick" if (shutil.which("magick") or shutil.which("convert")) \
+                          else "pure"
         if backend == "pillow":
             try:
                 import PIL  # noqa: F401
             except ImportError:
                 die("--backend pillow, but Pillow is not installed")
             pixels = load_grey_pillow(args.image, w, h, args.stretch, args.dither, args.invert)
-        else:
+        elif backend == "magick":
             pixels = load_grey_magick(args.image, w, h, args.stretch, args.dither, args.invert)
+        else:
+            # PNG only - the format the MiSTer path actually gets, and the one
+            # the standard library can reach without a decoder for each of the
+            # others.
+            pixels = load_grey_pure(args.image, w, h, args.stretch, args.dither, args.invert)
 
     if len(pixels) != w * h:
         die(f"got {len(pixels)} pixels, expected {w * h}")

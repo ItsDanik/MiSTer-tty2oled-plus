@@ -173,11 +173,12 @@ with scrolling text and an icon panel.
 | `tests/` | 1546 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
-| `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
+| `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation **and MiSTer**: three backends, the third being a PNG reader built on the standard library, which is what the MiSTer has. |
 | `tools/make-screenshots.sh`, `tools/screenshots/` | The README's screenshots. Compiles the display headers against the real GFX/u8g2 libraries, composes each screen into a real framebuffer and writes `docs/img/*.png`. Re-run it when a layout changes. Workstation. |
 | `pics/icon/` | The icons themselves, 27 core names over 26 systems; same path as on the MiSTer. |
 | `pics/banner/`, `pics/alt/` | The core artwork pack, 1768 banners and 137 alternatives. Upstream's, vendored, converted to one format and split. |
 | `pics/user/` | The user's own banners. Empty here, and no release writes into it. |
+| `pics/boot.png` | The user's boot screen, if they have one. Gitignored; no release writes it. |
 | `tools/tty2oled-bootimg.sh` | Installs/clears the stored boot screen. **On the MiSTer**. |
 | `tools/dat2index.awk`, `tools/index-emit.awk` | The DAT parser and index emitter it drives. |
 | `tools/build-tty2oled.sh` | Builds the firmware with arduino-cli. Runs on the workstation. |
@@ -672,6 +673,22 @@ transfer is dropped rather than half-applied.
 
 ## The uninstaller, and why the init script places it
 
+**It asks twice, with `dialog`, and cancel is the default of every path.**
+Once whether to go on at all (`--yesno`, `--defaultno`), then what to do with
+the files that are the user's rather than ours (`--menu`: keep / delete /
+cancel). Both are arrows-and-one-button widgets for the same reason the
+settings editor's pickers are, and a typed "y" is not one: a pad cannot answer
+it. Keeping copies `tty2oled-user.ini`, `coretypes.ini`, `pics/boot.png` and
+`pics/user` into `${FAT}/tty2oledplus-saved` - one folder rather than a
+scatter of `*.saved` files, because what is kept is no longer only two inis.
+`pics/banner`, `pics/alt` and `pics/icon` are the release's and are not kept;
+a new install brings them back.
+
+With no terminal to ask in - `fb_terminal=0`, where the Scripts menu shows the
+OSD and nothing else - it **refuses** rather than proceeding on silence, and
+says that `--yes` is how to mean it. Proceeding was the old behaviour and is
+the wrong answer for something that cannot be undone.
+
 `tty2oledplus_uninstall` in the Scripts menu removes the install folder, the
 boot hook and the comment above it, every Scripts entry, the pid file and the
 logs, and the boot image in the display's own flash - then itself, but only
@@ -768,6 +785,40 @@ explained to the user:
 `dialog` needs a terminal. From the Scripts menu that means `fb_terminal=1`
 (the default); with it off the script says so and exits 2, as `ini_settings.sh`
 does, rather than letting dialog fail into the OSD.
+
+**Every picker that chooses one thing is a `--menu`, never a `--radiolist`.**
+A radiolist hands back the tag that is already switched *on* unless Space is
+pressed on the one you want, so arrowing down to a new effect and pressing
+Enter stored the old one and the editor looked as though it were ignoring the
+change - which is exactly how it was reported. The Scripts menu's framebuffer
+terminal is driven by a pad as often as a keyboard, and "arrow and press A" is
+the whole vocabulary there; a menu returns what is highlighted, which is that.
+`--default-item` opens the list on the value in force, since there is no radio
+dot left to mark it. The field lists stay checklists - they choose several
+things and cannot be a menu - and are the only ones that say Space toggles.
+`test-settings.sh` models both widgets with a fake `dialog` and drives the
+editor through them, which is what distinguishes the two.
+
+**The boot screen is an action, not a setting.** It lives in the ESP32's own
+flash, so putting one there is a serial transfer rather than a line in an ini.
+The whole interface is a file: `pics/boot.png`, converted by `png2gsc.py` and
+handed to `tty2oled-bootimg.sh set`. The `.gsc` in between is a build artifact
+and is removed whether the transfer worked or not - leaving it would put 8KB
+of hex beside the user's artwork that nothing reads and no update removes. The
+PNG stays, which is what makes it survivable: no archive carries that name, so
+an update cannot overwrite it, and after a reflash the same entry sends it
+again.
+
+`png2gsc.py` is in `MANIFEST_TOOLS` for this, and needed a third backend to be
+worth shipping: a MiSTer has neither Pillow nor ImageMagick. `load_grey_pure`
+decodes PNG on `zlib` and `struct` alone - IHDR, the five scanline filters,
+bit depths 1/2/4/8/16 and colour types 0/2/3/4/6, interlaced files refused
+rather than half-read. It is held to the *same bytes* as the other two by
+`test-png2gsc.py`, which runs every case through all three; getting there took
+compositing alpha per channel before the luma and rounding both, because that
+is the order Pillow does it in. The settings editor names `--backend pure`
+rather than leaving it to `auto`, so a MiSTer that happens to have Pillow
+converts identically to one that does not.
 
 ## Running the tests
 
@@ -1020,6 +1071,26 @@ fork's version of copying `tty2oled-user.ini` over the user's.
 
 ## Things that cost time, recorded so they do not again
 
+- **A `--radiolist` answers with what is already ticked, not what is
+  highlighted.** Every single-choice picker in the settings editor was one, so
+  arrowing to a new transition and pressing Enter saved the old value and the
+  editor read as broken. dialog needs Space to move a radio dot, and the
+  Scripts menu is driven by a pad that may not have one. `--menu` returns the
+  highlighted tag, which is what the interaction actually is. Not caught
+  because nothing drove dialog at all - `test-settings.sh` covered the file it
+  writes, on the assumption that the widget handed over the right value. It
+  models both widgets now.
+- **An uninstaller that cannot ask must not proceed.** With `fb_terminal=0`
+  there is no terminal, `[ -t 0 ]` is false, and the old code took that as
+  permission - it removed the install without a word. Silence is not consent
+  for something that needs a reinstall to undo.
+- **The MiSTer has no image library.** Neither Pillow nor ImageMagick, so
+  anything that converts a picture *there* rather than on the workstation
+  needs its own decoder; `png2gsc.py` grew a standard-library PNG backend for
+  the boot screen. Holding it to byte-identical output against the other two
+  is what found the parts that are easy to get subtly wrong: alpha has to be
+  composited per channel *before* the luma, and both roundings have to match
+  Pillow's, or a transparent PNG comes out a level off in places.
 - **`FULLPATH` is the containing folder, not the ROM path.** The file name is
   in `CURRENTPATH`. Reading `FULLPATH` titles every game after its folder.
 - **Loading a ROM does not modify `/tmp/CORENAME`.** Watching that file alone

@@ -169,6 +169,11 @@ install() {
     bash "${ROOT}/tools/tty2oledplus_update.sh" "$@" > "${TMP}/out" 2>&1 </dev/null
 }
 said() { grep -c -- "$1" "${TMP}/out"; }
+# Anything the shell itself complains about, anywhere in a run. The suite
+# checks for the lines it expects to see; nothing checked for lines it should
+# never see, so a stray error from a script the updater calls would pass
+# unremarked - which is how one reached hardware.
+shell_errors() { grep -nEi 'syntax error|command not found|unexpected (token|EOF|end)|bad substitution|unbound variable|: not found|Permission denied' "${TMP}/out" | head -3; }
 flashed() { grep '^flash' "${CALLS}" | sed 's/^flash //'; }
 running() { if [ "$(cat "${STATE}" 2>/dev/null)" = running ]; then echo running; else echo stopped; fi; }
 set_installed_version() { sed -i "s/^TTY2OLED_VERSION=\"[^\"]*\"/TTY2OLED_VERSION=\"$1\"/" "${INSTALL}/tty2oled-system.ini"; }
@@ -178,6 +183,7 @@ section "installer: a first install"
 fresh_mister
 T2OP_HWINF="ttyack;ttyack;HWLOLIN32;0.3.0b;"$'\r\n'"ttyack;" install; RC="${?}"
 ok "it succeeds" "${RC}" "0"
+ok "and the shell complained about nothing" "$(shell_errors)" ""
 MISSING=""
 for f in ${MANIFEST_FILES} ${MANIFEST_DEFAULTS}; do [ -f "${INSTALL}/${f}" ] || MISSING="${MISSING} ${f}"; done
 for f in ${MANIFEST_TOOLS}; do [ -x "${INSTALL}/$(basename "${f}")" ] || MISSING="${MISSING} ${f}"; done
@@ -209,6 +215,7 @@ section "installer: nothing to do"
 echo "log_file_entry=1" > "${FAT}/MiSTer.ini"
 T2OP_HWINF="HWLOLIN32;${VERSION};" install; RC="${?}"
 ok "an up-to-date MiSTer succeeds" "${RC}" "0"
+ok "quietly" "$(shell_errors)" ""
 ok "and says there is nothing to do" "$(said 'nothing to do')" "1"
 ok "without flashing" "$(flashed)" ""
 ok "and the daemon it stopped to ask the display is running again" "$(running)" "running"
@@ -219,14 +226,24 @@ section "installer: an update keeps what is yours"
 echo 'TTYDEV="/dev/ttyUSB1"   # mine' > "${INSTALL}/tty2oled-user.ini"
 echo 'MYCORE=console' > "${INSTALL}/coretypes.ini"
 echo '# stale' >> "${INSTALL}/tty2oled.sh"
+mkdir -p "${INSTALL}/pics/user"
+echo bootpng > "${INSTALL}/pics/boot.png"
+echo mine    > "${INSTALL}/pics/user/NES.gsc"
 set_installed_version "0.0.1b"
 T2OP_HWINF="HWLOLIN32;${VERSION};" install; RC="${?}"
 ok "an update succeeds" "${RC}" "0"
+ok "with nothing for the shell to complain about" "$(shell_errors)" ""
 ok "the scripts are replaced" "$(grep -c '# stale' "${INSTALL}/tty2oled.sh")" "0"
 ok "your settings are not" "$(cat "${INSTALL}/tty2oled-user.ini")" 'TTYDEV="/dev/ttyUSB1"   # mine'
 ok "nor your core types" "$(cat "${INSTALL}/coretypes.ini")" "MYCORE=console"
 ok "a display already on this version is not reflashed" "$(flashed)" ""
 ok "an artwork pack already there is not fetched again" "$(said 'Installing the artwork pack')" "0"
+# pics/boot.png is the user's boot screen, and the settings editor turns it
+# into the stored image. It is in pics/, which an update writes into - so this
+# is the thing to prove rather than assume: no archive carries that name, and
+# nothing removes what it does not carry.
+ok "your boot.png survives an update"  "$(cat "${INSTALL}/pics/boot.png" 2>/dev/null)" "bootpng"
+ok "and your own banners with it"      "$(cat "${INSTALL}/pics/user/NES.gsc" 2>/dev/null)" "mine"
 ok "the boot hook is not added twice" "$(grep -c "${INSTALL}/S60tty2oled" "${FAT}/linux/user-startup.sh")" "1"
 
 rm "${INSTALL}/pics/banner/NES.gsc"
@@ -583,10 +600,96 @@ section "uninstaller: what it keeps when asked"
 fresh_mister
 T2OP_HWINF="HWLOLIN32;0.3.9b;" install
 echo 'TTYDEV="/dev/ttyUSB1"   # mine' > "${INSTALL}/tty2oled-user.ini"
+mkdir -p "${INSTALL}/pics/user" "${INSTALL}/pics/banner"
+echo mine   > "${INSTALL}/pics/user/NES.gsc"
+echo bootpng > "${INSTALL}/pics/boot.png"
+echo theirs > "${INSTALL}/pics/banner/SNES.gsc"
+SAVED="${FAT}/tty2oledplus-saved"
 uninstall --keep-settings
-ok "--keep-settings saves your ini" "$(cat "${FAT}/tty2oledplus-tty2oled-user.ini.saved")" 'TTYDEV="/dev/ttyUSB1"   # mine'
-ok "and your core types" "$(yesno test -e "${FAT}/tty2oledplus-coretypes.ini.saved")" "yes"
+ok "--keep-settings saves your ini" "$(cat "${SAVED}/tty2oled-user.ini")" 'TTYDEV="/dev/ttyUSB1"   # mine'
+ok "and your core types" "$(yesno test -e "${SAVED}/coretypes.ini")" "yes"
+# Since 0.5.9b it is not only the inis: the banners you drew and the boot
+# screen you chose are yours too, and nothing else on the MiSTer holds a copy.
+ok "and the banners you drew"  "$(cat "${SAVED}/user/NES.gsc")" "mine"
+ok "and your boot.png"         "$(cat "${SAVED}/boot.png")" "bootpng"
+# The artwork pack is not yours and a new install brings it back, so keeping
+# it would only be 80MB of duplicate.
+ok "but not the shipped artwork" "$(yesno test -e "${SAVED}/banner")" "no"
 ok "while the install still goes" "$(yesno test -e "${INSTALL}")" "no"
+
+# ---------------------------------------------------------------------------
+section "uninstaller: it asks first, and cancel means cancel"
+# ---------------------------------------------------------------------------
+# Removing an install cannot be undone, so it asks twice: whether to go on,
+# and what to do with the files that are the user's rather than ours. Through
+# dialog, because the Scripts menu under fb_terminal is driven by a pad as
+# often as a keyboard - arrows and one button, which is what a yesno and a
+# menu are and what a typed "y" is not.
+#
+# dialog is modelled rather than driven: the fake answers the yesno with
+# T2OP_FAKE_YESNO and the menu with T2OP_FAKE_MENU, and records that it was
+# asked at all.
+UBIN="${TMP}/ubin"; mkdir -p "${UBIN}"
+cat > "${UBIN}/dialog" <<'FAKE'
+#!/bin/bash
+for a in "$@"; do
+  case "${a}" in
+    --yesno) echo "asked yesno" >> "${FAKE_CALLS}"; exit "${T2OP_FAKE_YESNO:-0}" ;;
+    --menu)  echo "asked menu"  >> "${FAKE_CALLS}"
+             echo -n "${T2OP_FAKE_MENU:-keep}" >&2; exit 0 ;;
+  esac
+done
+exit 0
+FAKE
+chmod +x "${UBIN}/dialog"
+# -t 0 has to be true for it to ask at all, so the uninstaller is given a
+# terminal rather than </dev/null.
+ask_uninstall() {  # ask_uninstall [options] - no --yes, so it really asks
+  : > "${CALLS}"
+  script -qec "T2OP_FAT='${FAT}' T2OP_INIT='${TMP}/fake-init' PATH='${UBIN}:${PATH}' \
+    T2OP_FAKE_YESNO='${T2OP_FAKE_YESNO:-0}' T2OP_FAKE_MENU='${T2OP_FAKE_MENU:-keep}' \
+    FAKE_CALLS='${CALLS}' \
+    bash '${FAT}/Scripts/tty2oledplus_uninstall.sh' $*" /dev/null > "${TMP}/out" 2>&1
+}
+
+fresh_mister
+T2OP_HWINF="HWLOLIN32;0.3.9b;" install
+T2OP_FAKE_YESNO=1 ask_uninstall
+ok "answering No removes nothing"     "$(yesno test -e "${INSTALL}")" "yes"
+ok "and says so"                      "$(said 'Nothing was changed')" "1"
+ok "having asked"                     "$(grep -c 'asked yesno' "${CALLS}")" "1"
+ok "and not gone on to the second question" "$(grep -c 'asked menu' "${CALLS}")" "0"
+
+T2OP_FAKE_YESNO=0 T2OP_FAKE_MENU=cancel ask_uninstall
+ok "cancel on the second question removes nothing" "$(yesno test -e "${INSTALL}")" "yes"
+ok "having asked both"                "$(grep -c 'asked' "${CALLS}")" "2"
+
+T2OP_FAKE_YESNO=0 T2OP_FAKE_MENU=keep ask_uninstall
+ok "keep removes the install"         "$(yesno test -e "${INSTALL}")" "no"
+ok "and keeps what is yours"          "$(yesno test -e "${SAVED}/tty2oled-user.ini")" "yes"
+
+rm -rf "${SAVED}"
+fresh_mister
+T2OP_HWINF="HWLOLIN32;0.3.9b;" install
+T2OP_FAKE_YESNO=0 T2OP_FAKE_MENU=delete ask_uninstall
+ok "delete removes the install too"   "$(yesno test -e "${INSTALL}")" "no"
+ok "and keeps nothing"                "$(yesno test -e "${SAVED}")" "no"
+
+# Nowhere to ask: with fb_terminal=0 the Scripts menu runs this with no
+# terminal at all. Proceeding on silence is the wrong answer for something
+# that cannot be undone.
+fresh_mister
+T2OP_HWINF="HWLOLIN32;0.3.9b;" install
+: > "${CALLS}"
+T2OP_FAT="${FAT}" T2OP_INIT="${TMP}/fake-init" \
+  bash "${FAT}/Scripts/tty2oledplus_uninstall.sh" > "${TMP}/out" 2>&1 </dev/null
+ok "no terminal, so it refuses"       "$(yesno test -e "${INSTALL}")" "yes"
+ok "and says how to say yes anyway"   "$(said -- '--yes')" "1"
+ok "and what would give it a screen"  "$(said 'fb_terminal=1')" "1"
+
+# --yes is still the way to mean it, and still keeps nothing by default.
+uninstall
+ok "--yes goes straight through"      "$(yesno test -e "${INSTALL}")" "no"
 
 # Upstream's install is not ours to remove, whatever else we clean up.
 fresh_mister

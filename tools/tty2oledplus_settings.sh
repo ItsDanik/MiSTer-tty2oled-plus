@@ -347,6 +347,24 @@ setup_dialog() {
 # code; every caller here needs both, so they go through one place.
 DIALOG_OUT=""
 DIALOG_RC=0
+# Every picker that chooses one thing is a --menu, not a --radiolist.
+#
+# A radiolist hands back the tag that is already switched on unless the user
+# presses Space on the one they want; arrowing down and pressing Enter returns
+# the old value and looks for all the world like the editor ignoring the
+# change. A menu returns whatever is highlighted, which is what "move with the
+# d-pad and press A" means on a MiSTer - and the Scripts menu's framebuffer
+# terminal is driven by a pad as often as by a keyboard.
+#
+# --default-item opens the list on the value in force, so the current setting
+# is still visible without a radio dot to mark it.
+#
+# The one exception is the field lists, which choose several things and so
+# cannot be a menu. They get this note instead.
+pick_note() {
+  printf '\n\nSpace ticks and unticks. Enter when done.'
+}
+
 run_dialog() {
   local tmp
   tmp="$(mktemp /tmp/tty2oledplus-dialog.XXXXXX)"
@@ -387,12 +405,13 @@ edit_bool() {  # edit_bool <record>
   local key label help cur
   key="$(field "$1" 1)"; label="$(field "$1" 4)"; help="$(field "$1" 5)"
   cur="$(value_of "${key}")"
-  local on_state off_state
-  [ "${cur}" = "yes" ] && { on_state=on; off_state=off; } || { on_state=off; off_state=on; }
-  run_dialog --clear --title "${label}" \
-    --radiolist "${help}" 12 70 2 \
-    yes "On"  "${on_state}" \
-    no  "Off" "${off_state}" || return 1
+  # A menu, not a radiolist. See pick_note() below: a radiolist hands back
+  # whatever was already switched on unless Space is pressed, so arrowing to
+  # "Off" and pressing Enter saved "On".
+  run_dialog --clear --title "${label}" --default-item "${cur}" \
+    --menu "${help}" 12 70 2 \
+    yes "On" \
+    no  "Off" || return 1
   [ -n "${DIALOG_OUT}" ] && set_value "${key}" "${DIALOG_OUT}"
 }
 
@@ -403,11 +422,11 @@ edit_enum() {  # edit_enum <record>
   cur="$(value_of "${key}")"
   local IFS=';'
   for pair in ${spec}; do
-    items+=("${pair%%=*}" "${pair#*=}" "$([ "${pair%%=*}" = "${cur}" ] && echo on || echo off)")
+    items+=("${pair%%=*}" "${pair#*=}")
   done
   unset IFS
-  run_dialog --clear --title "${label}" \
-    --radiolist "${help}" "${DIALOG_HEIGHT}" 70 12 "${items[@]}" || return 1
+  run_dialog --clear --title "${label}" --default-item "${cur}" \
+    --menu "${help}" "${DIALOG_HEIGHT}" 70 12 "${items[@]}" || return 1
   [ -n "${DIALOG_OUT}" ] && set_value "${key}" "${DIALOG_OUT}"
 }
 
@@ -468,8 +487,10 @@ edit_list() {  # edit_list <record>
       --msgbox "There is nothing to choose from yet - pick the fields to show first." 8 60
     return 1
   }
+  # The one picker that cannot be a menu: several fields can be on at once.
+  # So it is the one that really does need Space, and says so.
   run_dialog --clear --title "${label}" \
-    --checklist "${help}" "${DIALOG_HEIGHT}" 70 10 "${items[@]}" || return 1
+    --checklist "${help}$(pick_note)" "${DIALOG_HEIGHT}" 70 10 "${items[@]}" || return 1
   set_value "${key}" "$(list_merge "${cur}" "${DIALOG_OUT}")"
 }
 
@@ -482,19 +503,18 @@ edit_prefix() {  # edit_prefix <record>
   local count n_cur
   count="$(printf '%s' "${list}" | wc -w)"
   n_cur="$(printf '%s' "${cur}" | wc -w)"
-  items+=("0" "(none)" "$([ "${n_cur}" -eq 0 ] && echo on || echo off)")
+  items+=("0" "(none)")
   # Three at most: the card has four rows and the firmware caps pinning one
   # below the row count, since pinning every row would leave nothing to page.
   local most=3
   [ "${count}" -lt "${most}" ] && most="${count}"
   n=1
   while [ "${n}" -le "${most}" ]; do
-    items+=("${n}" "$(list_prefix "${list}" "${n}")" \
-            "$([ "${n_cur}" -eq "${n}" ] && echo on || echo off)")
+    items+=("${n}" "$(list_prefix "${list}" "${n}")")
     n=$((n + 1))
   done
-  run_dialog --clear --title "${label}" \
-    --radiolist "${help}" "${DIALOG_HEIGHT}" 70 6 "${items[@]}" || return 1
+  run_dialog --clear --title "${label}" --default-item "${n_cur}" \
+    --menu "${help}" "${DIALOG_HEIGHT}" 70 6 "${items[@]}" || return 1
   [ -n "${DIALOG_OUT}" ] && set_value "${key}" "$(list_prefix "${list}" "${DIALOG_OUT}")"
 }
 
@@ -531,11 +551,119 @@ category_menu() {  # category_menu <category>
   done
 }
 
+# ---------------------------------------------------------------------------
+# The boot screen
+# ---------------------------------------------------------------------------
+# The picture the display shows at power-up, before the MiSTer has booted and
+# whether or not the SD card is even in. It lives in the ESP32's own flash, so
+# putting one there is a transfer over the serial port rather than a file
+# copy - which is why it is an action here and not a setting.
+#
+# The whole interface is a file: drop a PNG at pics/boot.png and pick this.
+# The .gsc it is converted to is a build artifact and is removed afterwards;
+# the PNG stays, so it survives updates (no release writes into pics/) and can
+# be sent again after a reflash.
+BOOTPNG="${INSTALL}/pics/boot.png"
+
+# png2gsc.py needs Pillow or ImageMagick on a workstation and has neither
+# here, so it carries a PNG reader built on the standard library. That is the
+# backend this asks for by name rather than leaving to "auto", so a MiSTer
+# that happens to have one of the others still converts the same bytes.
+bootimg_convert() {  # bootimg_convert <out.gsc>; prints what went wrong
+  local py
+  py="$(command -v python3 || command -v python)" || { printf 'no python on this MiSTer'; return 1; }
+  "${py}" "${INSTALL}/png2gsc.py" --boot --backend pure --out "$1" "${BOOTPNG}" 2>&1 \
+    || return 1
+  return 0
+}
+
+bootimg_menu() {
+  local gsc="${INSTALL}/pics/boot.gsc" out rc
+  while true; do
+    local stored="unknown"
+    out="$("${INSTALL}/tty2oled-bootimg.sh" status 2>/dev/null)"
+    case "${out}" in
+      *"custom"*) stored="an image of your own" ;;
+      *"legacy"*) stored="an older image, shown cropped" ;;
+      *"none"*|*"built-in"*) stored="the built-in tty2oled+ logo" ;;
+    esac
+    local have="no - put a 256x54 PNG at pics/boot.png"
+    [ -e "${BOOTPNG}" ] && have="yes - pics/boot.png"
+
+    run_dialog --clear --item-help --ok-label "Do it" --cancel-label "Back" \
+      --title "Boot screen" \
+      --menu "The picture the display shows at power-up. It is kept in the
+display's own flash, so it appears with the MiSTer still booting.
+
+Showing now: ${stored}
+Your picture: ${have}" "${DIALOG_HEIGHT}" 74 4 \
+      install "Use my pics/boot.png" \
+        "Converts it and stores it on the display. 256x54, up to 16 shades of grey; anything else is scaled to fit and centred on black." \
+      clear   "Back to the built-in logo" \
+        "Forgets the stored image. Your pics/boot.png is left where it is." \
+      || return 0
+
+    case "${DIALOG_OUT}" in
+      install)
+        if [ ! -e "${BOOTPNG}" ]; then
+          dialog --clear --title "Boot screen" --msgbox "There is no ${BOOTPNG} to use.
+
+Put a PNG there - 256x54, drawn in up to 16 shades of grey - and
+pick this again. Anything else is scaled to fit and centred." 12 68
+          continue
+        fi
+        clear
+        printf '\n==> Converting %s\n' "${BOOTPNG}"
+        out="$(bootimg_convert "${gsc}")"; rc=$?
+        if [ "${rc}" -ne 0 ]; then
+          rm -f "${gsc}"
+          dialog --clear --title "Boot screen" --msgbox "Could not convert it:
+
+${out}" 12 68
+          continue
+        fi
+        printf '==> Storing it on the display\n'
+        # The transfer stops the daemon for the port and starts it again.
+        out="$("${INSTALL}/tty2oled-bootimg.sh" set "${gsc}" 2>&1)"; rc=$?
+        # The .gsc is only ever a step on the way, so it goes whether the
+        # transfer worked or not; the PNG is what the user keeps.
+        rm -f "${gsc}"
+        if [ "${rc}" -eq 0 ]; then
+          dialog --clear --title "Boot screen" --msgbox "Stored. Power the display off and on to see it.
+
+pics/boot.png is still there, so you can send it again
+after a reflash." 11 68
+        else
+          dialog --clear --title "Boot screen" --msgbox "Could not store it:
+
+${out}" 14 68
+        fi ;;
+      clear)
+        dialog --clear --defaultno --title "Boot screen" \
+          --yesno "Forget the image stored on the display and go back to
+the built-in tty2oled+ logo?
+
+Your pics/boot.png is left where it is." 11 62 || continue
+        clear
+        out="$("${INSTALL}/tty2oled-bootimg.sh" clear 2>&1)"; rc=$?
+        if [ "${rc}" -eq 0 ]; then
+          dialog --clear --title "Boot screen" --msgbox "Back to the built-in logo." 7 50
+        else
+          dialog --clear --title "Boot screen" --msgbox "Could not clear it:
+
+${out}" 14 68
+        fi ;;
+    esac
+  done
+}
+
 main_menu() {
   local items=() c
   while true; do
     items=()
     for c in ${CATEGORIES}; do items+=("${c}" "$(cat_label "${c}")" ""); done
+    items+=("bootscreen" "Boot screen" \
+            "The picture the display shows at power-up. Put a PNG at pics/boot.png and store it on the display from here.")
     items+=("defaults" "Put everything back to the defaults" \
             "Removes every setting this editor manages from your ini, so the release's own values apply again.")
     local extra=()
@@ -548,7 +676,9 @@ Settings are written to tty2oled-user.ini and take effect when the display resta
       "${DIALOG_HEIGHT}" 74 12 "${items[@]}"
     case "${DIALOG_RC}" in
       0)
-        if [ "${DIALOG_OUT}" = "defaults" ]; then
+        if [ "${DIALOG_OUT}" = "bootscreen" ]; then
+          bootimg_menu
+        elif [ "${DIALOG_OUT}" = "defaults" ]; then
           dialog --clear --defaultno --title "Back to the defaults" \
             --yesno "Remove every setting this editor manages from your ini?
 

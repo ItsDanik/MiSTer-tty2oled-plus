@@ -8,7 +8,7 @@ file it writes. Where the daemon is the consumer the file goes through the
 daemon's own pipeline - `tail -n +4 | xxd -r -p` - rather than a parser written
 for the test, since that pipeline is the contract.
 
-Both image backends are covered where both are installed: Pillow, which is
+All three image backends are covered where all are installed: Pillow, which is
 what most people get, and ImageMagick, the fallback. They disagreed on three
 things before these tests existed - 16-bit input, which grey levels a photo
 lands on, and whether a small image is scaled up - so most checks run twice and
@@ -56,7 +56,10 @@ except ImportError:
     sys.exit(0)
 
 HAVE_MAGICK = bool(shutil.which("magick") or shutil.which("convert"))
-BACKENDS = ["pillow"] + (["magick"] if HAVE_MAGICK else [])
+# "pure" is the standard-library PNG reader, and it is not optional: it is the
+# only one a MiSTer has, and tty2oledplus_settings turns a boot.png into the
+# boot screen there.
+BACKENDS = ["pillow", "pure"] + (["magick"] if HAVE_MAGICK else [])
 
 shutil.rmtree(TMP, ignore_errors=True)
 os.makedirs(TMP)
@@ -205,11 +208,11 @@ for be in BACKENDS:
     ok(f"{be}: grey 128 lands on level 8 (the nearest)", row[128], "8")
     ok(f"{be}: grey 9 lands on level 1, not 0", row[9], "1")
 
-if len(BACKENDS) == 2:
-    worst = max(abs(int(a, 16) - int(b, 16)) for a, b in zip(ramps["pillow"], ramps["magick"]))
-    ok("the two backends agree on a ramp, pixel for pixel", worst, 0)
-else:
-    skip("the two backends agree on a ramp", "no ImageMagick")
+for other in BACKENDS[1:]:
+    worst = max(abs(int(a, 16) - int(b, 16)) for a, b in zip(ramps["pillow"], ramps[other]))
+    ok(f"pillow and {other} agree on a ramp, pixel for pixel", worst, 0)
+if not HAVE_MAGICK:
+    skip("pillow and magick agree on a ramp", "no ImageMagick")
 
 for be in BACKENDS:
     plain = body(fx(f"ramp.{be}.gsc"))

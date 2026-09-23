@@ -20,8 +20,12 @@ MANIFEST_FILES="tty2oled.sh tty2oled-meta.sh tty2oled-system.ini
 
 # Tools that run on the MiSTer. They land in the install folder flat, without
 # the tools/ prefix.
+# png2gsc.py is here as well as being a workstation tool: the settings editor
+# turns pics/boot.png into the stored boot screen on the MiSTer itself, and
+# its standard-library PNG backend is there so that needs nothing installed.
 MANIFEST_TOOLS="tools/tty2oled-diag.sh tools/flash-mister.sh tools/fw-segments.py
-                tools/tty2oled-capture.sh tools/tty2oled-bootimg.sh tools/tty2oled-boothook.sh"
+                tools/tty2oled-capture.sh tools/tty2oled-bootimg.sh tools/tty2oled-boothook.sh
+                tools/png2gsc.py"
 
 # Installed only when the MiSTer has none, because the user edits them.
 MANIFEST_DEFAULTS="coretypes.ini tty2oled-user.ini"

@@ -507,14 +507,37 @@ unset DIM_FADE_MS
 senddim >/dev/null
 ok "an ini without DIM_FADE_MS still sends the 6s default" "$(captured | tr -d '\r\n')" "CMDDIM,90,80,-1,6000"
 
+# The fade-slides' numbers come from the header that defines them, so the ini
+# and the firmware cannot drift apart about what is a fade and what is a wipe.
+FT="${ROOT}/MiSTer_SSD1322_USB/fadetransition.h"
+SLIDE_FIRST="$(sed -n 's/^#define EFFECT_SLIDE_FIRST  *\([0-9]*\).*/\1/p' "${FT}")"
+SLIDE_LAST="$(sed -n 's/^#define EFFECT_SLIDE_LAST  *\([0-9]*\).*/\1/p' "${FT}")"
+
 # The shipped defaults: full brightness, dimming to 80 of 255.
 ok "CONTRAST defaults to full" "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${CONTRAST}")" "255"
 ok "DIM_CONTRAST defaults to 80" "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${DIM_CONTRAST}")" "80"
 ok "the system ini no longer sets DIM_PERCENT" "$(grep -c '^DIM_PERCENT=' "${ROOT}/tty2oled-system.ini")" "0"
 ok "going dim defaults to 6s" "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${DIM_FADE_MS}")" "6000"
-ok "TRANSITION ships as the Fade" "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${TRANSITION}")" "-2"
-ok "every other fade defaults to 0.8s" \
-   "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${CONTRAST_FADE_MS} ${TRANSITION_FADE_MS}")" "800 800"
+# The shipped TRANSITION is a fade of some kind rather than a wipe - -2, or
+# one of the fade-slides - which is the whole of this fork's picture-changing
+# story. Which one is a matter of taste and may move between releases; that it
+# is not a wipe is not. Pinned against the firmware's own range so the ini and
+# the header cannot disagree about what counts.
+SHIPPED_T="$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${TRANSITION}")"
+ok "TRANSITION ships as a fade, not a wipe" \
+   "$([ "${SHIPPED_T}" = "-2" ] || { [ "${SHIPPED_T}" -ge "${SLIDE_FIRST}" ] 2>/dev/null && [ "${SHIPPED_T}" -le "${SLIDE_LAST}" ]; } && echo yes || echo no)" "yes"
+ok "and it is one the ini lists" \
+   "$(sed -n '/^# How one picture replaces the last/,/^TRANSITION=/p' "${ROOT}/tty2oled-system.ini" \
+      | grep -cE "(^#|[[:space:]]) +${SHIPPED_T}  [A-Za-z]")" "1"
+# Every fade time the ini ships has to be inside the firmware's cap, or the
+# firmware silently clamps it and the ini is describing something else.
+TCAP="$(sed -n 's/^#define TFADE_MS_MAX  *\([0-9]*\).*/\1/p' "${ROOT}/MiSTer_SSD1322_USB/fadetransition.h")"
+BAD=""
+for v in CONTRAST_FADE_MS TRANSITION_FADE_MS TRANSITION_BLANK_MS; do
+  n="$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; eval echo "\${${v}}")"
+  { [ "${n}" -ge 0 ] && [ "${n}" -le "${TCAP}" ]; } 2>/dev/null || BAD="${BAD} ${v}=${n}"
+done
+ok "every shipped fade time is one the firmware will take" "${BAD}" ""
 
 # ---------------------------------------------------------------------------
 section "the artwork pack is one folder of one format"
@@ -626,10 +649,7 @@ CASES="$(awk '/^void oled_drawlogo\(uint8_t e\) *\{/{on=1} on && /^    case [0-9
 LISTED="$(sed -n '/^# How one picture replaces the last/,/^TRANSITION=/p' "${ROOT}/tty2oled-system.ini" \
           | grep -oE '(^#|[[:space:]]) +-?[0-9]+  [A-Za-z]' | grep -oE -- '-?[0-9]+' | sort -n | tr '\n' ' ')"
 # The fade-slides are not oled_drawlogo cases - they are the Fade with a
-# drift - so their numbers come from the header that defines them.
-FT="${ROOT}/MiSTer_SSD1322_USB/fadetransition.h"
-SLIDE_FIRST="$(sed -n 's/^#define EFFECT_SLIDE_FIRST  *\([0-9]*\).*/\1/p' "${FT}")"
-SLIDE_LAST="$(sed -n 's/^#define EFFECT_SLIDE_LAST  *\([0-9]*\).*/\1/p' "${FT}")"
+# drift - so their numbers come from the header (derived above).
 SLIDES="$(seq "${SLIDE_FIRST}" "${SLIDE_LAST}" | tr '\n' ' ')"
 ok "the sketch's effects are 1..maxEffect" "${CASES}" "$(seq 1 "${MAXEFFECT}" | tr '\n' ' ')"
 ok "and the ini lists exactly those, plus -2, -1, 0 and the fade-slides" \

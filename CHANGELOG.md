@@ -4,6 +4,34 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.5.9b — 2026-09-24
+
+- **The settings editor saves what you picked.** Choosing a different
+  transition - or any other single-choice setting - and pressing Enter stored
+  the value that was already set, so the editor looked as though it were
+  ignoring you. The lists it used needed Space pressed on the entry you wanted
+  before Enter would take it, which is not something a d-pad can do. They are
+  plain menus now: move to what you want, press A, and that is what is saved.
+  Every list opens on the value in force, so you can still see what is set.
+
+- **A boot screen without a workstation.** Put a PNG at
+  `/media/fat/tty2oledplus/pics/boot.png` and pick **Boot screen** in
+  tty2oledplus_settings: it converts it, stores it on the display and tidies
+  up after itself. The same entry puts the built-in logo back. Draw it 256x54
+  in up to 16 shades of grey; anything else is scaled to fit and centred.
+  Your PNG stays where it is and no update touches it, so after a firmware
+  flash the same entry sends it again.
+
+- **The uninstaller asks before it removes anything.** Twice: whether to go
+  on, and what to do with the files that are yours - your settings, the
+  banners in `pics/user` and your `boot.png`. Keeping them copies them to
+  `/media/fat/tty2oledplus-saved` first; cancelling on either question changes
+  nothing. Both questions are arrows and one button, no typing. Where there is
+  no screen to ask on it now refuses rather than removing the install
+  silently; `--yes` still says you mean it.
+
+- **Pictures cross-fade sliding left by default,** in 400ms rather than 800.
+
 ## 0.5.8b — 2026-09-23
 
 - **One artwork folder, four kinds of picture.** `pics/GSC` and `pics_pri` are

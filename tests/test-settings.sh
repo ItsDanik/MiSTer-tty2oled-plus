@@ -34,6 +34,7 @@ ok() {
   fi
 }
 section() { printf '\n\033[1m%s\033[0m\n' "${1}"; }
+yesno() { if "$@" >/dev/null 2>&1; then echo yes; else echo no; fi; }
 
 # The editor as a library: every function, no menus.
 T2OP_SETTINGS_LIB=yes T2OP_INSTALL="${INSTALL}" . "${ROOT}/tools/tty2oledplus_settings.sh"
@@ -329,6 +330,219 @@ ok "no terminal, so it explains itself" \
    "$(printf '%s' "${OUT}" | grep -c 'needs a terminal')" "1"
 ok "and exits 2, as MiSTer's own editor does" "${RC}" "2"
 ok "having changed nothing"          "$(ini_get "${USR}" TRANSITION)" "5"
+
+# ---------------------------------------------------------------------------
+section "a picker returns what is highlighted, not what was already set"
+# ---------------------------------------------------------------------------
+# The bug this is here for: every single-choice picker was a --radiolist, and
+# a radiolist hands back the tag that is already switched *on* unless the user
+# presses Space on the one they want. Arrowing down to a new effect and
+# pressing Enter therefore stored the old one, and the editor looked as though
+# it were ignoring the change. On a MiSTer the Scripts menu is driven by a pad
+# as often as a keyboard, so "arrow and press A" is the whole vocabulary.
+#
+# dialog itself is not driven, but its two widgets are modelled exactly: a
+# fake on PATH that answers a --menu with the item the user moved to and a
+# --radiolist with whatever carries the "on" status, which is what each one
+# really does when Enter is pressed without Space.
+FAKEBIN="${TMP}/bin"; mkdir -p "${FAKEBIN}"
+cat > "${FAKEBIN}/dialog" <<'FAKE'
+#!/bin/bash
+# T2OP_FAKE_PICK is the index of the entry the user arrowed to.
+widget=""; args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --menu|--radiolist|--checklist)
+      widget="${1#--}"; shift 5 ;;          # widget, text, height, width, list-height
+    --default-item) shift 2 ;;
+    --clear) shift ;;
+    --title) shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+case "${widget}" in
+  menu)
+    # Returns the highlighted entry. Items are tag/label pairs.
+    echo -n "${args[$(( T2OP_FAKE_PICK * 2 ))]}" >&2 ;;
+  radiolist)
+    # Returns the entry whose status is "on" - Enter without Space never moves
+    # the dot. Items are tag/label/status triples.
+    i=0
+    while [ "${i}" -lt "${#args[@]}" ]; do
+      [ "${args[$((i+2))]}" = "on" ] && { echo -n "${args[${i}]}" >&2; break; }
+      i=$((i + 3))
+    done ;;
+esac
+exit 0
+FAKE
+chmod +x "${FAKEBIN}/dialog"
+PATH="${FAKEBIN}:${PATH}"
+
+fresh_inis
+PENDING=()
+# TRANSITION is -2 in the fixture. Entry 2 of the spec is "0=None".
+T2OP_FAKE_PICK=2 edit_enum "$(settings_in transition | grep '^TRANSITION|')"
+ok "an effect the user moved to is the one stored" "${PENDING[TRANSITION]:-unset}" "0"
+# ...and the one the fade-slides made worth checking: they are far down a list
+# of 36, which is exactly where nobody would think to press Space.
+T2OP_FAKE_PICK=26 edit_enum "$(settings_in transition | grep '^TRANSITION|')"
+ok "including one well down the list" "${PENDING[TRANSITION]:-unset}" "30"
+ok "and it is the fade-slide it names" \
+   "$(enum_label TRANSITION_SPEC "${PENDING[TRANSITION]}")" "Fade, sliding left"
+
+# Same widget, same trap: off could not be chosen.
+PENDING=()
+T2OP_FAKE_PICK=1 edit_bool "$(settings_in display | grep '^SHOW_METADATA|')"
+ok "a switch can be turned off"  "${PENDING[SHOW_METADATA]:-unset}" "no"
+T2OP_FAKE_PICK=0 edit_bool "$(settings_in display | grep '^SHOW_METADATA|')"
+ok "and back on"                 "${PENDING[SHOW_METADATA]:-unset}" "yes"
+
+# The pinned prefix is a single choice too.
+PENDING=()
+T2OP_FAKE_PICK=0 edit_prefix "$(settings_in arcade | grep '^ARCADE_PINNED|')"
+ok "the pinned row can be emptied" "${PENDING[ARCADE_PINNED]-unset}" ""
+T2OP_FAKE_PICK=3 edit_prefix "$(settings_in arcade | grep '^ARCADE_PINNED|')"
+ok "and set to a longer run"       "${PENDING[ARCADE_PINNED]:-unset}" "Year Manufacturer Region"
+
+# The field lists choose several things at once, so they cannot be a menu and
+# Space really is how they work. They are the only ones that say so.
+ok "the multi-select picker explains itself" \
+   "$(grep -c -- '--checklist "${help}$(pick_note)"' "${ROOT}/tools/tty2oledplus_settings.sh")" "1"
+# Counted as invocations, not mentions: the comments explaining why say the
+# word too, and a test that greps for a word in a comment tests nothing.
+ok "and no single-choice picker is a radiolist any more" \
+   "$(grep -cE '^ *--radiolist ' "${ROOT}/tools/tty2oledplus_settings.sh")" "0"
+# Each picker in its own right, rather than counting words over the whole
+# file: without --default-item the list opens at the top and the setting in
+# force is not visible anywhere, there being no radio dot to mark it now.
+for f in edit_bool edit_enum edit_prefix; do
+  BODY="$(awk -v f="${f}" '$0 ~ "^"f"\\(\\) \\{" {on=1} on {print} on && /^}/ {exit}' \
+          "${ROOT}/tools/tty2oledplus_settings.sh")"
+  ok "${f} is a menu" \
+     "$(printf '%s\n' "${BODY}" | grep -cE '^ *--menu ')" "1"
+  ok "${f} opens on the value in force" \
+     "$(printf '%s\n' "${BODY}" | grep -c -- '--default-item')" "1"
+done
+
+PATH="${PATH#"${FAKEBIN}:"}"
+PENDING=()
+fresh_inis
+
+# ---------------------------------------------------------------------------
+section "the boot screen: a PNG in, a picture on the display"
+# ---------------------------------------------------------------------------
+# The whole interface is a file: drop pics/boot.png and pick the entry. What
+# has to be true is that it converts without anything installed - a MiSTer has
+# neither Pillow nor ImageMagick - that the display is handed exactly the
+# bytes the firmware reads, and that the .gsc, being a step on the way rather
+# than something the user asked for, does not survive the run.
+mkdir -p "${INSTALL}/pics"
+cp "${ROOT}/tools/png2gsc.py" "${INSTALL}/png2gsc.py"
+cp "${ROOT}/tools/tty2oled-bootimg.sh" "${INSTALL}/tty2oled-bootimg.sh.real"
+
+# A real 256x54 PNG, written with nothing but the standard library so the
+# fixture does not need what the backend is there to avoid needing.
+python3 - "${INSTALL}/pics/boot.png" <<'PY'
+import struct, sys, zlib
+w, h = 256, 54
+raw = b"".join(b"\x00" + bytes(((x * 4 + y) % 256) for x in range(w)) for y in range(h))
+def chunk(k, d):
+    return struct.pack(">I", len(d)) + k + d + struct.pack(">I", zlib.crc32(k + d))
+png = (b"\x89PNG\r\n\x1a\n"
+       + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
+       + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+open(sys.argv[1], "wb").write(png)
+PY
+ok "the fixture PNG is written" "$(yesno test -s "${INSTALL}/pics/boot.png")" "yes"
+
+BOOTPNG="${INSTALL}/pics/boot.png"
+GSC="${TMP}/boot.gsc"
+OUT="$(bootimg_convert "${GSC}" 2>&1)"; RC="${?}"
+ok "it converts with nothing installed" "${RC}" "0"
+ok "to exactly what the firmware reads" \
+   "$(tail -n +4 "${GSC}" | xxd -r -p | wc -c | tr -d ' ')" "6912"
+ok "with the three header lines the daemon's tail -n +4 assumes" \
+   "$(sed -n '3p' "${GSC}" | grep -c 'icon_bits')" "1"
+
+# The one that has to work on a machine with no image library at all: the
+# backend is named rather than left to "auto", so a MiSTer that happens to
+# have Pillow converts the same bytes as one that does not.
+ok "and it asks for the standard-library backend by name" \
+   "$(grep -c -- '--backend pure' "${ROOT}/tools/tty2oledplus_settings.sh")" "1"
+rm -f "${GSC}"
+
+# The whole action, with dialog and the transfer both modelled. The fake
+# dialog reads its answers in order from a file, so a menu that loops until
+# Back can be driven to the end.
+BBIN="${TMP}/bbin"; mkdir -p "${BBIN}"
+cat > "${BBIN}/dialog" <<'FAKE'
+#!/bin/bash
+# --msgbox and --yesno just succeed; a --menu takes the next scripted answer.
+for a in "$@"; do
+  case "${a}" in
+    --msgbox) exit 0 ;;
+    --yesno)  exit "${T2OP_FAKE_YESNO:-0}" ;;
+  esac
+done
+ans="$(head -n1 "${T2OP_ANSWERS}")"
+sed -i '1d' "${T2OP_ANSWERS}"
+[ -n "${ans}" ] || exit 1          # nothing left to say: Back
+echo -n "${ans}" >&2
+exit 0
+FAKE
+chmod +x "${BBIN}/dialog"
+cat > "${INSTALL}/tty2oled-bootimg.sh" <<'FAKE'
+#!/bin/bash
+echo "bootimg $1 $(basename "${2:-}")" >> "${T2OP_BOOTLOG}"
+case "$1" in
+  status) echo "BOOTIMG,none" ;;
+  set)    [ -s "$2" ] || { echo "empty image" >&2; exit 1; }
+          echo "${2}" > "${T2OP_BOOTLOG}.sent" ;;
+esac
+exit 0
+FAKE
+chmod +x "${INSTALL}/tty2oled-bootimg.sh"
+
+export T2OP_BOOTLOG="${TMP}/bootlog" T2OP_ANSWERS="${TMP}/answers"
+: > "${T2OP_BOOTLOG}"
+printf 'install\n' > "${T2OP_ANSWERS}"
+PATH="${BBIN}:${PATH}" bootimg_menu >/dev/null 2>&1
+
+ok "the display is asked to store it" \
+   "$(grep -c '^bootimg set boot.gsc' "${T2OP_BOOTLOG}")" "1"
+ok "and what it was handed was a real picture" \
+   "$(yesno test -s "${T2OP_BOOTLOG}.sent")" "yes"
+# The .gsc is a build artifact. Leaving it in pics/ would put an 8KB file of
+# hex next to the user's artwork that nothing reads and no update removes.
+ok "the converted .gsc does not survive the run" \
+   "$(yesno test -e "${INSTALL}/pics/boot.gsc")" "no"
+ok "and the PNG does, so it can be sent again after a reflash" \
+   "$(yesno test -e "${BOOTPNG}")" "yes"
+
+# No picture to use: it says so rather than converting nothing.
+mv "${BOOTPNG}" "${TMP}/boot.png.away"
+: > "${T2OP_BOOTLOG}"
+printf 'install\n' > "${T2OP_ANSWERS}"
+PATH="${BBIN}:${PATH}" bootimg_menu >/dev/null 2>&1
+ok "with no boot.png nothing is sent" "$(grep -c '^bootimg set' "${T2OP_BOOTLOG}")" "0"
+mv "${TMP}/boot.png.away" "${BOOTPNG}"
+
+# Clearing goes back to the built-in logo and leaves the user's PNG alone.
+: > "${T2OP_BOOTLOG}"
+printf 'clear\n' > "${T2OP_ANSWERS}"
+PATH="${BBIN}:${PATH}" bootimg_menu >/dev/null 2>&1
+ok "clearing asks the display to forget it" "$(grep -c '^bootimg clear' "${T2OP_BOOTLOG}")" "1"
+ok "and keeps your PNG"                     "$(yesno test -e "${BOOTPNG}")" "yes"
+
+# It is reached from the main menu, and png2gsc.py has to be installed for any
+# of this to run at all.
+ok "the main menu offers it" \
+   "$(grep -c '"bootscreen" "Boot screen"' "${ROOT}/tools/tty2oledplus_settings.sh")" "1"
+ok "and the converter is part of an install" \
+   "$(. "${ROOT}/tools/manifest.sh"; printf '%s' "${MANIFEST_TOOLS}" | grep -c 'png2gsc.py')" "1"
+
+unset T2OP_BOOTLOG T2OP_ANSWERS
+fresh_inis
 
 # ---------------------------------------------------------------------------
 section "the effect list is the ini's, not a copy that drifts from it"

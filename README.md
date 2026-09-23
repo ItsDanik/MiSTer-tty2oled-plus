@@ -105,11 +105,23 @@ but the custom boot image is kept.
 
 ### Uninstalling
 
-Run **tty2oledplus_uninstall** from the Scripts menu. It stops the display,
-removes the install folder, the start line in `user-startup.sh` and every
-Scripts entry it put there, clears any boot image stored on the display, puts
-`MiSTer.ini` back as it found it, and removes itself. `--keep-settings` saves your two ini files
-first; `--dry-run` only lists what would go.
+Run **tty2oledplus_uninstall** from the Scripts menu. It asks twice before it
+does anything — whether to go on, and what to do with the files that are yours
+rather than ours — with arrows and one button, no typing.
+
+Choosing **Keep them** copies your settings (`tty2oled-user.ini`,
+`coretypes.ini`), the banners in `pics/user` and your `pics/boot.png` into
+`/media/fat/tty2oledplus-saved` before the rest goes. **Cancel** on that
+question stops the whole thing.
+
+Then it stops the display, removes the install folder, the start line in
+`user-startup.sh` and every Scripts entry it put there, clears any boot image
+stored on the display, puts `MiSTer.ini` back as it found it, and removes
+itself. The display's firmware is left alone.
+
+`--yes` skips both questions, `--dry-run` only lists what would go. With
+`fb_terminal=0` there is no screen to ask on, so it refuses rather than
+guessing — run it with `--yes` if that is what you meant.
 
 [tty2oledplus_install.sh]: https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_install.sh
 
@@ -243,6 +255,20 @@ your computer; storing it is done on the MiSTer:
 
 Storing one takes a few seconds and no reflash.
 
+**The easy way, with no workstation at all:** put a PNG at
+`/media/fat/tty2oledplus/pics/boot.png` and run **tty2oledplus_settings → Boot
+screen → Use my pics/boot.png**. It converts and stores it for you, and the
+same menu puts the built-in logo back.
+
+Draw it **256x54** in up to 16 shades of grey — an indexed PNG with a 16-step
+greyscale palette converts exactly. Anything else is scaled to fit and centred
+on black, so it still works, just not pixel for pixel. The bottom ten rows of
+the panel are not yours: that is where the firmware runs its sweep and prints
+the build version, whatever picture is stored.
+
+`pics/boot.png` is yours and stays put — no update touches it, so after a
+reflash the same menu entry sends it again.
+
 ### Artwork
 
 All of it lives under `/media/fat/tty2oledplus/pics/`, one kind per folder:
@@ -253,6 +279,7 @@ All of it lives under `/media/fat/tty2oledplus/pics/`, one kind per folder:
 | `pics/alt` | its alternatives, `<core>_alt1.gsc`, `_alt2.gsc` … | 256x64 |
 | `pics/icon` | the console icons, for the split layout | 86x64 |
 | `pics/user` | **yours** | 256x64 |
+| `pics/boot.png` | **yours** — the boot screen, see below | 256x54 |
 
 The first three are the release's and are replaced by every update. `pics/user`
 is yours and no update ever touches it — which is what makes it the place to

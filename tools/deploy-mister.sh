@@ -235,12 +235,13 @@ if [ "${WITH_PICS}" = "yes" ]; then
   # difference. It also shortens the window in which a dropped connection can
   # leave a half-written file behind.
   #
-  # pics/user is excluded. It is the user's own artwork, it is the one folder
-  # here a release is not allowed to touch, and the repo's copy of it is empty
-  # - sending it would be this fork's own version of copying tty2oled-user.ini
-  # over theirs. The daemon creates the folder on the MiSTer if it is missing.
-  say "Copying the artwork pack ($(find pics -type f -not -path 'pics/user/*' | wc -l | tr -d ' ') files, $(du -sh --exclude=pics/user pics | cut -f1))"
-  tar --owner=0 --group=0 --numeric-owner --exclude='pics/user' -czf - pics \
+  # pics/user and pics/boot.png are excluded. They are the user's own artwork
+  # - the banners they drew and the boot screen they chose - and are the one
+  # part of pics/ a release is not allowed to touch; sending them would be
+  # this fork's own version of copying tty2oled-user.ini over theirs. The
+  # daemon creates pics/user on the MiSTer if it is missing.
+  say "Copying the artwork pack ($(find pics -type f -not -path 'pics/user/*' -not -name boot.png | wc -l | tr -d ' ') files, $(du -sh --exclude=pics/user pics | cut -f1))"
+  tar --owner=0 --group=0 --numeric-owner --exclude='pics/user' --exclude='pics/boot.png' -czf - pics \
     | ssh "${MISTER}" "tar -C ${REMOTE} --no-same-owner -xzf -"
 fi
 
