@@ -653,7 +653,7 @@ sendupdateall() {
   echo "${name}" >${TTYDEV}
 }
 
-# Is this fork's own updater running? update_tty2oledplus.sh stops the daemon
+# Is this fork's own updater running? tty2oledplus_update.sh stops the daemon
 # within a few seconds of starting - it wants the serial port for the display's
 # version and the flash - so this is the one chance to say what is happening.
 # The message stays on the panel afterwards precisely because the daemon is
@@ -663,7 +663,10 @@ sendupdateall() {
 # is removing this, and a display left saying "Updating" would be a lie.
 selfupdate_running() {
   [ "${SELF_UPDATE_SCREEN:-yes}" = "yes" ] || return 1
-  grep -qsa -e '[u]pdate_tty2oledplus' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null
+  # Both spellings: the scripts were renamed in 0.4.8b, and an install that
+  # has not been updated since still has update_tty2oledplus.sh in Scripts.
+  grep -qsa -e '[t]ty2oledplus_update' -e '[u]pdate_tty2oledplus' \
+       "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null
 }
 
 # The updater's own screen: no banner to show - it may be replaced mid-run -
@@ -676,7 +679,7 @@ selfupdate_pass() {
     # CMDBOOTPIC, which is all the MENU core sends, used to leave it running
     # for ever over the menu picture.
     if [ "${SELFUPDATE_SHOWN:-no}" = "yes" ]; then
-      dbug "update_tty2oledplus finished, back to the core"
+      dbug "tty2oledplus_update finished, back to the core"
       sendbusy 0
       SELFUPDATE_SHOWN="no"
       oldcore=""
@@ -685,7 +688,7 @@ selfupdate_pass() {
     return 1
   fi
   if [ "${SELFUPDATE_SHOWN:-no}" != "yes" ]; then
-    dbug "update_tty2oledplus is running"
+    dbug "tty2oledplus_update is running"
     if [ "${SHOW_METADATA}" = "yes" ]; then
       dbug "Sending: CMDMETAOFF (self update)"
       echo "CMDMETAOFF" >${TTYDEV}

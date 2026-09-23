@@ -68,7 +68,7 @@ git push && git push --tags
 The tag push is also the release. CI (`.github/workflows/ci.yml`) runs every
 suite and builds the firmware for all three boards on every push; on a `v*`
 tag it then builds the title index, runs `tools/make-release.sh` and publishes
-a GitHub release - which is what `update_tty2oledplus` on every MiSTer installs
+a GitHub release - which is what `tty2oledplus_update` on every MiSTer installs
 from. Watch it through: `gh run watch`. It refuses a tag that is not `VERSION`
 and a version with no `CHANGELOG.md` section, so steps 1 and 2 are enforced
 there too.
@@ -99,12 +99,12 @@ MISTER=root@192.168.1.206 ./tools/deploy-mister.sh --firmware --flash
 
 `MiSTer.local` does not resolve on this workstation. The deploy keeps working
 between releases exactly as before - it is only that the MiSTer then holds the
-released version, so `update_tty2oledplus` finds nothing to do until the next
+released version, so `tty2oledplus_update` finds nothing to do until the next
 one (`--force` overrides that).
 
 **Skip this step when the user wants to test the install path themselves.**
 Then the display is *meant* to be a version behind, so that
-`TTY2OLEDplus_Installer` has a reason to flash it, and the MiSTer is wiped
+`tty2oledplus_install` has a reason to flash it, and the MiSTer is wiped
 first (install folder, both Scripts entries, the `user-startup.sh` line, the
 daemon, `/tmp` and `/run` leftovers, and `tty2oled-bootimg.sh clear`) so the
 run is a genuine first install.
@@ -170,11 +170,12 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1388 checks, no hardware needed. |
+| `tests/` | 1457 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation. |
-| `pics_pri/ICON/` | The icons themselves, 27 drawn; same path as on the MiSTer. |
+| `tools/make-screenshots.sh`, `tools/screenshots/` | The README's screenshots. Compiles the display headers against the real GFX/u8g2 libraries, composes each screen into a real framebuffer and writes `docs/img/*.png`. Re-run it when a layout changes. Workstation. |
+| `pics_pri/ICON/` | The icons themselves, 27 core names over 26 systems; same path as on the MiSTer. |
 | `pics/` | The core artwork pack, 2322 files. Upstream's, vendored. |
 | `tools/tty2oled-bootimg.sh` | Installs/clears the stored boot screen. **On the MiSTer**. |
 | `tools/dat2index.awk`, `tools/index-emit.awk` | The DAT parser and index emitter it drives. |
@@ -183,9 +184,10 @@ with scrolling text and an icon panel.
 | `tools/tty2oled-boothook.sh` | Adds the boot hook to `user-startup.sh`. Fed to the MiSTer on stdin by the deploy. |
 | `tools/manifest.sh` | What an install is made of. Read by the deploy and the release, so they agree. |
 | `tools/make-release.sh` | Builds the release assets into `dist/`. CI runs it on a tag; so can you. |
-| `tools/uninstall_tty2oledplus.sh` | Removes the install, the boot hook, both Scripts entries and the stored boot image - and itself. Lives in `/media/fat/Scripts`. **On the MiSTer**. |
-| `tools/TTY2OLEDplus_Installer.sh` | The starter users drop in `/media/fat/Scripts`: fetches the latest installer, checks it, runs it, removes itself. **On the MiSTer**. |
-| `tools/update_tty2oledplus.sh` | Installs/updates from a GitHub release. **On the MiSTer**; `update_tty2oledplus` in its Scripts menu. |
+| `tools/tty2oledplus_uninstall.sh` | Removes the install, the boot hook, every Scripts entry and the stored boot image - and itself. Lives in `/media/fat/Scripts`. **On the MiSTer**. |
+| `tools/tty2oledplus_settings.sh` | The `dialog` settings editor for `tty2oled-user.ini`. Lives in `/media/fat/Scripts`. **On the MiSTer**. |
+| `tools/tty2oledplus_install.sh` | The starter users drop in `/media/fat/Scripts`: fetches the latest installer, checks it, runs it, removes itself. **On the MiSTer**. |
+| `tools/tty2oledplus_update.sh` | Installs/updates from a GitHub release. **On the MiSTer**; `tty2oledplus_update` in its Scripts menu. |
 | `.github/workflows/ci.yml` | Tests and firmware on every push; the release on a `v*` tag. |
 | `tools/flash-mister.sh` | Flashes the firmware. Runs **on the MiSTer**. |
 | `tools/fw-segments.py` | Which parts of a merged image to write, so the boot image and settings survive. **On the MiSTer**. |
@@ -205,7 +207,7 @@ composes it.
 | `computer` | untouched - full-screen artwork, as upstream |
 | `unknown` | as `computer`; metadata off |
 
-**This fork's own updater overrides even that.** `update_tty2oledplus` stops
+**This fork's own updater overrides even that.** `tty2oledplus_update` stops
 the daemon within seconds of starting - it wants the serial port for the
 display's version and the flash - so `selfupdate_pass` is the one chance to
 say what is happening: `CMDMETAOFF`, then `CMDBUSY,1,<SELF_UPDATE_TEXT>`, and
@@ -592,8 +594,8 @@ transfer is dropped rather than half-applied.
 
 ## The uninstaller, and why the init script places it
 
-`uninstall_tty2oledplus` in the Scripts menu removes the install folder, the
-boot hook and the comment above it, both Scripts entries, the pid file and the
+`tty2oledplus_uninstall` in the Scripts menu removes the install folder, the
+boot hook and the comment above it, every Scripts entry, the pid file and the
 logs, and the boot image in the display's own flash - then itself, but only
 when it is the copy under `/media/fat/Scripts`, so running the repo's copy
 cannot delete it. It keeps the firmware (an ESP32 with none shows nothing),
@@ -601,7 +603,7 @@ cannot delete it. It keeps the firmware (an ESP32 with none shows nothing),
 
 It is installed **twice on purpose**: into `/media/fat/Scripts`, where it has
 to live to outlive the folder it removes, and into the install folder, from
-where `place_uninstaller` in `S60tty2oled` copies it to the menu on every
+where `place_menu_scripts` in `S60tty2oled` copies it to the menu on every
 start. That second path is the only one that works for an existing install:
 **an update is always applied by the previous version of the installer**, so a
 rule about where a new file goes cannot apply to the update that introduces
@@ -610,15 +612,84 @@ because 0.4.2b's installer put every file from the archive there. The daemon's
 own start is the first thing a new version controls, so that is where the
 placement lives; `cmp` first, so a boot is not a write.
 
+`MANIFEST_MENU` is all three of them now - `tty2oledplus_update.sh`,
+`tty2oledplus_settings.sh`, `tty2oledplus_uninstall.sh` - and the same
+reasoning covers all three.
+
+## The Scripts menu names, and the one-release alias
+
+The menu is alphabetical, so the four entries are named to sort as a set:
+**tty2oledplus_install**, **tty2oledplus_settings**, **tty2oledplus_uninstall**,
+**tty2oledplus_update**. Before 0.4.8b they were `TTY2OLEDplus_Installer`,
+`update_tty2oledplus` and `uninstall_tty2oledplus`, which sorted into three
+different places in the list.
+
+Renaming them renames the release assets, and that is the part with teeth: an
+installed `update_tty2oledplus` fetches an asset called exactly
+`update_tty2oledplus.sh`. Publish a release without it and every MiSTer that
+has not updated yet fails with "Could not download update_tty2oledplus.sh" and
+has to be reinstalled by hand. So `make-release.sh` publishes the new updater
+a second time under the old name (`LEGACY_UPDATER`), **for one release only** -
+delete that block, and the test that pins it, in the release after 0.4.8b.
+
+The old names are swept once the new ones are in place, and never before: a
+half-finished update must not leave a menu with no way to update or uninstall.
+Two things do the sweeping, because two different installers can apply the
+update:
+
+- `tty2oledplus_update.sh` removes them itself, at the end of a run.
+- `place_menu_scripts` in `S60tty2oled` removes them on the next daemon start,
+  which is the only thing that can when the update was applied by an installer
+  older than the rename - it places its own `update_tty2oledplus.sh` in the
+  menu after the new daemon has already started.
+
+`selfupdate_running` in the daemon matches **both** spellings for the same
+reason: until that sweep happens, the updater on the machine may still be the
+old one.
+
+## The settings editor
+
+`tty2oledplus_settings` is a `dialog` front end for `tty2oled-user.ini`,
+modelled on MiSTer's own `ini_settings.sh`: a menu per category, a value
+picker per setting, changes held until Save.
+
+It edits **only** `tty2oled-user.ini`, and reads `tty2oled-system.ini` solely
+to know what a default is. A setting equal to its default is *removed* rather
+than written, so the user ini stays a list of what this MiSTer actually does
+differently and a later release that changes a default is still followed.
+Everything else in the file - the user's own comments, settings the editor
+does not know about - is left where it was: `ini_put` replaces the one line or
+appends under a header of its own, and never rewrites the file wholesale.
+
+The ini is **parsed, not sourced**. The daemon sources it, but this runs as
+root from a menu, and reading a value should not be able to run anything;
+`tests/test-settings.sh` proves it with a value that would touch a file.
+
+Three constraints the layouts impose are enforced in the editor rather than
+explained to the user:
+
+- `METADATA_PINNED` must name fields that `METADATA_FIELDS` shows, so dropping
+  a field drops it from the pinned list.
+- `ARCADE_PINNED` can only be a **leading run** of `ARCADE_FIELDS` - it is the
+  top row of the grid - so the editor offers the prefixes, not a free choice,
+  and re-ordering the fields re-pins the new leaders.
+- A list keeps the order it had. The order is the order the rows are drawn in,
+  and a checklist hands its answers back in its own order, so `list_merge`
+  re-applies the old one and appends anything newly ticked.
+
+`dialog` needs a terminal. From the Scripts menu that means `fb_terminal=1`
+(the default); with it off the script says so and exits 2, as `ini_settings.sh`
+does, rather than letting dialog fail into the OSD.
+
 ## Running the tests
 
 ```bash
 ./tests/run-all.sh
 ```
 
-Eleven suites: metadata extraction, wire protocol, title index, versioning,
-daemon lifecycle, deploy, png2gsc, installer, flashing, firmware parser,
-firmware layout. CI runs
+Twelve suites: metadata extraction, wire protocol, title index, versioning,
+daemon lifecycle, deploy, settings editor, png2gsc, installer, flashing,
+firmware parser, firmware layout. CI runs
 all of them on every push (`.github/workflows/ci.yml`), with inotify-tools and
 ImageMagick installed so nothing is skipped there.
 
@@ -885,14 +956,14 @@ is what found the `FULLPATH` bug.
 - **GitHub release asset names are case-insensitive.** `v0.4.1b`'s release
   job created the release, then failed uploading `tty2oledplus_installer.sh`
   beside `TTY2OLEDplus_Installer.sh` with "ReleaseAsset.name already exists",
-  and `gh` deleted the half-made release - another tag spent. The installer is
-  `update_tty2oledplus.sh` now, the name it already had in the Scripts menu,
-  and `test-installer.sh` fails on any two assets that differ only in case.
-  The same pair would also have collided in a clone on macOS or Windows.
+  and `gh` deleted the half-made release - another tag spent. (Those are the
+  names of the day; everything is lower case since 0.4.8b.) `test-installer.sh`
+  fails on any two assets that differ only in case. The same pair would also
+  have collided in a clone on macOS or Windows.
 - **`CMDBOOTPIC` draws, whatever the boot screen thinks.** It is on
   `boot_quietCommand`'s list because at power-on the picture it draws is the
   boot screen already on the panel. The busy bar shared that list, so after
-  `update_tty2oledplus` finished, the menu picture went up *under* a bar that
+  `tty2oledplus_update` finished, the menu picture went up *under* a bar that
   nothing would ever stop - the MENU core sends `CMDBOOTPIC` and no `CMDCOR`.
   The bar keeps the list minus that one command, and the daemon stops the bar
   itself when the updater exits: a screen that says "busy" has to be taken
@@ -1350,13 +1421,13 @@ we set it*, and must not overwrite the record with "it was already like that".
 ## Releases and the installer
 
 A tag push publishes a GitHub release (see step 4 at the top). Users install
-by copying the `TTY2OLEDplus_Installer.sh` asset to `/media/fat/Scripts` and
-running it from the Scripts menu; afterwards `update_tty2oledplus` is there
+by copying the `tty2oledplus_install.sh` asset to `/media/fat/Scripts` and
+running it from the Scripts menu; afterwards `tty2oledplus_update` is there
 instead. Over SSH it is one line:
 
 ```sh
 curl -fsSL --cacert /etc/ssl/certs/cacert.pem \
-  https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/update_tty2oledplus.sh | bash
+  https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_update.sh | bash
 ```
 
 **Asset names carry no version** - `tty2oledplus.tar.gz`, `tty2oledplus-lolin32.bin`,
@@ -1401,18 +1472,18 @@ copy cannot delete it. What it leaves is deliberate: the firmware (the
 display's flash, and an ESP32 with none shows nothing), `log_file_entry=1` (MiSTer's
 own setting), upstream's `/media/fat/tty2oled` and upstream's pid file.
 
-**`TTY2OLEDplus_Installer.sh` is only a starter**, so the copy a user
-downloads never goes stale: it fetches `update_tty2oledplus.sh` and
+**`tty2oledplus_install.sh` is only a starter**, so the copy a user
+downloads never goes stale: it fetches `tty2oledplus_update.sh` and
 `SHA256SUMS` from `/releases/latest`, refuses an installer that does not match,
 runs it with the same arguments, and deletes itself - by that exact name, and
-only after a successful run that left `update_tty2oledplus.sh` beside it. A
+only after a successful run that left `tty2oledplus_update.sh` beside it. A
 failed run leaves it in the menu to try again. Its temp folder is a global,
 not a `local`: the `EXIT` trap fires after `main` has returned, and a local
 was out of scope by then, so every successful run leaked it into `/tmp`.
 
 It lives in `main()`, called on the last line, because `curl | bash` runs the
 bytes as they arrive and a dropped connection would otherwise run half a script.
-It replaces `Scripts/update_tty2oledplus.sh` **by rename**, because that may be
+It replaces `Scripts/tty2oledplus_update.sh` **by rename**, because that may be
 the very file bash is still reading.
 
 The display's `CMDHWINF` answer is parsed as `;`-separated tokens, not as a

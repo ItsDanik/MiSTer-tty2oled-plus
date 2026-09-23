@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Tests for the release: tools/make-release.sh, which builds it, and
-# tools/update_tty2oledplus.sh, which installs it on a MiSTer.
+# tools/tty2oledplus_update.sh, which installs it on a MiSTer.
 #
 # A real release is built from this working copy - with a small title index,
 # a small artwork pack and stand-in firmware images, so it takes a second
@@ -58,16 +58,23 @@ release() {  # release <out dir> [more options]
 release "${TMP}/dist" --notes "${TMP}/notes.md"; RC="${?}"
 ok "a release builds" "${RC}" "0"
 D="${TMP}/dist"
+# Sorted in the C locale: a Greek one orders these differently, and a test
+# that changes its mind with $LANG is no test.
 ok "with version-free asset names, so latest/download finds them" \
-   "$(cd "${D}" && ls | tr '\n' ' ')" \
-   "SHA256SUMS TTY2OLEDplus_Installer.sh VERSION tty2oledplus-esp32s3.bin tty2oledplus-lolin32.bin tty2oledplus-pics.tar.gz tty2oledplus.tar.gz update_tty2oledplus.sh "
-# GitHub compares asset names without case: TTY2OLEDplus_Installer.sh beside
+   "$(cd "${D}" && LC_ALL=C ls | LC_ALL=C sort | tr '\n' ' ')" \
+   "SHA256SUMS VERSION tty2oledplus-esp32s3.bin tty2oledplus-lolin32.bin tty2oledplus-pics.tar.gz tty2oledplus.tar.gz tty2oledplus_install.sh tty2oledplus_update.sh update_tty2oledplus.sh "
+# One release only: an install older than 0.4.8b has an updater that fetches
+# an asset by that exact name, and would fail on a release without it. The
+# copy is the new updater, byte for byte.
+ok "the pre-0.4.8b updater name is published too" \
+   "$(cmp -s "${D}/update_tty2oledplus.sh" "${D}/tty2oledplus_update.sh" && echo same)" "same"
+# GitHub compares asset names without case: tty2oledplus_install.sh beside
 # tty2oledplus_installer.sh failed the upload of v0.4.1b with "already exists".
 ok "no two asset names differ only in case" \
    "$(cd "${D}" && ls | tr '[:upper:]' '[:lower:]' | sort | uniq -d)" ""
 ok "VERSION says which" "$(cat "${D}/VERSION")" "${VERSION}"
 ok "every asset matches SHA256SUMS" "$(cd "${D}" && sha256sum -c --quiet SHA256SUMS 2>&1)" ""
-ok "SHA256SUMS lists all seven" "$(grep -c '' "${D}/SHA256SUMS")" "7"
+ok "SHA256SUMS lists all eight" "$(grep -c '' "${D}/SHA256SUMS")" "8"
 
 LISTING="$(tar tzf "${D}/tty2oledplus.tar.gz")"
 MISSING=""
@@ -85,8 +92,8 @@ ok "everything unpacks under tty2oledplus/" "$(printf '%s\n' "${LISTING}" | grep
 ok "the artwork is in its own archive" "$(tar tzf "${D}/tty2oledplus-pics.tar.gz" | grep -c 'tty2oledplus/pics/GSC/NES.gsc')" "1"
 ok "the notes carry this version's changelog" \
    "$(head -n1 "${TMP}/notes.md" | grep -c .)" "1"
-ok "and how to install it" "$(grep -c '^curl .*releases/latest/download/update_tty2oledplus.sh | bash$' "${TMP}/notes.md")" "1"
-ok "including from the Scripts menu" "$(grep -c 'run \*\*TTY2OLEDplus_Installer\*\* from the Scripts' "${TMP}/notes.md")" "1"
+ok "and how to install it" "$(grep -c '^curl .*releases/latest/download/tty2oledplus_update.sh | bash$' "${TMP}/notes.md")" "1"
+ok "including from the Scripts menu" "$(grep -c 'run \*\*tty2oledplus_install\*\* from the Scripts' "${TMP}/notes.md")" "1"
 
 release "${TMP}/dist2"
 ok "the same inputs give the same bytes" "$(cat "${TMP}/dist2/SHA256SUMS")" "$(cat "${D}/SHA256SUMS")"
@@ -147,7 +154,7 @@ install() {
   : > "${CALLS}"
   T2OP_FAT="${FAT}" T2OP_URL="file://${REL}" T2OP_INIT="${TMP}/fake-init" \
   T2OP_FLASH="${TMP}/fake-flash" \
-    bash "${ROOT}/tools/update_tty2oledplus.sh" "$@" > "${TMP}/out" 2>&1 </dev/null
+    bash "${ROOT}/tools/tty2oledplus_update.sh" "$@" > "${TMP}/out" 2>&1 </dev/null
 }
 said() { grep -c -- "$1" "${TMP}/out"; }
 flashed() { grep '^flash' "${CALLS}" | sed 's/^flash //'; }
@@ -170,9 +177,18 @@ ok "the display was flashed, once, with its own board's image" "$(flashed)" "tty
 ok "with a board id found behind stale ttyacks" "$(said 'reported: lolin32, firmware 0.3.0b')" "1"
 ok "the boot hook is added" "$(grep -c "${INSTALL}/S60tty2oled" "${FAT}/linux/user-startup.sh")" "1"
 ok "the daemon is running at the end" "$(running)" "running"
-ok "the updater is in the Scripts menu" "$(cmp -s "${FAT}/Scripts/update_tty2oledplus.sh" "${ROOT}/tools/update_tty2oledplus.sh" && echo same)" "same"
-ok "and is executable" "$(yesno test -x "${FAT}/Scripts/update_tty2oledplus.sh")" "yes"
+ok "the updater is in the Scripts menu" "$(cmp -s "${FAT}/Scripts/tty2oledplus_update.sh" "${ROOT}/tools/tty2oledplus_update.sh" && echo same)" "same"
+ok "and is executable" "$(yesno test -x "${FAT}/Scripts/tty2oledplus_update.sh")" "yes"
 ok "no half-written updater is left behind" "$(ls -A "${FAT}/Scripts" | grep -c '\.new$')" "0"
+# The Scripts menu is alphabetical, so the four entries read as a set:
+# install, settings, uninstall, update.
+ok "the settings editor is in the Scripts menu" \
+   "$(cmp -s "${FAT}/Scripts/tty2oledplus_settings.sh" "${ROOT}/tools/tty2oledplus_settings.sh" && echo same)" "same"
+ok "and is executable" "$(yesno test -x "${FAT}/Scripts/tty2oledplus_settings.sh")" "yes"
+# ...and in the install folder as well, because S60tty2oled places all three
+# from there on a MiSTer whose last update was run by an older installer.
+ok "and in the install folder, for the daemon to place" \
+   "$(yesno test -f "${INSTALL}/tty2oledplus_settings.sh")" "yes"
 ok "log_file_entry being off is pointed out" "$(said 'log_file_entry=1')" "1"
 ok "no staging directory is left in /tmp" "$(ls -d /tmp/tty2oledplus.* 2>/dev/null | wc -l | tr -d ' ')" "0"
 
@@ -234,6 +250,27 @@ ok "an S3 gets the S3 image and chip" "$(flashed)" "tty2oledplus-esp32s3.bin chi
 install --board banana; RC="${?}"
 ok "an unknown --board is refused" "${RC}" "1"
 
+section "installer: the pre-0.4.8b Scripts entries"
+
+# The scripts were renamed in 0.4.8b. An update applied by this installer has
+# to leave the menu with the new names and none of the old ones - a menu
+# listing both update_tty2oledplus and tty2oledplus_update is a menu where
+# nobody knows which one to run.
+for f in update_tty2oledplus.sh uninstall_tty2oledplus.sh TTY2OLEDplus_Installer.sh; do
+  printf '# the old one\n' > "${FAT}/Scripts/${f}"
+done
+install --force
+LEFT=""
+for f in update_tty2oledplus.sh uninstall_tty2oledplus.sh TTY2OLEDplus_Installer.sh; do
+  [ -e "${FAT}/Scripts/${f}" ] && LEFT="${LEFT} ${f}"
+done
+ok "the old names are gone from the Scripts menu" "${LEFT}" ""
+NEW=""
+for f in tty2oledplus_update.sh tty2oledplus_settings.sh tty2oledplus_uninstall.sh; do
+  [ -x "${FAT}/Scripts/${f}" ] || NEW="${NEW} ${f}"
+done
+ok "and the new ones are all there" "${NEW}" ""
+
 section "installer: when it must change nothing"
 
 # Damaged download: nothing may be touched, and the daemon comes back.
@@ -244,7 +281,7 @@ set_installed_version "0.0.1b"
 echo '# marker' >> "${INSTALL}/tty2oled.sh"
 : > "${CALLS}"
 T2OP_FAT="${FAT}" T2OP_URL="file://${BAD}" T2OP_INIT="${TMP}/fake-init" T2OP_FLASH="${TMP}/fake-flash" \
-  T2OP_HWINF="HWLOLIN32;${VERSION};" bash "${ROOT}/tools/update_tty2oledplus.sh" > "${TMP}/out" 2>&1 </dev/null
+  T2OP_HWINF="HWLOLIN32;${VERSION};" bash "${ROOT}/tools/tty2oledplus_update.sh" > "${TMP}/out" 2>&1 </dev/null
 RC="${?}"
 ok "a damaged download fails" "${RC}" "1"
 ok "saying so" "$(said 'does not match its checksum')" "1"
@@ -252,7 +289,7 @@ ok "with the installed scripts untouched" "$(grep -c '# marker' "${INSTALL}/tty2
 ok "and the daemon running again" "$(running)" "running"
 
 T2OP_FAT="${FAT}" T2OP_URL="file://${TMP}/nowhere" T2OP_INIT="${TMP}/fake-init" T2OP_FLASH="${TMP}/fake-flash" \
-  bash "${ROOT}/tools/update_tty2oledplus.sh" > "${TMP}/out" 2>&1 </dev/null
+  bash "${ROOT}/tools/tty2oledplus_update.sh" > "${TMP}/out" 2>&1 </dev/null
 ok "an unreachable release fails" "${?}" "1"
 ok "with the installed scripts untouched" "$(grep -c '# marker' "${INSTALL}/tty2oled.sh")" "1"
 
@@ -293,15 +330,15 @@ ok "--version installs from that release's own path" "${RC}" "0"
 ok "and says which" "$(said "version ${VERSION}")" "1"
 mkdir -p "${REL}/latest"; cp -r "${D}" "${REL}/latest/download"
 
-section "starter: TTY2OLEDplus_Installer.sh from the Scripts menu"
+section "starter: tty2oledplus_install.sh from the Scripts menu"
 
 # Run the way Main runs it: by its full path out of Scripts.
 starter() {
   : > "${CALLS}"
-  cp "${ROOT}/tools/TTY2OLEDplus_Installer.sh" "${FAT}/Scripts/"
+  cp "${ROOT}/tools/tty2oledplus_install.sh" "${FAT}/Scripts/"
   T2OP_FAT="${FAT}" T2OP_URL="file://${1}" T2OP_INIT="${TMP}/fake-init" \
   T2OP_FLASH="${TMP}/fake-flash" T2OP_HWINF="HWLOLIN32;0.3.9b;" \
-    bash "${FAT}/Scripts/TTY2OLEDplus_Installer.sh" > "${TMP}/out" 2>&1 </dev/null
+    bash "${FAT}/Scripts/tty2oledplus_install.sh" > "${TMP}/out" 2>&1 </dev/null
 }
 
 fresh_mister
@@ -310,25 +347,25 @@ ok "a first install from the starter succeeds" "${RC}" "0"
 ok "installing the release" "$(sed -n 's/^TTY2OLED_VERSION="\(.*\)".*/\1/p' "${INSTALL}/tty2oled-system.ini")" "${VERSION}"
 ok "flashing the display" "$(flashed)" "tty2oledplus-lolin32.bin chip=esp32 port=free"
 ok "wiring the boot hook" "$(grep -c "${INSTALL}/S60tty2oled" "${FAT}/linux/user-startup.sh")" "1"
-ok "leaving the updater in its place" "$(yesno test -x "${FAT}/Scripts/update_tty2oledplus.sh")" "yes"
-ok "and removing itself" "$(yesno test -e "${FAT}/Scripts/TTY2OLEDplus_Installer.sh")" "no"
+ok "leaving the updater in its place" "$(yesno test -x "${FAT}/Scripts/tty2oledplus_update.sh")" "yes"
+ok "and removing itself" "$(yesno test -e "${FAT}/Scripts/tty2oledplus_install.sh")" "no"
 ok "saying so" "$(said 'removed itself')" "1"
 ok "no staging directory is left in /tmp" "$(ls -d /tmp/tty2oledplus-start.* 2>/dev/null | wc -l | tr -d ' ')" "0"
 
 rm -rf "${BAD}"; cp -r "${REL}" "${BAD}"
-printf '# tampered\n' >> "${BAD}/latest/download/update_tty2oledplus.sh"
+printf '# tampered\n' >> "${BAD}/latest/download/tty2oledplus_update.sh"
 fresh_mister
 starter "${BAD}"; RC="${?}"
 ok "a damaged installer is refused" "${RC}" "1"
 ok "saying so" "$(said 'does not match')" "1"
 ok "before it runs" "$(yesno test -e "${INSTALL}")" "no"
-ok "and the starter stays, to try again" "$(yesno test -e "${FAT}/Scripts/TTY2OLEDplus_Installer.sh")" "yes"
+ok "and the starter stays, to try again" "$(yesno test -e "${FAT}/Scripts/tty2oledplus_install.sh")" "yes"
 
 fresh_mister
 mkdir -p "${FAT}/tty2oled"; touch "${FAT}/tty2oled/S60tty2oled"
 starter "${REL}"; RC="${?}"
 ok "an installer that refuses fails the starter" "${RC}" "1"
-ok "which stays in Scripts" "$(yesno test -e "${FAT}/Scripts/TTY2OLEDplus_Installer.sh")" "yes"
+ok "which stays in Scripts" "$(yesno test -e "${FAT}/Scripts/tty2oledplus_install.sh")" "yes"
 rm -rf "${FAT}/tty2oled"
 
 starter "${TMP}/nowhere"; RC="${?}"
@@ -338,7 +375,7 @@ ok "saying where it looked" "$(said 'Is the MiSTer online')" "1"
 uninstall() {
   : > "${CALLS}"
   T2OP_FAT="${FAT}" T2OP_INIT="${TMP}/fake-init" \
-    bash "${FAT}/Scripts/uninstall_tty2oledplus.sh" --yes "$@" > "${TMP}/out" 2>&1 </dev/null
+    bash "${FAT}/Scripts/tty2oledplus_uninstall.sh" --yes "$@" > "${TMP}/out" 2>&1 </dev/null
 }
 
 section "installer: MiSTer.ini's log_file_entry"
@@ -463,21 +500,21 @@ fresh_mister
 echo "# somebody else's line" >> "${FAT}/linux/user-startup.sh"
 T2OP_HWINF="HWLOLIN32;0.3.9b;" install
 ok "the installer leaves the uninstaller in the Scripts menu" \
-   "$(yesno test -x "${FAT}/Scripts/uninstall_tty2oledplus.sh")" "yes"
+   "$(yesno test -x "${FAT}/Scripts/tty2oledplus_uninstall.sh")" "yes"
 # And in the install folder as well, which is what S60tty2oled places it from
 # on every start - the only way it reaches the menu of a MiSTer whose update
 # was applied by an installer too old to know about it.
 ok "and in the install folder, for S60tty2oled to place from" \
-   "$(yesno test -e "${INSTALL}/uninstall_tty2oledplus.sh")" "yes"
+   "$(yesno test -e "${INSTALL}/tty2oledplus_uninstall.sh")" "yes"
 ok "the two are the same file" \
-   "$(cmp -s "${INSTALL}/uninstall_tty2oledplus.sh" "${FAT}/Scripts/uninstall_tty2oledplus.sh" && echo same)" "same"
+   "$(cmp -s "${INSTALL}/tty2oledplus_uninstall.sh" "${FAT}/Scripts/tty2oledplus_uninstall.sh" && echo same)" "same"
 BEFORE="$(cat "${FAT}/linux/user-startup.sh")"
 
 uninstall --dry-run; RC="${?}"
 ok "a dry run succeeds" "${RC}" "0"
 ok "and changes nothing" "$(yesno test -d "${INSTALL}")" "yes"
 ok "nor the boot hook" "$(grep -c "${INSTALL}/S60tty2oled" "${FAT}/linux/user-startup.sh")" "1"
-ok "nor itself" "$(yesno test -e "${FAT}/Scripts/uninstall_tty2oledplus.sh")" "yes"
+ok "nor itself" "$(yesno test -e "${FAT}/Scripts/tty2oledplus_uninstall.sh")" "yes"
 ok "but says what would go" "$(grep -c "would remove ${INSTALL}\$" "${TMP}/out")" "1"
 
 echo running > "${STATE}"
@@ -486,8 +523,8 @@ ok "the uninstall succeeds" "${RC}" "0"
 ok "the install folder is gone" "$(yesno test -e "${INSTALL}")" "no"
 ok "the daemon was stopped first" "$(grep -c 'init stop' "${CALLS}")" "1"
 ok "and not started again" "$(running)" "stopped"
-ok "the updater is gone from Scripts" "$(yesno test -e "${FAT}/Scripts/update_tty2oledplus.sh")" "no"
-ok "and the uninstaller removed itself" "$(yesno test -e "${FAT}/Scripts/uninstall_tty2oledplus.sh")" "no"
+ok "the updater is gone from Scripts" "$(yesno test -e "${FAT}/Scripts/tty2oledplus_update.sh")" "no"
+ok "and the uninstaller removed itself" "$(yesno test -e "${FAT}/Scripts/tty2oledplus_uninstall.sh")" "no"
 ok "the boot hook is gone" "$(grep -c tty2oledplus "${FAT}/linux/user-startup.sh")" "0"
 ok "with the comment the installer wrote above it" "$(grep -c 'Startup tty2oled' "${FAT}/linux/user-startup.sh")" "0"
 ok "and everybody else's lines untouched" "$(grep -c "somebody else's line" "${FAT}/linux/user-startup.sh")" "1"
@@ -500,9 +537,9 @@ ok "it says the firmware stays on the display" "$(said 'firmware stays')" "1"
 # outside the Scripts menu does not delete itself.
 : > "${CALLS}"
 T2OP_FAT="${FAT}" T2OP_INIT="${TMP}/fake-init" \
-  bash "${ROOT}/tools/uninstall_tty2oledplus.sh" --yes > "${TMP}/out" 2>&1 </dev/null
+  bash "${ROOT}/tools/tty2oledplus_uninstall.sh" --yes > "${TMP}/out" 2>&1 </dev/null
 RC="${?}"
-ok "the repo's own copy is never deleted" "$(yesno test -e "${ROOT}/tools/uninstall_tty2oledplus.sh")" "yes"
+ok "the repo's own copy is never deleted" "$(yesno test -e "${ROOT}/tools/tty2oledplus_uninstall.sh")" "yes"
 ok "a second run refuses" "${RC}" "1"
 ok "saying it is not installed" "$(said 'not installed')" "1"
 
@@ -529,7 +566,7 @@ rm -rf "${FAT}/tty2oled"
 
 section "installer: reading the display's answer"
 
-T2OP_LIB=yes . "${ROOT}/tools/update_tty2oledplus.sh"
+T2OP_LIB=yes . "${ROOT}/tools/tty2oledplus_update.sh"
 hw() { parse_hwinf <<<"$1"; echo "${HW_BOARD}/${HW_VERSION}"; }
 ok "a plain answer"                    "$(hw 'HWLOLIN32;0.4.1b;')"                       "lolin32/0.4.1b"
 ok "behind stale acknowledgements"     "$(hw $'ttyack;ttyack;HWESP32DE;0.4.1b;\r\nttyack;')" "esp32de/0.4.1b"

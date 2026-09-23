@@ -1,7 +1,7 @@
 # Every push: the test suites, and the firmware for all three boards.
 # A v* tag: the same, then a GitHub release built from them.
 #
-# The release is what tools/update_tty2oledplus.sh installs from, so this
+# The release is what tools/tty2oledplus_update.sh installs from, so this
 # is the only way a build reaches anyone who does not have the repository.
 # The procedure that ends in a tag push is at the top of CLAUDE.md.
 
@@ -127,7 +127,7 @@ jobs:
 
       # Not --prerelease, whatever the "b" says. GitHub leaves pre-releases out
       # of /releases/latest, and that is the address the installer and every
-      # update_tty2oledplus fetch from - a beta marked as one would be
+      # tty2oledplus_update fetch from - a beta marked as one would be
       # invisible to all of them.
       - name: Publish
         env:

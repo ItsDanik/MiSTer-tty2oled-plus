@@ -209,29 +209,55 @@ ok "in the daemon log too, for a start at boot" "$(grep -c 'not made to run side
 ok "and nothing is started" "$([ -e "${PIDFILE}" ] && echo started || echo none)" "none"
 rm -rf "${UPSTREAM_DIR}"
 
-# The uninstaller reaches the Scripts menu from here, not only from the
+# The menu entries reach the Scripts folder from here, not only from the
 # installer: an update is applied by the *previous* installer, which knows
 # nothing of a file added after it - so the daemon's own start is the first
-# thing a new version controls.
+# thing a new version controls. That is what carries the 0.4.8b renaming onto
+# a MiSTer whose last update predates it.
 SCRIPTSPATH="${TMP}/Scripts"; TTY2OLED_PATH="${TMP}/install"
 mkdir -p "${SCRIPTSPATH}" "${TTY2OLED_PATH}"
-place_uninstaller
-ok "nothing to place, nothing placed" "$([ -e "${SCRIPTSPATH}/uninstall_tty2oledplus.sh" ] && echo yes || echo no)" "no"
-echo "#!/bin/bash" > "${TTY2OLED_PATH}/uninstall_tty2oledplus.sh"
-place_uninstaller
-ok "an install that has one gets it into the Scripts menu" \
-   "$(cat "${SCRIPTSPATH}/uninstall_tty2oledplus.sh")" "#!/bin/bash"
-ok "and it can be run from there" "$([ -x "${SCRIPTSPATH}/uninstall_tty2oledplus.sh" ] && echo yes || echo no)" "yes"
-echo "# newer" >> "${TTY2OLED_PATH}/uninstall_tty2oledplus.sh"
-place_uninstaller
-ok "a newer one replaces it" "$(grep -c '# newer' "${SCRIPTSPATH}/uninstall_tty2oledplus.sh")" "1"
-touch -d "2020-01-01" "${SCRIPTSPATH}/uninstall_tty2oledplus.sh"
-BEFORE="$(stat -c %Y "${SCRIPTSPATH}/uninstall_tty2oledplus.sh")"
-place_uninstaller
+place_menu_scripts
+ok "nothing to place, nothing placed" \
+   "$([ -e "${SCRIPTSPATH}/tty2oledplus_uninstall.sh" ] && echo yes || echo no)" "no"
+
+for f in ${MENU_SCRIPTS}; do echo "#!/bin/bash" > "${TTY2OLED_PATH}/${f}"; done
+place_menu_scripts
+PLACED=0
+for f in ${MENU_SCRIPTS}; do [ -x "${SCRIPTSPATH}/${f}" ] && PLACED=$((PLACED+1)); done
+ok "an install that has them gets all three into the Scripts menu" "${PLACED}" "3"
+ok "and they can be run from there" \
+   "$(cat "${SCRIPTSPATH}/tty2oledplus_settings.sh")" "#!/bin/bash"
+
+echo "# newer" >> "${TTY2OLED_PATH}/tty2oledplus_uninstall.sh"
+place_menu_scripts
+ok "a newer one replaces it" "$(grep -c '# newer' "${SCRIPTSPATH}/tty2oledplus_uninstall.sh")" "1"
+touch -d "2020-01-01" "${SCRIPTSPATH}/tty2oledplus_settings.sh"
+BEFORE="$(stat -c %Y "${SCRIPTSPATH}/tty2oledplus_settings.sh")"
+place_menu_scripts
 ok "an identical one is left alone, so every boot is not a write" \
-   "$(stat -c %Y "${SCRIPTSPATH}/uninstall_tty2oledplus.sh")" "${BEFORE}"
+   "$(stat -c %Y "${SCRIPTSPATH}/tty2oledplus_settings.sh")" "${BEFORE}"
+
+# The pre-0.4.8b names, which only the daemon can clear: the installer that
+# put them there is the one that ran the update.
+for f in ${MENU_SCRIPTS_LEGACY}; do echo "# old" > "${SCRIPTSPATH}/${f}"; done
+place_menu_scripts
+LEFT=0
+for f in ${MENU_SCRIPTS_LEGACY}; do [ -e "${SCRIPTSPATH}/${f}" ] && LEFT=$((LEFT+1)); done
+ok "the old names are swept once the new ones are in" "${LEFT}" "0"
+ok "and the new ones are still there" \
+   "$([ -x "${SCRIPTSPATH}/tty2oledplus_update.sh" ] && echo yes || echo no)" "yes"
+
+# Half an install - only one of the three - must not take the old menu entry
+# away, or a failed update leaves a MiSTer with no way to update or uninstall.
+rm -f "${SCRIPTSPATH}"/* "${TTY2OLED_PATH}"/tty2oledplus_*.sh
+echo "# old" > "${SCRIPTSPATH}/update_tty2oledplus.sh"
+echo "#!/bin/bash" > "${TTY2OLED_PATH}/tty2oledplus_uninstall.sh"
+place_menu_scripts
+ok "an incomplete set leaves the old entry alone" \
+   "$([ -e "${SCRIPTSPATH}/update_tty2oledplus.sh" ] && echo yes || echo no)" "yes"
+
 rm -rf "${SCRIPTSPATH}"
-place_uninstaller; ok "no Scripts folder, no complaint" "${?}" "0"
+place_menu_scripts; ok "no Scripts folder, no complaint" "${?}" "0"
 unset SCRIPTSPATH TTY2OLED_PATH
 
 rm -f "${PIDFILE}" "${PIDFILE_LEGACY}"
@@ -456,8 +482,8 @@ TTYDEV="${WIRE}"
 
 SELF_UPDATE_SCREEN="yes"; SELFUPDATE_SHOWN="no"; SHOW_METADATA="yes"
 selfupdate_running; ok "no updater running" "${?}" "1"
-mkproc 700 /bin/bash /media/fat/Scripts/update_tty2oledplus.sh
-selfupdate_running; ok "update_tty2oledplus seen" "${?}" "0"
+mkproc 700 /bin/bash /media/fat/Scripts/tty2oledplus_update.sh
+selfupdate_running; ok "tty2oledplus_update seen" "${?}" "0"
 SELF_UPDATE_SCREEN="no"
 selfupdate_running; ok "SELF_UPDATE_SCREEN=no ignores it" "${?}" "1"
 SELF_UPDATE_SCREEN="yes"
@@ -474,7 +500,7 @@ ok "and it is sent once, not every pass" "$(wc -c <"${WIRE}")" "0"
 # The uninstaller stops the daemon too, and a display left saying "Updating"
 # about software that is being removed would be a lie.
 rm -rf "${PROC_ROOT}/700"
-mkproc 701 /bin/bash /media/fat/Scripts/uninstall_tty2oledplus.sh
+mkproc 701 /bin/bash /media/fat/Scripts/tty2oledplus_uninstall.sh
 selfupdate_running; ok "the uninstaller is not an update" "${?}" "1"
 rm -rf "${PROC_ROOT}/701"
 
@@ -491,7 +517,7 @@ selfupdate_pass; ok "gone: the pass is not taken" "${?}" "1"
 
 # It wins over update_all: it is about to stop the daemon.
 mkproc 500 /bin/bash /media/fat/Scripts/update_all.sh
-mkproc 700 /bin/bash /media/fat/Scripts/update_tty2oledplus.sh
+mkproc 700 /bin/bash /media/fat/Scripts/tty2oledplus_update.sh
 SELFUPDATE_SHOWN="no"
 ok "with both running, ours is what shows" \
    "$(TTYDEV=/dev/stdout selfupdate_pass | tail -n1)" "CMDBUSY,1,Updating TTY2OLED+..."

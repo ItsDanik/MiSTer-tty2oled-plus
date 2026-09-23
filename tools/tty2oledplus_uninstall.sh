@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # Remove tty2oled+ from a MiSTer, leaving nothing of it behind. Runs ON THE
-# MISTER - it is installed as /media/fat/Scripts/uninstall_tty2oledplus.sh and
-# appears in the Scripts menu as uninstall_tty2oledplus.
+# MISTER - it is installed as /media/fat/Scripts/tty2oledplus_uninstall.sh and
+# appears in the Scripts menu as tty2oledplus_uninstall.
 #
 #   --keep-settings    save tty2oled-user.ini and coretypes.ini beside the
 #                      install as *.saved instead of removing them
@@ -18,7 +18,9 @@
 #   - /media/fat/tty2oledplus - scripts, settings, artwork, title index
 #   - the boot hook line in /media/fat/linux/user-startup.sh, and the
 #     "# Startup tty2oled+" comment the installer wrote above it
-#   - update_tty2oledplus.sh and TTY2OLEDplus_Installer.sh from Scripts
+#   - every Scripts entry this put there: tty2oledplus_update.sh,
+#     tty2oledplus_settings.sh, tty2oledplus_install.sh, and the names all of
+#     those had before 0.4.8b
 #   - the pid file and the logs in /tmp
 #   - the log_file_entry line in MiSTer.ini, if the install was what put it
 #     there, restoring whatever was there before
@@ -170,7 +172,8 @@ main() {
     esac
   done
 
-  [ -e "${INSTALL}" ] || [ -e "${FAT}/Scripts/update_tty2oledplus.sh" ] \
+  [ -e "${INSTALL}" ] || [ -e "${FAT}/Scripts/tty2oledplus_update.sh" ] \
+    || [ -e "${FAT}/Scripts/update_tty2oledplus.sh" ] \
     || die "tty2oled+ is not installed in ${INSTALL} - nothing to remove."
 
   say "Removing tty2oled+ from ${FAT}"
@@ -216,7 +219,11 @@ main() {
   unhook
 
   say "Removing the Scripts entries and what was left in /tmp"
-  gone "${FAT}/Scripts/update_tty2oledplus.sh" "${FAT}/Scripts/TTY2OLEDplus_Installer.sh"
+  gone "${FAT}/Scripts/tty2oledplus_update.sh" "${FAT}/Scripts/tty2oledplus_install.sh" \
+       "${FAT}/Scripts/tty2oledplus_settings.sh" \
+       "${FAT}/Scripts/update_tty2oledplus.sh" \
+       "${FAT}/Scripts/uninstall_tty2oledplus.sh" \
+       "${FAT}/Scripts/TTY2OLEDplus_Installer.sh"
   # The pid file by the ini's own name where the ini could be read, and by a
   # glob otherwise - no script but S60tty2oled and the ini should know that
   # path, and tests/test-daemon.sh enforces it. The glob is deliberately
@@ -234,7 +241,7 @@ main() {
   # Only the installed copy, in the Scripts menu: a copy run from anywhere
   # else is someone's own file, and deleting it would be a surprise.
   self="$(readlink -f "$0" 2>/dev/null)"
-  if [ "${DRYRUN}" = "no" ] && [ "${self}" = "$(readlink -f "${FAT}/Scripts" 2>/dev/null)/uninstall_tty2oledplus.sh" ]; then
+  if [ "${DRYRUN}" = "no" ] && [ "${self}" = "$(readlink -f "${FAT}/Scripts" 2>/dev/null)/tty2oledplus_uninstall.sh" ]; then
     rm -f "${self}" && note "removed ${self}"
   fi
   return 0

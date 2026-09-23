@@ -11,6 +11,7 @@
 #   test-version.sh     one version across the scripts and the firmware
 #   test-daemon.sh      the daemon loop's device recovery, and the init script
 #   test-deploy.sh      deploy-mister.sh against a fake MiSTer, and the boot hook
+#   test-settings.sh    the Scripts-menu settings editor and the ini it writes
 #   test-png2gsc.py     the image converter, on both of its backends
 #   test-installer.sh   the release package, and the installer that unpacks it
 #   test-flash.sh       flashing: what is written, and what is kept
@@ -38,6 +39,7 @@ run "shell: title index"         "${HERE}/test-index.sh"
 run "shell: versioning"          "${HERE}/test-version.sh"
 run "shell: daemon lifecycle"    "${HERE}/test-daemon.sh"
 run "shell: deploy"              "${HERE}/test-deploy.sh"
+run "shell: settings editor"     "${HERE}/test-settings.sh"
 run "tools: png2gsc"             "${HERE}/test-png2gsc.py"
 run "release: installer"        "${HERE}/test-installer.sh"
 run "tools: flashing"            "${HERE}/test-flash.sh"

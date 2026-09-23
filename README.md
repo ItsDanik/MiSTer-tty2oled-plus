@@ -1,244 +1,245 @@
 # tty2oled+
 
-*Game-aware display for the **[MiSTer FPGA]**.*
+*A game-aware OLED display for the **[MiSTer FPGA]**.*
 
-A fork of **[venice1200/MiSTer_tty2oled]**, which drives an SSD1322 OLED from a
-MiSTer over USB and shows artwork for the running **core**.
+Fork of **[tty2oled]**, adding extra features like game metadata display.
 
-tty2oled+ shows the **game**.
+An SSD1322 OLED panel connects to the MiSTer over USB and shows what you are
+playing: artwork for the core, the game's title, the year it came out, who made
+it, and — for arcade boards — everything the `.mra` knows.
 
-## Installation
+![The console layout: "Now playing", the game title, its details, and the
+system's icon beside them](docs/img/console-nes.png)
 
-You need a tty2oled display with an **ESP32** (see [Requirements](#requirements))
-and a MiSTer that is online.
+## What is on screen
 
-1. Download **[TTY2OLEDplus_Installer.sh]** from the latest release.
-2. Copy it to the **`Scripts`** folder on the MiSTer's SD card
-   (`/media/fat/Scripts`) - over the network share, FTP, or with the card in
-   your computer.
-3. On the MiSTer, open the menu, go to **Scripts** and run
-   **TTY2OLEDplus_Installer**.
-4. Reboot, so MiSTer picks up the `log_file_entry=1` the installer set for you
-   (see below) and the display starts with the machine.
+**Console cores** get a split layout: the title, then the fields you asked for,
+with an icon for the system beside them. A title too wide for the column
+scrolls; more fields than rows and they take turns, the pips by the header
+counting the pages.
 
-The installer downloads the newest release, checks every file against the
-release's checksums before changing anything, and then:
+![Five fields on four rows: System and Year pinned, Region and Format
+paging](docs/img/console-paging.png)
 
-- installs the scripts, the title index, the console icons and the artwork into
-  `/media/fat/tty2oledplus`
-- asks the display which board it is and flashes the matching firmware - only
-  when the display runs a different version, and never by guessing
+Every few minutes the two halves swap sides, so no region of the panel holds
+the same lit pixels all day.
+
+![The same layout mirrored: icon left, text right](docs/img/console-flipped.png)
+
+**Arcade cores** alternate the artwork with an info card, one step every
+`METADATA_INTERVAL` seconds — artwork, each page of the card in turn, then the
+artwork again.
+
+![NBA Jam's marquee artwork](docs/img/arcade-art.png)
+
+![Card page one: year, manufacturer, region, orientation, core, author, set and
+MAME version](docs/img/arcade-card-1.png)
+
+![Card page two: players, controls and button names, under the pinned
+row](docs/img/arcade-card-2.png)
+
+**Computer cores** show the core's artwork full-screen, and nothing else, yet.  
+Computer metadata support coming in the future.
+
+![The C64 core's artwork, full screen](docs/img/computer-art.png)
+
+**At power-on** the panel says which firmware it is running while it waits for
+the MiSTer, with a sweep to show it is alive and waiting. The picture is yours
+if you have stored one.
+
+![The boot screen: the MiSTer wordmark, the build version, and the sweep
+bar](docs/img/boot.png)
+
+**While an update runs** the panel says so instead of leaving stale artwork up,
+whether it is `update_all` or tty2oled+ updating itself.
+
+![The message "Updating System ..." above the sweep bar](docs/img/busy.png)
+
+Pictures cross-fade by default, and the panel dims itself after a couple of
+minutes of nothing happening, waking on the next thing the MiSTer sends.
+
+## What you need
+
+- A **tty2oled display with an ESP32** — classic ESP32 or S3 — driving an
+  SSD1322 256x64 panel, in **USB mode**. (An ESP8266 has too little RAM for
+  the game display; the SD and Standard sketch variants are not covered.)
+- A MiSTer that is **online**, for the install.
+
+## Installing
+
+1. Download **[tty2oledplus_install.sh]** from the latest release.
+2. Copy it to `/media/fat/Scripts` on the MiSTer's SD card — over the network
+   share, over FTP, or with the card in your computer.
+3. On the MiSTer: **Scripts → tty2oledplus_install**.
+4. **Reboot.** MiSTer only reads the setting the installer changed at boot.
+
+The installer fetches the newest release and checks every file against the
+release's checksums. Then it:
+
+- installs the scripts, the title index, the system icons and the core artwork
+  into `/media/fat/tty2oledplus`
+- asks the display which board it is and flashes the matching firmware — only
+  when the display is running a different version, and never by guessing
 - sets `log_file_entry=1` in the `[MiSTer]` section of `MiSTer.ini`, which is
-  what makes MiSTer say which game is loaded, and remembers what was there so
-  the uninstaller can put it back
-- adds the start line to `/media/fat/linux/user-startup.sh`, so the display
-  comes up on every boot, and starts it now
-- puts **update_tty2oledplus** and **uninstall_tty2oledplus** in the Scripts
-  menu, and removes TTY2OLEDplus_Installer, which has done its job
+  what makes MiSTer report the loaded game, and remembers what was there before
+- starts the display, and adds the line to `/media/fat/linux/user-startup.sh`
+  that starts it on every boot
+- leaves **tty2oledplus_settings**, **tty2oledplus_update** and
+  **tty2oledplus_uninstall** in the Scripts menu, and removes itself
 
-**To update**, run **update_tty2oledplus** from the Scripts menu. Your
-`tty2oled-user.ini` and `coretypes.ini` are never overwritten, and the firmware
-is flashed only when the release carries a new one.
-
-**To uninstall**, run **uninstall_tty2oledplus** from the Scripts menu. It
-stops the display, removes `/media/fat/tty2oledplus`, the start line in
-`user-startup.sh` and both Scripts entries, clears any boot image stored on the
-display, puts `MiSTer.ini` back as the install found it, and removes itself - `--keep-settings` saves your two ini files beside
-the install first, and `--dry-run` only lists what would go. The firmware stays
-on the display: it is the display's own flash, and an ESP32 with none shows
-nothing at all.
-
-**Coming from upstream tty2oled?** tty2oled+ replaces it - both would drive the
-same serial port - so the installer stops and says what to remove if it finds
-`/media/fat/tty2oled`. To keep your settings instead, see
-[Coming from an upstream install](#coming-from-an-upstream-install).
-
-**Over SSH** instead of the Scripts menu, the same installer is one line:
+**Over SSH**, instead of the Scripts menu, it is one line:
 
 ```sh
 curl -fsSL --cacert /etc/ssl/certs/cacert.pem \
-  https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/update_tty2oledplus.sh | bash
+  https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_update.sh | bash
 ```
 
-If the display is too broken to say what board it is, name it:
+If you want to manally name it the board:
 `... | bash -s -- --board lolin32` (or `esp32de`, `esp32s3`).
 
-[TTY2OLEDplus_Installer.sh]: https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/TTY2OLEDplus_Installer.sh
+### Updating
 
-| | Upstream | tty2oled+ |
-|---|---|---|
-| Arcade core | core artwork | artwork, then two pages of everything the `.mra` knows — year, manufacturer, region, orientation, core, author, set, MAME version, then players, controls and button names — then back to the artwork |
-| Console core | core artwork | split layout — scrolling game title and details, console icon beside it |
-| Idle | full brightness | dims after a couple of minutes, wakes on the next change |
-| Burn-in | fixed layout | the console layout swaps sides every few minutes |
-| Computer core | core artwork | unchanged |
-| Boot screen | built-in logo | your own image, stored on the display |
+Run **tty2oledplus_update** from the Scripts menu. Your `tty2oled-user.ini` and
+`coretypes.ini` are never overwritten, The firmware is flashed on every release,
+but the custom boot image is kept.
 
-Everything upstream does still works, including all of its transition effects —
-the metadata screens are composed into the same framebuffer format the pictures
-use, so they animate in exactly the same way. Set `SHOW_METADATA="no"` and the
-behaviour is upstream's, unchanged.
+### Uninstalling
 
-```
-┌────────────────────────────────────────────────────┬──────────────┐
-│ Now playing                                        │              │
-│ ──────────────────────────────────────             │              │
-│ The Legend of Zelda                                │  (console    │
-│ System   = Nintendo NES                            │   icon)      │
-│ Year     = 1987                                    │              │
-│ Company  = Nintendo                            ▪▫  │              │
-└────────────────────────────────────────────────────┴──────────────┘
-```
+Run **tty2oledplus_uninstall** from the Scripts menu. It stops the display,
+removes the install folder, the start line in `user-startup.sh` and every
+Scripts entry it put there, clears any boot image stored on the display, puts
+`MiSTer.ini` back as it found it, and removes itself. `--keep-settings` saves your two ini files
+first; `--dry-run` only lists what would go.
 
-The arcade card is the whole panel, and takes two turns to say everything the
-`.mra` knows — artwork, page 1, page 2, artwork, one step per
-`METADATA_INTERVAL`:
+[tty2oledplus_install.sh]: https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_install.sh
 
-```
-┌───────────────────────────────────────────────────────────────────┐
-│               NBA Jam (rev 3.01 04/07/93)                    ▪▫   │
-│ ───────────────────────────────────────────────────────────────── │
-│ Year     1993            Manufctr  Midway                         │
-│ Region   World           Orient    Horizontal                     │
-│ Core     blahmid_tunit   Author    rejectedcoins                  │
-│ Set      nbajam          MAME      0289                           │
-└───────────────────────────────────────────────────────────────────┘
-┌───────────────────────────────────────────────────────────────────┐
-│               NBA Jam (rev 3.01 04/07/93)                    ▫▪   │
-│ ───────────────────────────────────────────────────────────────── │
-│ Year     1993            Manufctr  Midway                         │
-│ Players  4                                                        │
-│ Controls 8-way                                                    │
-│ Buttons  Turbo/Shoot / Block/Pass / Steal                         │
-└───────────────────────────────────────────────────────────────────┘
-```
+## Where the game details come from
 
-## Requirements
-
-- Any tty2oled build on an **ESP32** (classic, or S3). ESP8266 keeps upstream
-  behaviour — the display code needs more RAM than it has.
-- **USB mode.** The SD and Standard sketch variants are not covered yet.
-- `log_file_entry=1` in `MiSTer.ini`. It defaults to off, and without it MiSTer
-  never publishes which game is loaded, so only core names can show. The
-  installer sets it; a working copy deploy does not, so set it by hand there.
-
-## Installing from a working copy
-
-For development, from a workstation with the repo checked out and SSH to the
-MiSTer:
-
-```bash
-ssh-copy-id root@MiSTer.local                # once, so it stops asking
-
-./tools/build-tty2oled.sh MiSTer_SSD1322_USB lolin32   # or esp32de / esp32s3
-./tools/deploy-mister.sh --firmware --flash            # firmware, then scripts
-```
-
-This fork installs to **`/media/fat/tty2oledplus/`**, not upstream's
-`/media/fat/tty2oled/`, so neither updater can overwrite the other's files.
-It **replaces** upstream rather than running beside it — both would be driving
-the same serial port — so while `/media/fat/tty2oled/` still holds upstream's
-scripts, the installer, the deploy and the daemon's init script all refuse to
-go on, and say how to remove it. Moving the folder, below, is one way.
-
-### Coming from an upstream install
-
-Move the folder, point the boot script at the new one, and install over it.
-Moving rather than copying keeps your artwork, your `tty2oled-user.ini` and
-your `coretypes.ini`. On the MiSTer, over SSH:
-
-```bash
-/media/fat/tty2oled/S60tty2oled stop
-mv /media/fat/tty2oled /media/fat/tty2oledplus
-sed -i 's|/media/fat/tty2oled/|/media/fat/tty2oledplus/|g' /media/fat/linux/user-startup.sh
-rm -f /media/fat/Scripts/update_tty2oled.sh
-```
-
-Then run **TTY2OLEDplus_Installer** from the Scripts menu, as in
-[Installation](#installation) - or, from a working copy,
-`./tools/deploy-mister.sh`.
-
-Installing over it is the part that matters: `S60tty2oled` and `tty2oled-read.sh` name
-the install folder outright — they run before any ini is read, so they have to
-— and the copies that came with upstream still name the old one. Upstream's
-installer, its two update scripts and its `tty2oled_cc.sh` menu are not part
-of this fork; delete them from the moved folder if you want it tidy.
-
-A MiSTer that has never had any of this gets everything in one go — scripts,
-title index, console icons and the core artwork pack:
-
-```bash
-./tools/deploy-mister.sh --all
-```
-
-`MISTER=root@192.168.1.50 ./tools/deploy-mister.sh` if mDNS does not resolve.
-Script-only changes afterwards need neither the build nor the flash — just
-`./tools/deploy-mister.sh`, which also adds the boot hook to
-`/media/fat/linux/user-startup.sh` the first time, so the daemon comes back
-after a reboot.
-
-Upstream's installer and its two update scripts are not part of this fork:
-they exist to pull venice1200's scripts and tty2tft.de's stock firmware over a
-local install. The release installer above is this fork's own.
-
-Firmware first, then scripts. New firmware with old scripts behaves exactly
-like upstream; the reverse sends commands the firmware cannot parse.
-`--firmware --flash` gets that order right on its own.
-
-Not sure which board you have? Ask the display — upstream's installer menu
-lists "DevKit" twice, and a generic ESP32 DevKit V4 is the `lolin32` profile:
-
-```bash
-. /media/fat/tty2oledplus/tty2oled-system.ini
-stty -F ${TTYDEV} ${BAUDRATE} ${TTYPARAM}
-echo "CMDHWINF" > ${TTYDEV}; read -t5 R < ${TTYDEV}; echo "$R"   # HWLOLIN32;...
-```
-
-**`tty2oled-user.ini` is never copied** — it holds your settings, and it is
-sourced after `tty2oled-system.ini` so they take precedence.
-
-## Game metadata
-
-Titles come from the filename. Year, publisher, genre and developer come from a
-local index built from **[libretro-database]** — offline, no API key, no
-account. MiSTer writes the loaded game's CRC32 (or a disc serial) to
-`/tmp/GAMEID`, and that is the key.
-
-```bash
-./tools/build-title-index.sh        # ~2.5MB, 38k games, cached between runs
-./tools/deploy-mister.sh --index
-```
-
-One file per core in `titleindex/`, looked up by CRC32, then disc serial, then
-title. A miss costs only the extra fields — the filename title still shows.
+The title comes from the filename. The year, publisher, genre and developer come
+from an index that is installed with everything else — built from
+**[libretro-database]**, offline, no API key and no account. MiSTer writes the
+loaded ROM's CRC32 (or a disc serial) to `/tmp/GAMEID`, and that is the key; a
+miss costs only the extra fields, and the title still shows.
 
 | Systems | What you get |
 |---|---|
-| 47 cartridge systems | title, region, year, publisher, genre, developer |
-| Neo Geo | title, year, publisher (from the MAME set — it is arcade hardware) |
-| PSX, Saturn, Sega CD, 3DO, PC Engine CD | title, region only |
+| 27 cartridge systems — NES, SNES, Mega Drive, Game Boy and Advance, N64, Master System, TurboGrafx-16, the Ataris, and more | title, region, year, publisher, genre, developer |
+| Neo Geo | title, year, publisher — from the MAME set, it being arcade hardware |
+| PlayStation, Saturn, Mega CD, 3DO, PC Engine CD | title and region only |
 
-The disc systems are a limit of the source, not of the romset: libretro's
-metadata categories cover cartridge systems, and disc titles appear only in the
-redump set, which has no release dates or publishers at all.
+Disc systems are a limit of the source: the
+cartridge metadata sets carry release dates and publishers, and the disc set
+carries neither.
 
-`./tools/build-title-index.sh --list` shows the core-to-system map. If a system
-of yours is missing, add it there; `tools/tty2oled-diag.sh` on the MiSTer prints
-the core name to use.
+Arcade cores do not use the index at all — everything on the card is read
+straight out of the `.mra` file the core was started from.
 
-## Artwork
+Cores are named on screen the way your MiSTer menu names them, from `names.txt`
+if you have one.
 
-Both icons and the boot screen are `.gsc`: a three-line header, then **one hex
-character per pixel**. So 16 grey levels, `0` black to `f` white — no colour,
-no alpha. Sizes are fixed, and a file even one byte short is rejected.
+## Settings
 
-| | Size | Where |
+Run **tty2oledplus_settings** from the Scripts menu. Everything worth changing
+is in there — what the display shows, which details appear under a game, how
+bright the panel is and when it dims, how one picture replaces the last —
+picked from menus, with what each one does written beside it.
+
+Nothing is written until you save, and saving restarts the display so the new
+settings are on the panel before you leave the menu. Anything left at its
+default is not written at all, so a later release that changes a default is
+followed rather than overridden by a value you never chose.
+
+The editor needs a terminal to draw in: from the Scripts menu that means
+`fb_terminal=1` in `MiSTer.ini`, which is the default. Otherwise press F9 for
+the console, or run it over SSH:
+
+```sh
+/media/fat/Scripts/tty2oledplus_settings.sh
+```
+
+### The files underneath
+
+Two files, both in `/media/fat/tty2oledplus/`, read in this order:
+
+1. `tty2oled-system.ini` — shipped with the release and **replaced on every
+   update**. Do not edit this one.
+2. `tty2oled-user.ini` — yours. Never overwritten, and read second, so anything
+   in it wins.
+
+So to change something the editor does not cover, put it in the user ini and
+restart the display:
+
+```sh
+echo 'SCREENSAVER="yes"' >> /media/fat/tty2oledplus/tty2oled-user.ini
+/media/fat/tty2oledplus/S60tty2oled restart
+```
+
+The editor writes to the same file, and leaves anything it does not know about
+— including your own comments — exactly where it found it.
+
+Settings the display itself acts on — brightness, dimming, side swapping — are
+sent over when it restarts, so nothing needs reflashing.
+
+| Setting | Default | Meaning |
 |---|---|---|
-| Console icon | 86×64 | `pics_pri/ICON/<CoreName>.gsc` |
-| Boot screen | 256×64 | the display's own flash |
+| `SHOW_METADATA` | `yes` | Master switch. `no` shows core artwork only. |
+| `METADATA_INTERVAL` | `12` | Arcade: seconds per screen — artwork, each card page in turn, then the artwork again. `0` never swaps. |
+| `SHOW_CONSOLE_SPLIT` | `yes` | Console: text left, system icon right. |
+| `METADATA_FIELDS` | `System Year Genre Region Format` | Which console fields show, and in what order. Four fit at once; the rest page every 2.5s. Available: System Region Year Company Genre Developer Format. |
+| `METADATA_PINNED` | `System Year` | Fields that stay put while the rest page under them. |
+| `COMPACT_YEAR_COMPANY` | `yes` | Fold the publisher into the year: `1989, Acclaim` on one row. |
+| `ARCADE_FIELDS` | `Year Manufacturer Region Orientation Core Author Set MAME` | Short arcade fields, paired two to a row. |
+| `ARCADE_FIELDS_WIDE` | `Players Controls Buttons` | Arcade fields whose values need a row of their own. |
+| `ARCADE_PINNED` | `Year Manufacturer` | The grid row repeated above each wide page. |
+| `CONTRAST` | `255` | Panel brightness, `0`–`255`. |
+| `CONTRAST_FADE_MS` | `800` | How long a brightness change takes to fade, `0`–`4000` ms. `0` jumps. |
+| `DIM_AFTER` | `120` | Seconds with nothing new on screen before the panel dims. `0` never dims. |
+| `DIM_CONTRAST` | `80` | Brightness to dim to, on the same scale as `CONTRAST`. |
+| `DIM_FADE_MS` | `6000` | How long going dim takes, `0`–`10000` ms — slow enough not to notice. Waking takes `CONTRAST_FADE_MS`. |
+| `DIM_WAKE` | `-1` | Brightness to wake to. `-1` means `CONTRAST`. |
+| `FLIP_MINUTES` | `5` | How often the console layout swaps sides. `0` never swaps. |
+| `TRANSITION` | `-2` | How one picture replaces the last. `-2` cross-fades, `-1` picks a random wipe each time, `0` none, `1`–`23` one particular wipe — the system ini lists all of them by name. |
+| `TRANSITION_FADE_MS` | `800` | With `-2`: each fade, out and in. `0`–`4000` ms. |
+| `TRANSITION_BLANK_MS` | `1000` | With `-2`: how long the panel stays black between them. `0`–`4000` ms. |
+| `BOOTSCREEN_AS_MENU` | `yes` | The boot screen doubles as the menu's picture. `no` shows the artwork pack's `MENU` picture instead. |
+| `UPDATE_ALL_SCREEN` | `yes` | Say so on the panel while `update_all` runs. |
+| `UPDATE_ALL_TEXT` | `Updating System ...` | What it says while the download is running. |
+| `SELF_UPDATE_SCREEN` | `yes` | The same, while tty2oled+ updates itself. |
+| `SCREENSAVER` | `no` | The moving-logo screensaver. Separate from dimming, and the two can be used together. |
+| `ROTATE` | `no` | Turn the whole display 180°. |
+| `USE_NAMES_TXT` | `yes` | Name cores as your MiSTer menu names them. |
+| `GAME_ROOTS` | SD, `usb0`–`usb5`, `cifs` | Where your games live, searched in order. |
 
-`pics_pri/ICON/` holds a drawn icon for each of the 27 systems this fork
-supports:
+`coretypes.ini`, in the same folder, says which cores are consoles, which are
+computers and which are arcade. It is only installed when you do not already
+have one, so anything you add to it survives an update.
+
+## Making it yours
+
+### A boot screen of your own
+
+The boot screen lives in the display's own flash, so it appears with the MiSTer
+switched off or the SD card out. It is **256x54**, not the full 256x64: the
+bottom ten rows are the firmware's, where it prints the build version and runs
+the sweep.
+
+Converting a picture needs `png2gsc.py` from this repository, which runs on
+your computer; storing it is done on the MiSTer:
+
+```sh
+./tools/png2gsc.py --boot splash.png          # on your computer -> splash.gsc
+
+/media/fat/tty2oledplus/tty2oled-bootimg.sh set splash.gsc    # on the MiSTer
+/media/fat/tty2oledplus/tty2oled-bootimg.sh status            # what is stored
+/media/fat/tty2oledplus/tty2oled-bootimg.sh clear             # back to the built-in one
+```
+
+Storing one takes a few seconds and no reflash.
+
+### Icons
+
+`/media/fat/tty2oledplus/pics_pri/ICON/` holds the icon drawn for each system —
+26 of them, covering the systems most people play:
 
 > 3DO · Atari 2600 / 5200 / 7800 · Atari Lynx · Game Boy · Game Boy Color ·
 > Game Boy Advance · Game Gear · Genesis · Jaguar · Mega CD · Mega Drive ·
@@ -246,218 +247,42 @@ supports:
 > 32X · TurboGrafx-16 · TurboGrafx-16 CD · Virtual Boy · WonderSwan ·
 > WonderSwan Color
 
-Every other console core still gets the split layout — title, fields, the
-lot — just with a blank panel where the icon would be. To add one, draw at
-86×64 in 16 greys (Aseprite, Pixelorama) and name the file after the core, as
-`tty2oled-diag.sh` on the MiSTer reports it:
+The twenty console cores without one still get the split layout and everything
+in it — just a black panel where the icon would be. To draw your own, work at
+**86x64** in sixteen shades of grey, and name the file after the core, as
+MiSTer names it: `MegaDrive.gsc`, `GBA.gsc`, `NES.gsc`.
 
-```bash
-./tools/png2gsc.py --out pics_pri/ICON/MegaDrive.gsc megadrive.png
-./tools/deploy-mister.sh --icons
+```sh
+./tools/png2gsc.py --out MegaDrive.gsc megadrive.png
+# then copy it into /media/fat/tty2oledplus/pics_pri/ICON/
 ```
 
-Core banners — the full-screen artwork `CMDCOR` puts up — are 256×64 and live
-in `pics/GSC`, named after the core the same way:
+Core artwork — the full-screen picture — is **256x64**, named the same way, and
+goes in `/media/fat/tty2oledplus/pics/GSC/`:
 
-```bash
-./tools/png2gsc.py --banner --out pics/GSC/MegaDrive.gsc art.png
-./tools/deploy-mister.sh --pics
+```sh
+./tools/png2gsc.py --banner --out MegaDrive.gsc art.png
 ```
 
-The filename is the **core name** MiSTer reports — `GBA.gsc`, `MegaDrive.gsc`,
-`NEOGEO.gsc`. No flash and no upload: the daemon reads the file off the SD card
-and sends it over when the core changes.
+Either is picked up on the next core change: no flashing and no uploading.
 
-The boot screen lives on the ESP itself, so it appears with the MiSTer switched
-off or the SD card removed:
+`png2gsc.py` fits and centres a picture on black rather than stretching it,
+scaling up as well as down. `--stretch` fills the frame, `--dither` suits
+photographs and hurts flat pixel art, and `--invert` is for art drawn
+dark-on-light. It uses Pillow if you have it and ImageMagick otherwise.
 
-```bash
-./tools/png2gsc.py --boot splash.png             # -> splash.gsc, 256x54
-# copy splash.gsc to the MiSTer, then on the MiSTer:
-/media/fat/tty2oledplus/tty2oled-bootimg.sh set splash.gsc
-/media/fat/tty2oledplus/tty2oled-bootimg.sh status   # what is stored now
-/media/fat/tty2oledplus/tty2oled-bootimg.sh clear    # back to the built-in logo
-```
-
-**256×54, not 256×64.** The bottom ten rows of the panel are the firmware's.
-Whatever image is stored, the build version is printed there in the very first
-frame and stays up until the daemon sends the first core — so a display booting
-into your artwork can tell you which firmware it is running for the whole time
-you are waiting, not just at the end. A second later the power-on sweep starts
-in the rows beside it and keeps cycling until the MiSTer's daemon makes
-contact, which is also the moment it stops: the animation is there to show the
-display is alive and waiting, so it ends when the waiting does. A full-screen
-image stored by an older version still works; it is cropped to its top 54 rows,
-and `tty2oled-bootimg.sh status` says so.
-
-With nothing stored you get the built-in screen, a 16-grey MiSTer wordmark
-compiled into the firmware rather than upstream's monochrome bitmap. It lives
-in `MiSTer_SSD1322_USB/bootlogo.h`, which is generated from the `.png` beside
-it and not edited by hand:
-
-```bash
-./tools/png2gsc.py --boot --header -o MiSTer_SSD1322_USB/bootlogo.h \
-                   MiSTer_SSD1322_USB/bootlogo.png
-```
-
-Changing it needs a rebuild and a flash; changing the stored one does not.
-
-`png2gsc.py` fits and centres on black rather than stretching, scaling up or
-down; `--stretch` fills, `--dither` suits photographs and hurts flat pixel art,
-`--invert` is for art drawn dark-on-light. It uses Pillow if installed,
-ImageMagick otherwise, and gives the same result with either. Draw in the
-16-step grey palette (0, 17, 34 ... 255) and it converts exactly. 16-bit PNGs
-are fine.
-
-## Settings
-
-Added to `tty2oled-system.ini`; override them in `tty2oled-user.ini`.
-
-| Setting | Default | Meaning |
-|---|---|---|
-| `SHOW_METADATA` | `yes` | Master switch. `no` gives upstream behaviour exactly. |
-| `METADATA_INTERVAL` | `12` | Arcade: seconds per screen — artwork, each card page in turn, then the artwork again. `0` never swaps. |
-| `SHOW_CONSOLE_SPLIT` | `yes` | Console: text left, icon right. |
-| `METADATA_FIELDS` | `System Year Genre Region Format` | Which console fields show, and in what order. Three fit at once; the rest page. |
-| `METADATA_WARN` | `yes` | Warn once at startup if `log_file_entry` is missing. |
-| `METADATA_POLL` | `5` | Seconds before re-checking for state files that did not exist yet. |
-| `USE_NAMES_TXT` | `yes` | Show cores by the name in MiSTer's `names.txt`, as its own menu does. |
-| `GAME_ROOTS` | SD, `usb0`–`usb5`, `cifs` | Where games may live. Searched in order. |
-| `TITLE_INDEX_DIR` | `tty2oledplus/titleindex` | Per-core index files. |
-| `CONTRAST` | `255` | Panel brightness, `0`–`255`. |
-| `CONTRAST_FADE_MS` | `800` | How long any brightness change takes to fade, `0`–`4000` ms. `0` jumps. Going dim has its own `DIM_FADE_MS`. |
-| `TRANSITION` | `-2` | How one picture replaces the last, on core changes and between arcade card pages. `-2` fades, `-1` is a random wipe, `0` none, `1`–`23` one wipe; the ini lists them all. |
-| `TRANSITION_FADE_MS` | `800` | With `-2`: how long each fade, out and in, takes. `0`–`4000` ms. |
-| `BOOTSCREEN_AS_MENU` | `yes` | The boot screen is the menu's picture: at power-on it stays up, the bar finishes and the version fades out. `no` shows the pack's `MENU.gsc`. |
-| `TRANSITION_BLANK_MS` | `1000` | With `-2`: how long the panel stays black between them. `0`–`4000` ms. |
-| `DIM_AFTER` | `120` | Seconds of nothing new on screen before the panel dims. `0` never dims. |
-| `DIM_FADE_MS` | `6000` | How long going dim takes, `0`–`10000` ms - slow enough not to be noticed. Waking takes `CONTRAST_FADE_MS`. |
-| `DIM_CONTRAST` | `80` | Brightness to dim to, `0`–`255` like `CONTRAST`, never above the waking level. Replaces `DIM_PERCENT`. |
-| `DIM_WAKE` | `-1` | Brightness to wake at. `-1` uses `CONTRAST`. |
-| `FLIP_MINUTES` | `5` | Swap the console layout's sides this often. `0` never swaps. |
-| `ARCADE_FIELDS` | `Year Manufacturer Region Orientation Core Author Set MAME` | Short arcade fields, paired two to a row. |
-| `ARCADE_FIELDS_WIDE` | `Players Controls Buttons` | Arcade fields whose values need a full row of their own. |
-| `ARCADE_PINNED` | `Year Manufacturer` | The grid row repeated above each wide page. |
-| `METADATA_PINNED` | `System Year` | Fields that stay on screen while the rest page under them. |
-| `COMPACT_YEAR_COMPANY` | `yes` | Fold the publisher into the year: `1989, Acclaim` on one row. |
-
-### Where settings live, and how to change them
-
-Two files, both in `/media/fat/tty2oledplus/`, sourced in this order:
-
-1. `tty2oled-system.ini` — shipped by this repo and **overwritten on every
-   deploy**. Do not edit it on the MiSTer.
-2. `tty2oled-user.ini` — yours. Never copied by `deploy-mister.sh`, and read
-   second, so anything here wins.
-
-So to change a setting, add it to the user ini and restart the daemon:
-
-```bash
-ssh root@MiSTer.local
-echo 'DIM_AFTER="60"' >> /media/fat/tty2oledplus/tty2oled-user.ini
-/media/fat/tty2oledplus/S60tty2oled restart
-```
-
-Settings the firmware acts on (`DIM_*`, `FLIP_MINUTES`, `CONTRAST`) are sent
-over the wire when the daemon starts, so a restart is enough — no reflash.
-To check what is actually in force:
-
-```bash
-. /media/fat/tty2oledplus/tty2oled-system.ini
-[ -r /media/fat/tty2oledplus/tty2oled-user.ini ] && . /media/fat/tty2oledplus/tty2oled-user.ini
-echo "${DIM_AFTER} ${DIM_CONTRAST} ${FLIP_MINUTES} ${METADATA_FIELDS}"
-```
-
-`coretypes.ini` maps each core to `console`, `computer` or `arcade`. It is
-consulted before any guesswork, and a deploy will not overwrite one you have
-edited.
-
-Nothing here can be overwritten by upstream's updaters: they are not part of
-this fork, and the install folder is not the one they write to. If you also
-run stock tty2oled from `/media/fat/tty2oled`, its updater will keep that
-folder up to date and leave this one alone — but only one of the two daemons
-may run at a time, since they share the serial port.
-
-## Troubleshooting
-
-```bash
-echo 'debug="true"' >> /media/fat/tty2oledplus/tty2oled-user.ini
-/media/fat/tty2oledplus/S60tty2oled restart
-tail -f /tmp/tty2oled
-```
-
-Two tools, both run **on the MiSTer**:
-
-- `tty2oled-diag.sh` — every state file with its timestamp, what the metadata
-  layer made of it, and whether the loaded game hit the index. Run it right
-  after loading a game.
-- `tty2oled-capture.sh` — records the same thing continuously while you load
-  games, so a whole set of systems can be looked at in one pass.
-
-Nothing on screen but core artwork? Check `log_file_entry=1` is in
-`MiSTer.ini`, then check `tty2oled-diag.sh` reports `KIND=console`.
-
-## Versions
-
-The scripts and the firmware carry **one** version — `VERSION` at the repo
-root, currently `0.4.0b` — and are released together. A trailing `b` means
-beta.
-
-```bash
-./tools/bump-version.sh            # 0.4.0b -> 0.4.1b, before every push
-./tools/bump-version.sh --release  # drop the beta mark
-./tools/bump-version.sh --check    # every copy still agrees?
-```
-
-It writes the number into `tty2oled-system.ini` and into the sketch's
-`BuildVersion`, which are the only two places that need it as a literal, and
-`tests/test-version.sh` fails if they ever drift apart. The daemon asks the
-display for its version at startup and says so in `/tmp/tty2oled` when the two
-do not match — so a display behaving oddly after a script-only deploy explains
-itself in one line.
-
-`CHANGELOG.md` has an entry per version, and each push is tagged:
-
-```bash
-git tag -a v0.4.0b -m "tty2oled+ 0.4.0b" && git push --tags
-```
-
-so "which firmware is on the display" is answerable from the repo.
-
-## Tests
-
-```bash
-./tests/run-all.sh
-```
-
-638 checks across six suites, needing no MiSTer, no ESP32 and no serial port.
-The firmware suites compile the display code against stubs under
-`-Wall -Wextra -Werror` with ASan/UBSan and a real 8192-byte framebuffer.
-
-Every bug fixed here reached hardware first, so each one has a test that was
-confirmed to fail against the unfixed code.
-
-## Not done yet
-
-- **The icons are blank.** The files are named and valid; nobody has drawn them.
-- **Disc-system release dates.** Not available offline; see above.
-- SD and Standard sketch variants.
+Everything on this panel is sixteen shades of grey — no colour, no
+transparency. Draw in that palette and the conversion is exact.
 
 ## Credit and licence
 
-All of the hard parts — the hardware, the sketch, the picture pipeline, the
-transitions, the daemon — are venice1200's and the tty2oled contributors'. This
-fork only adds a metadata layer on top. GPLv3, like upstream.
+Original project (tty2oled): venice1200
+GPLv3, as that is.
 
-Metadata comes from **[libretro-database]** and the MAME project, both
-community efforts that this leans on entirely.
-
-Documentation for the underlying project lives in the
-**[upstream wiki][Documentation]**.
+Game metadata comes from **[libretro-database]** and the MAME project.
 
 <!----------------------------------------------------------------------------->
 
 [MiSTer FPGA]: https://github.com/MiSTer-devel
-[venice1200/MiSTer_tty2oled]: https://github.com/venice1200/MiSTer_tty2oled
 [libretro-database]: https://github.com/libretro/libretro-database
-[Documentation]: https://github.com/venice1200/MiSTer_tty2oled/wiki
+[tty2oled]: https://github.com/venice1200/MiSTer_tty2oled

@@ -4,6 +4,34 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.4.8b — 2026-09-23
+
+- **A settings editor in the Scripts menu.** **tty2oledplus_settings** puts
+  everything worth changing behind menus - what the display shows, which
+  details appear under a game, how bright the panel is and when it dims, how
+  one picture replaces the last - with what each setting does written beside
+  it. Nothing is written until you save, and saving restarts the display so
+  the change is on the panel before you leave. It only ever writes
+  `tty2oled-user.ini`, and only the settings you have actually changed:
+  anything left at its default stays out of the file, so a later release that
+  changes a default is still followed. Your own comments, and any setting the
+  editor does not cover, are left exactly where they were. It needs a terminal
+  to draw in - that is `fb_terminal=1` in `MiSTer.ini`, the default - and says
+  so rather than failing into the OSD if there is none.
+- **The Scripts entries are renamed** so they sort together in the menu, which
+  is alphabetical: **tty2oledplus_install**, **tty2oledplus_settings**,
+  **tty2oledplus_uninstall**, **tty2oledplus_update**. The old entries -
+  `TTY2OLEDplus_Installer`, `update_tty2oledplus`, `uninstall_tty2oledplus` -
+  are removed once the new ones are in place. Updating from 0.4.7b or earlier
+  works as it always has: this release still publishes the updater under its
+  old name for the installers that ask for it by that name, and the new menu
+  entries appear on the first update, the old ones disappearing with it. That
+  one compatibility copy is dropped in the next release.
+- **The README is rewritten**, with real screenshots of the display rather
+  than sketches of it - the firmware's own layout code, rendered on a
+  workstation - and without the sections that were only ever for people
+  working on the code.
+
 ## 0.4.7b — 2026-09-23
 
 - **The sweep no longer lurches or smears when the MiSTer is ready.** Handing

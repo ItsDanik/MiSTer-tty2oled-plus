@@ -3,16 +3,16 @@
 # tty2oled+ installer for the MiSTer's Scripts menu.
 #
 # Copy this file to the SD card's Scripts folder (/media/fat/Scripts) and run
-# TTY2OLEDplus_Installer from the Scripts menu. It needs the MiSTer online.
+# tty2oledplus_install from the Scripts menu. It needs the MiSTer online.
 #
 # It is only a starter: it downloads the newest release's real installer,
 # checks it against the release's SHA256SUMS and runs it, so a copy of this
 # file downloaded long ago still installs the current release. When the
-# install succeeds it deletes itself - the install puts update_tty2oledplus in
+# install succeeds it deletes itself - the install puts tty2oledplus_update in
 # the Scripts menu, which is the same installer, for every update after.
 #
 # Options are passed through to the installer (--board lolin32, --no-firmware,
-# ...); see the top of update_tty2oledplus.sh for the list.
+# ...); see the top of tty2oledplus_update.sh for the list.
 
 REPO="ItsDanik/MiSTer-tty2oled-plus"
 
@@ -45,10 +45,10 @@ main() {
   local tmp="${TMPDIR_START}"
 
   say "Fetching the tty2oled+ installer"
-  fetch SHA256SUMS "${tmp}/SHA256SUMS" && fetch update_tty2oledplus.sh "${tmp}/installer.sh" \
+  fetch SHA256SUMS "${tmp}/SHA256SUMS" && fetch tty2oledplus_update.sh "${tmp}/installer.sh" \
     || die "Could not reach ${RELEASES}. Is the MiSTer online?"
 
-  want="$(awk '$2 == "update_tty2oledplus.sh" || $2 == "*update_tty2oledplus.sh" { print $1 }' "${tmp}/SHA256SUMS")"
+  want="$(awk '$2 == "tty2oledplus_update.sh" || $2 == "*tty2oledplus_update.sh" { print $1 }' "${tmp}/SHA256SUMS")"
   got="$(sha256sum "${tmp}/installer.sh" | cut -d' ' -f1)"
   [ -n "${want}" ] && [ "${want}" = "${got}" ] \
     || die "The installer does not match the release's checksum - the download is damaged. Try again."
@@ -56,14 +56,14 @@ main() {
   bash "${tmp}/installer.sh" "$@"
   rc=$?
 
-  # Replaced by update_tty2oledplus once that is in place. Only this file, by
+  # Replaced by tty2oledplus_update once that is in place. Only this file, by
   # name, and only after a successful run.
   self="$(readlink -f "$0" 2>/dev/null)"
-  if [ "${rc}" -eq 0 ] && [ "$(basename "${self}")" = "TTY2OLEDplus_Installer.sh" ] \
-     && [ -e "$(dirname "${self}")/update_tty2oledplus.sh" ]; then
+  if [ "${rc}" -eq 0 ] && [ "$(basename "${self}")" = "tty2oledplus_install.sh" ] \
+     && [ -e "$(dirname "${self}")/tty2oledplus_update.sh" ]; then
     rm -f "${self}"
-    say "TTY2OLEDplus_Installer has done its job and removed itself."
-    printf '    Use update_tty2oledplus in the Scripts menu from now on.\n'
+    say "tty2oledplus_install has done its job and removed itself."
+    printf '    Use tty2oledplus_update in the Scripts menu from now on.\n'
   fi
   return "${rc}"
 }

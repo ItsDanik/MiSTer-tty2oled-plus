@@ -24,9 +24,11 @@
 #   tty2oledplus-pics.tar.gz    the artwork pack, separate: it is 12MB and
 #                               rarely changes, so updates skip it
 #   tty2oledplus-<board>.bin    merged firmware, one per board built
-#   update_tty2oledplus.sh      the installer itself, and the Scripts menu updater
-#   TTY2OLEDplus_Installer.sh   the starter a user drops into Scripts; it
+#   tty2oledplus_update.sh      the installer itself, and the Scripts menu updater
+#   tty2oledplus_install.sh     the starter a user drops into Scripts; it
 #                               fetches and runs the installer above
+#   update_tty2oledplus.sh      the same bytes under the name the updater had
+#                               before 0.4.8b - see LEGACY_UPDATER below
 #
 # Both archives unpack to tty2oledplus/, the install folder's own name.
 
@@ -125,7 +127,19 @@ done < <(find "${FWDIR:-MiSTer_SSD1322_USB}" -name 'MiSTer_SSD1322_USB.ino.merge
 [ "${FOUND}" -gt 0 ] || die "no firmware found - build it first, or pass --firmware"
 
 # --- The rest --------------------------------------------------------------
-cp tools/update_tty2oledplus.sh tools/TTY2OLEDplus_Installer.sh "${OUT}/"
+cp tools/tty2oledplus_update.sh tools/tty2oledplus_install.sh "${OUT}/"
+
+# The updater every install older than 0.4.8b has in its Scripts menu fetches
+# an asset called exactly update_tty2oledplus.sh. Drop that name and those
+# MiSTers get "Could not download update_tty2oledplus.sh" and have to be
+# reinstalled by hand, so it is published once more under the old name. The
+# copy is byte for byte the new updater: it installs the new scripts, and the
+# new S60tty2oled then places the new menu entries and sweeps the old ones.
+#
+# ONE RELEASE ONLY. Delete this block and its test in the release after
+# 0.4.8b; by then every install that updates at all has the new name.
+LEGACY_UPDATER="update_tty2oledplus.sh"
+cp tools/tty2oledplus_update.sh "${OUT}/${LEGACY_UPDATER}"
 printf '%s\n' "${VERSION}" > "${OUT}/VERSION"
 ( cd "${OUT}" && sha256sum -- * | grep -v ' SHA256SUMS$' > SHA256SUMS )
 
@@ -135,15 +149,17 @@ if [ -n "${NOTES}" ]; then
     cat <<EON
 ### Install or update
 
-Download **TTY2OLEDplus_Installer.sh** below, copy it to the \`Scripts\` folder
-on the MiSTer's SD card, and run **TTY2OLEDplus_Installer** from the Scripts
+Download **tty2oledplus_install.sh** below, copy it to the \`Scripts\` folder
+on the MiSTer's SD card, and run **tty2oledplus_install** from the Scripts
 menu. Or on the MiSTer, over SSH:
 
 \`\`\`sh
-curl -fsSL --cacert /etc/ssl/certs/cacert.pem https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/update_tty2oledplus.sh | bash
+curl -fsSL --cacert /etc/ssl/certs/cacert.pem https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_update.sh | bash
 \`\`\`
 
-After that, **update_tty2oledplus** in the MiSTer's Scripts menu does the same.
+After that the Scripts menu has **tty2oledplus_settings** to change what the
+display shows, **tty2oledplus_update** for the next update, and
+**tty2oledplus_uninstall** to remove it all again.
 EON
   } > "${NOTES}"
 fi

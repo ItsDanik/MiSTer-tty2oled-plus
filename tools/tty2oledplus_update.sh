@@ -4,9 +4,9 @@
 #
 # First install, over SSH:
 #   curl -fsSL --cacert /etc/ssl/certs/cacert.pem \
-#     https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/update_tty2oledplus.sh | bash
+#     https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_update.sh | bash
 #
-# After that it is in the Scripts menu as update_tty2oledplus, and runs the same
+# After that it is in the Scripts menu as tty2oledplus_update, and runs the same
 # way from there. Options, when run by hand:
 #
 #   --version 0.4.1b   that release instead of the newest
@@ -27,8 +27,9 @@
 #   - sets log_file_entry=1 in MiSTer.ini, inside its [MiSTer] section, and
 #     records what was there so the uninstaller can put it back
 #   - adds the boot hook to /media/fat/linux/user-startup.sh
-#   - puts itself in /media/fat/Scripts as update_tty2oledplus.sh, and the
-#     uninstaller beside it as uninstall_tty2oledplus.sh
+#   - puts itself in /media/fat/Scripts as tty2oledplus_update.sh, with
+#     tty2oledplus_settings.sh and tty2oledplus_uninstall.sh beside it, and
+#     removes the pre-0.4.8b names once they are all there
 #   - refuses to run at all while upstream tty2oled is installed in
 #     /media/fat/tty2oled - tty2oled+ replaces it, the two are not made to run
 #     side by side - and never touches that install itself
@@ -231,7 +232,7 @@ on_exit() {
 # --- Main ------------------------------------------------------------------
 # All in a function, called on the last line. "curl | bash" executes as the
 # bytes arrive, so a connection dropped halfway would otherwise run half a
-# script; and update_tty2oledplus.sh replaces itself while it runs.
+# script; and tty2oledplus_update.sh replaces itself while it runs.
 main() {
   local want="" board="" firmware="yes" pics="no" force="no"
   while [ $# -gt 0 ]; do
@@ -324,7 +325,7 @@ main() {
   # --- Download and verify everything before changing anything -----------
   say "Downloading"
   local assets=()
-  [ "${scripts}" = "yes" ] && assets+=(tty2oledplus.tar.gz update_tty2oledplus.sh)
+  [ "${scripts}" = "yes" ] && assets+=(tty2oledplus.tar.gz tty2oledplus_update.sh)
   [ "${pics}" = "yes" ] && assets+=(tty2oledplus-pics.tar.gz)
   [ "${flash}" = "yes" ] && assets+=("tty2oledplus-${board}.bin")
   local a
@@ -349,15 +350,16 @@ main() {
             note "kept your $(basename "${f}")"
             continue
           fi ;;
-        # Belongs in the Scripts menu, not in the folder it removes. It is
-        # copied into the install folder as well, because S60tty2oled places
-        # it from there on every start - which is what gets it into the menu
-        # on a MiSTer whose last update was run by an installer that predates
-        # it, this one included.
-        uninstall_tty2oledplus.sh)
+        # Belong in the Scripts menu. They are copied into the install folder
+        # as well, because S60tty2oled places them from there on every start -
+        # which is what gets them into the menu on a MiSTer whose last update
+        # was run by an installer that predates them, this one included.
+        # The updater itself is not here: it may be the file bash is reading,
+        # so it is placed by rename at the end of the run.
+        tty2oledplus_uninstall.sh|tty2oledplus_settings.sh)
           if [ -d "${FAT}/Scripts" ]; then
-            cp "${f}" "${FAT}/Scripts/uninstall_tty2oledplus.sh"
-            chmod +x "${FAT}/Scripts/uninstall_tty2oledplus.sh"
+            cp "${f}" "${FAT}/Scripts/$(basename "${f}")"
+            chmod +x "${FAT}/Scripts/$(basename "${f}")"
           fi ;;
       esac
       cp -r "${f}" "${INSTALL}/"
@@ -400,14 +402,26 @@ main() {
   "${INIT}" status || note "It did not start - see ${DAEMON_LOG}"
 
   if [ "${scripts}" = "yes" ] && [ -d "${FAT}/Scripts" ]; then
-    # By rename, never in place: if this *is* update_tty2oledplus.sh, bash is
+    # By rename, never in place: if this *is* tty2oledplus_update.sh, bash is
     # still reading it, and overwriting the open file would feed it the new
     # script from the old one's byte offset.
-    cp "${STAGE}/update_tty2oledplus.sh" "${FAT}/Scripts/.update_tty2oledplus.sh.new"
-    chmod +x "${FAT}/Scripts/.update_tty2oledplus.sh.new"
-    mv "${FAT}/Scripts/.update_tty2oledplus.sh.new" "${FAT}/Scripts/update_tty2oledplus.sh"
-    note "update_tty2oledplus is in the Scripts menu for next time,"
-    note "and uninstall_tty2oledplus removes all of this again."
+    cp "${STAGE}/tty2oledplus_update.sh" "${FAT}/Scripts/.tty2oledplus_update.sh.new"
+    chmod +x "${FAT}/Scripts/.tty2oledplus_update.sh.new"
+    mv "${FAT}/Scripts/.tty2oledplus_update.sh.new" "${FAT}/Scripts/tty2oledplus_update.sh"
+
+    # The names these had before 0.4.8b. Swept only now, with the new entries
+    # beside them, so an interrupted run never leaves a menu with none. An
+    # update applied by an installer older than this one leaves its own
+    # update_tty2oledplus.sh behind instead; S60tty2oled sweeps that on its
+    # next start.
+    local legacy
+    for legacy in update_tty2oledplus.sh uninstall_tty2oledplus.sh \
+                  TTY2OLEDplus_Installer.sh; do
+      [ -e "${FAT}/Scripts/${legacy}" ] && rm -f "${FAT}/Scripts/${legacy}"
+    done
+
+    note "the Scripts menu now has tty2oledplus_settings to change settings,"
+    note "tty2oledplus_update for the next update, and tty2oledplus_uninstall."
   fi
 
   say "Checking MiSTer.ini"
