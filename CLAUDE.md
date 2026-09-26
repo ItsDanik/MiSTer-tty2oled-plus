@@ -34,6 +34,8 @@ workstation has:
 ```bash
 arduino-cli lib upgrade                                 # what CI will install
 ./tests/run-all.sh                                      # must be all green
+shellcheck -S error -s bash tty2oled.sh tty2oled-meta.sh tty2oled-read.sh \
+  S60tty2oled tools/*.sh tests/*.sh                     # CI's line; run-all has none
 for b in esp32de esp32s3 lolin32; do                    # lolin32 LAST
   ./tools/build-tty2oled.sh MiSTer_SSD1322_USB "${b}"
 done
@@ -1110,6 +1112,13 @@ fork's version of copying `tty2oled-user.ini` over the user's.
   it is not the new one (`-ef`); and never ship two files whose names differ
   only in case - `pics/icon` has `NEOGEO.gsc` and `NeoGeo.gsc`, harmless only
   because they are identical.
+- **CI shellchecks; `run-all.sh` does not.** `v0.6.1b` was spent on a test
+  that defined a function named `rm` - SC2218 then flags every `rm` above it
+  as calling a function not yet defined. Stub a command with an executable
+  first on `PATH`, not a function. Before tagging, run CI's own line:
+  `shellcheck -S error -s bash tty2oled.sh tty2oled-meta.sh tty2oled-read.sh
+  S60tty2oled tools/*.sh tests/*.sh` (a static binary from shellcheck's GitHub
+  releases works if the workstation has none).
 - **A `--radiolist` answers with what is already ticked, not what is
   highlighted.** Every single-choice picker in the settings editor was one, so
   arrowing to a new transition and pressing Enter saved the old value and the

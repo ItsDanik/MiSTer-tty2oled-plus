@@ -317,11 +317,19 @@ rm -rf "${TTY2OLED_PATH}"
 mkdir -p "${TTY2OLED_PATH}/pics/icon"
 echo icon > "${TTY2OLED_PATH}/pics/icon/NES.gsc"
 ln -s icon "${TTY2OLED_PATH}/pics/ICON"
-rm() { local a=() x; for x in "$@"; do
-         case "${x}" in -*) a+=("${x}") ;; *) a+=("$(readlink -f -- "${x}")") ;; esac
-       done; command rm "${a[@]}"; }
-migrate_pics
-unset -f rm
+# An executable first on PATH rather than a function named rm: a function
+# would shadow every rm in this file as far as shellcheck can tell.
+mkdir -p "${TMP}/caseblind"
+cat > "${TMP}/caseblind/rm" <<EOF
+#!/bin/bash
+a=()
+for x in "\$@"; do
+  case "\${x}" in -*) a+=("\${x}") ;; *) a+=("\$(readlink -f -- "\${x}")") ;; esac
+done
+exec $(command -v rm) "\${a[@]}"
+EOF
+chmod +x "${TMP}/caseblind/rm"
+( PATH="${TMP}/caseblind:${PATH}"; migrate_pics )
 ok "on a case-blind card the icons survive a start" \
    "$(cat "${TTY2OLED_PATH}/pics/icon/NES.gsc" 2>&1)" "icon"
 # Where the two names really are two folders, the old one still goes.
