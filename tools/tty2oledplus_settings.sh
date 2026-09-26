@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# tty2oled+ settings editor. Runs ON THE MISTER, from the Scripts menu as
-# tty2oledplus_settings.
+# tty2oled+ settings editor. Runs ON THE MISTER, from the install folder: the
+# Scripts menu's one entry, tty2oledplus, opens it as Settings.
 #
 # A dialog front end for tty2oled-user.ini. The settings the display actually
 # has - what it shows, which fields, how bright, how it changes picture - are
@@ -135,7 +135,7 @@ EOS
 UPDATE_ALL_SCREEN|bool||Say so while update_all runs|Show what is happening on the panel instead of leaving the last core's artwork up.
 UPDATE_ALL_TEXT|text||What it says|The message shown while update_all is downloading.
 SELF_UPDATE_SCREEN|bool||Say so while tty2oled+ updates|The same, for this display's own updater.
-SELF_UPDATE_TEXT|text||What that says|The message shown while tty2oledplus_update runs.
+SELF_UPDATE_TEXT|text||What that says|The message shown while an Update runs.
 UPDATE_ALL_POLL|int|1 60|How often to look (seconds)|How often to check whether update_all is running. Lower notices sooner and costs a little more.
 EOS
     ;;
@@ -774,7 +774,7 @@ main() {
   [ -d "${INSTALL}" ] || die "${REPO_NAME} is not installed in ${INSTALL}.
     Run tty2oledplus_install from the Scripts menu first."
   [ -r "${SYSTEM_INI}" ] || die "${SYSTEM_INI} is missing, so there are no defaults to read.
-    Run tty2oledplus_update from the Scripts menu to put the install back."
+    Run tty2oledplus from the Scripts menu and choose Update to put it back."
   # The daemon reads it and this writes it, so a missing one is only missing
   # until the first save; creating it here keeps the two in one place.
   [ -e "${USER_INI}" ] || : > "${USER_INI}"
@@ -786,7 +786,7 @@ main() {
     say "${REPO_NAME} settings"
     note "This needs a terminal to draw its menus in."
     note "Press F9 on the MiSTer for the console and run it there, or use SSH:"
-    note "  ${FAT}/Scripts/tty2oledplus_settings.sh"
+    note "  ${FAT}/Scripts/tty2oledplus.sh settings"
     note "Or set fb_terminal=1 in MiSTer.ini and run it from the Scripts menu."
     exit 2
   fi

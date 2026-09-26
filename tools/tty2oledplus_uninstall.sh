@@ -1,8 +1,10 @@
 #!/bin/bash
 #
 # Remove tty2oled+ from a MiSTer, leaving nothing of it behind. Runs ON THE
-# MISTER - it is installed as /media/fat/Scripts/tty2oledplus_uninstall.sh and
-# appears in the Scripts menu as tty2oledplus_uninstall.
+# MISTER - it is installed in the install folder it removes, and the Scripts
+# menu's one entry, tty2oledplus, runs it as Uninstall. So that removing its
+# own folder cannot pull the script out from under bash, it runs from a copy
+# in /tmp, which removes itself when it is done.
 #
 #   --keep-settings    save what is yours - tty2oled-user.ini, coretypes.ini,
 #                      pics/boot.png and pics/user - into
@@ -21,13 +23,12 @@
 #   - /media/fat/tty2oledplus - scripts, settings, artwork, title index
 #   - the boot hook line in /media/fat/linux/user-startup.sh, and the
 #     "# Startup tty2oled+" comment the installer wrote above it
-#   - every Scripts entry this put there: tty2oledplus_update.sh,
-#     tty2oledplus_settings.sh, tty2oledplus_install.sh, and the names all of
-#     those had before 0.4.8b
+#   - every Scripts entry this put there: the launcher tty2oledplus.sh,
+#     tty2oledplus_install.sh, the three entries the launcher replaced in
+#     0.6.3b, and the names those had before 0.4.8b
 #   - the pid file and the logs in /tmp
 #   - the log_file_entry line in MiSTer.ini, if the install was what put it
 #     there, restoring whatever was there before
-#   - itself
 #
 # What it deliberately leaves:
 #   - the firmware on the display. It is the display's own flash, not the
@@ -235,22 +236,38 @@ banners in pics/user, and your boot.png." 16 66 3 \
   return 0
 }
 
-# In main() and called on the last line, because this script deletes itself:
-# bash reads a script as it runs it.
+# Run from a copy in /tmp, never from where it was installed. It lives in the
+# folder it removes, and bash reads a script as it runs it - so it steps out
+# of the way first, from wherever it was started, and the copy cleans itself
+# up on the way out. Not local: the EXIT trap runs after main has returned.
+relocate() {
+  if [ -n "${T2OP_UNINSTALL_COPY:-}" ]; then
+    trap 'rm -f "${T2OP_UNINSTALL_COPY}"' EXIT
+    return 0
+  fi
+  local copy
+  copy="$(mktemp /tmp/tty2oledplus_uninstall.XXXXXX)" || die "Could not create a file in /tmp."
+  cat "$0" > "${copy}" || { rm -f "${copy}"; die "Could not copy $0 to /tmp."; }
+  T2OP_UNINSTALL_COPY="${copy}" exec bash "${copy}" "$@"
+}
+
+# In main() and called on the last line, because bash reads a script as it
+# runs it.
 main() {
-  local keep_settings="no" keep_bootimage="no" assume_yes="no" self
+  local keep_settings="no" keep_bootimage="no" assume_yes="no"
   while [ $# -gt 0 ]; do
     case "$1" in
       --keep-settings)  keep_settings="yes"; shift ;;
       --keep-bootimage) keep_bootimage="yes"; shift ;;
       --dry-run)        DRYRUN="yes"; shift ;;
       --yes|-y)         assume_yes="yes"; shift ;;
-      -h|--help)        sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; return 0 ;;
+      -h|--help)        sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; return 0 ;;
       *)                die "unknown option: $1" ;;
     esac
   done
 
-  [ -e "${INSTALL}" ] || [ -e "${FAT}/Scripts/tty2oledplus_update.sh" ] \
+  [ -e "${INSTALL}" ] || [ -e "${FAT}/Scripts/tty2oledplus.sh" ] \
+    || [ -e "${FAT}/Scripts/tty2oledplus_update.sh" ] \
     || [ -e "${FAT}/Scripts/update_tty2oledplus.sh" ] \
     || die "tty2oled+ is not installed in ${INSTALL} - nothing to remove."
 
@@ -310,8 +327,9 @@ main() {
   unhook
 
   say "Removing the Scripts entries and what was left in /tmp"
-  gone "${FAT}/Scripts/tty2oledplus_update.sh" "${FAT}/Scripts/tty2oledplus_install.sh" \
-       "${FAT}/Scripts/tty2oledplus_settings.sh" \
+  gone "${FAT}/Scripts/tty2oledplus.sh" "${FAT}/Scripts/tty2oledplus_install.sh" \
+       "${FAT}/Scripts/tty2oledplus_update.sh" "${FAT}/Scripts/tty2oledplus_settings.sh" \
+       "${FAT}/Scripts/tty2oledplus_uninstall.sh" \
        "${FAT}/Scripts/update_tty2oledplus.sh" \
        "${FAT}/Scripts/uninstall_tty2oledplus.sh" \
        "${FAT}/Scripts/TTY2OLEDplus_Installer.sh"
@@ -328,14 +346,8 @@ main() {
   note "The firmware stays on the display - it is the display's own flash, and"
   note "an ESP32 with none shows nothing. Flash upstream's if you want it back."
   [ -e "${FAT}/tty2oled" ] && note "Upstream's ${FAT}/tty2oled is left alone - it is not ours."
-
-  # Only the installed copy, in the Scripts menu: a copy run from anywhere
-  # else is someone's own file, and deleting it would be a surprise.
-  self="$(readlink -f "$0" 2>/dev/null)"
-  if [ "${DRYRUN}" = "no" ] && [ "${self}" = "$(readlink -f "${FAT}/Scripts" 2>/dev/null)/tty2oledplus_uninstall.sh" ]; then
-    rm -f "${self}" && note "removed ${self}"
-  fi
   return 0
 }
 
+relocate "$@"
 main "$@"

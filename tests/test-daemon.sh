@@ -208,52 +208,67 @@ ok "in the daemon log too, for a start at boot" "$(grep -c 'not made to run side
 ok "and nothing is started" "$([ -e "${PIDFILE}" ] && echo started || echo none)" "none"
 rm -rf "${UPSTREAM_DIR}"
 
-# The menu entries reach the Scripts folder from here, not only from the
+# The menu entry reaches the Scripts folder from here, not only from the
 # installer: an update is applied by the *previous* installer, which knows
 # nothing of a file added after it - so the daemon's own start is the first
-# thing a new version controls. That is what carries the 0.4.8b renaming onto
-# a MiSTer whose last update predates it.
+# thing a new version controls. That is what carries the launcher onto a
+# MiSTer whose last update predates it, as it carried the 0.4.8b renaming.
 SCRIPTSPATH="${TMP}/Scripts"; TTY2OLED_PATH="${TMP}/install"
 mkdir -p "${SCRIPTSPATH}" "${TTY2OLED_PATH}"
+ok "the launcher is the one menu entry" "${MENU_SCRIPTS}" "tty2oledplus.sh"
 place_menu_scripts
 ok "nothing to place, nothing placed" \
-   "$([ -e "${SCRIPTSPATH}/tty2oledplus_uninstall.sh" ] && echo yes || echo no)" "no"
+   "$([ -e "${SCRIPTSPATH}/tty2oledplus.sh" ] && echo yes || echo no)" "no"
 
-for f in ${MENU_SCRIPTS}; do echo "#!/bin/bash" > "${TTY2OLED_PATH}/${f}"; done
+echo "#!/bin/bash" > "${TTY2OLED_PATH}/tty2oledplus.sh"
 place_menu_scripts
-PLACED=0
-for f in ${MENU_SCRIPTS}; do [ -x "${SCRIPTSPATH}/${f}" ] && PLACED=$((PLACED+1)); done
-ok "an install that has them gets all three into the Scripts menu" "${PLACED}" "3"
-ok "and they can be run from there" \
-   "$(cat "${SCRIPTSPATH}/tty2oledplus_settings.sh")" "#!/bin/bash"
+ok "an install that has the launcher gets it into the Scripts menu" \
+   "$([ -x "${SCRIPTSPATH}/tty2oledplus.sh" ] && echo yes || echo no)" "yes"
+ok "and it can be run from there" "$(cat "${SCRIPTSPATH}/tty2oledplus.sh")" "#!/bin/bash"
 
-echo "# newer" >> "${TTY2OLED_PATH}/tty2oledplus_uninstall.sh"
+echo "# newer" >> "${TTY2OLED_PATH}/tty2oledplus.sh"
 place_menu_scripts
-ok "a newer one replaces it" "$(grep -c '# newer' "${SCRIPTSPATH}/tty2oledplus_uninstall.sh")" "1"
-touch -d "2020-01-01" "${SCRIPTSPATH}/tty2oledplus_settings.sh"
-BEFORE="$(stat -c %Y "${SCRIPTSPATH}/tty2oledplus_settings.sh")"
+ok "a newer one replaces it" "$(grep -c '# newer' "${SCRIPTSPATH}/tty2oledplus.sh")" "1"
+touch -d "2020-01-01" "${SCRIPTSPATH}/tty2oledplus.sh"
+BEFORE="$(stat -c %Y "${SCRIPTSPATH}/tty2oledplus.sh")"
 place_menu_scripts
 ok "an identical one is left alone, so every boot is not a write" \
-   "$(stat -c %Y "${SCRIPTSPATH}/tty2oledplus_settings.sh")" "${BEFORE}"
+   "$(stat -c %Y "${SCRIPTSPATH}/tty2oledplus.sh")" "${BEFORE}"
 
-# The pre-0.4.8b names, which only the daemon can clear: the installer that
-# put them there is the one that ran the update.
+# The three entries the launcher replaced, and the pre-0.4.8b names - which
+# only the daemon can clear: the installer that put them there is the one
+# that ran the update, and 0.6.2b's puts its own updater back after the
+# daemon has already started.
 for f in ${MENU_SCRIPTS_LEGACY}; do echo "# old" > "${SCRIPTSPATH}/${f}"; done
+for f in tty2oledplus_update.sh tty2oledplus_settings.sh tty2oledplus_uninstall.sh; do
+  echo "#!/bin/bash" > "${TTY2OLED_PATH}/${f}"
+done
 place_menu_scripts
+LEFT=""
+for f in ${MENU_SCRIPTS_LEGACY}; do [ -e "${SCRIPTSPATH}/${f}" ] && LEFT="${LEFT} ${f}"; done
+ok "the old entries are swept once the launcher is in" "${LEFT}" ""
+ok "all six of them" "$(echo ${MENU_SCRIPTS_LEGACY} | wc -w | tr -d ' ')" "6"
+ok "and the launcher is still there" \
+   "$([ -x "${SCRIPTSPATH}/tty2oledplus.sh" ] && echo yes || echo no)" "yes"
+# Only the menu's copies: the launcher runs them from the install folder.
 LEFT=0
-for f in ${MENU_SCRIPTS_LEGACY}; do [ -e "${SCRIPTSPATH}/${f}" ] && LEFT=$((LEFT+1)); done
-ok "the old names are swept once the new ones are in" "${LEFT}" "0"
-ok "and the new ones are still there" \
-   "$([ -x "${SCRIPTSPATH}/tty2oledplus_update.sh" ] && echo yes || echo no)" "yes"
+for f in tty2oledplus_update.sh tty2oledplus_settings.sh tty2oledplus_uninstall.sh; do
+  [ -e "${TTY2OLED_PATH}/${f}" ] && LEFT=$((LEFT+1))
+done
+ok "while the install folder keeps what the launcher opens" "${LEFT}" "3"
+ok "and nothing is placed beside the launcher" "$(ls "${SCRIPTSPATH}")" "tty2oledplus.sh"
 
-# Half an install - only one of the three - must not take the old menu entry
-# away, or a failed update leaves a MiSTer with no way to update or uninstall.
-rm -f "${SCRIPTSPATH}"/* "${TTY2OLED_PATH}"/tty2oledplus_*.sh
-echo "# old" > "${SCRIPTSPATH}/update_tty2oledplus.sh"
-echo "#!/bin/bash" > "${TTY2OLED_PATH}/tty2oledplus_uninstall.sh"
+# An install with no launcher yet - a failed update - must not take the old
+# menu entries away, or it leaves a MiSTer with no way to update or uninstall.
+rm -f "${SCRIPTSPATH}"/* "${TTY2OLED_PATH}"/tty2oledplus*.sh
+echo "# old" > "${SCRIPTSPATH}/tty2oledplus_update.sh"
 place_menu_scripts
-ok "an incomplete set leaves the old entry alone" \
-   "$([ -e "${SCRIPTSPATH}/update_tty2oledplus.sh" ] && echo yes || echo no)" "yes"
+ok "no launcher leaves the old entries alone" \
+   "$([ -e "${SCRIPTSPATH}/tty2oledplus_update.sh" ] && echo yes || echo no)" "yes"
+
+# exFAT ignores case, and none of the names swept may be the launcher's.
+ok "no old name is the launcher's in another case" \
+   "$(for f in ${MENU_SCRIPTS_LEGACY}; do printf '%s\n' "${f}"; done | grep -ixc 'tty2oledplus.sh')" "0"
 
 rm -rf "${SCRIPTSPATH}"
 place_menu_scripts; ok "no Scripts folder, no complaint" "${?}" "0"

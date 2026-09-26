@@ -263,10 +263,10 @@ ok "its socket directory is cleaned up" "$(ls "${TMPDIR}" | wc -l | tr -d ' ')" 
 
 SENT="$(grep '^SCP' "${LOG}" | head -n1)"
 UNSENT=""
-# The three menu entries go to both places, so they are checked separately
-# below rather than against the install-folder list.
+# The launcher goes to both places, so it is checked separately below rather
+# than against the install-folder list.
 for f in ${LIST}; do
-  case "${f}" in */tty2oledplus_update.sh|*/tty2oledplus_settings.sh|*/tty2oledplus_uninstall.sh) continue ;; esac
+  case "${f}" in */tty2oledplus.sh) continue ;; esac
   case "${SENT}" in *" ${f}"*) ;; *) UNSENT="${UNSENT} ${f}" ;; esac
 done
 ok "every script and tool is sent" "${UNSENT}" ""
@@ -279,11 +279,18 @@ ok "every script and tool is sent" "${UNSENT}" ""
 # It went unnoticed because the release is packed the right way - make-release
 # puts them in the install folder - so only a deploy ever reverted them, and
 # only the copy in the menu, which nothing else reads.
+ok "the launcher goes to the Scripts menu" \
+   "$(grep -c "^SCP .*tools/tty2oledplus.sh .*:/media/fat/Scripts/\$" "${LOG}")" "1"
+ok "and into the install folder, for place_menu_scripts to place from" \
+   "$(grep '^SCP' "${LOG}" | grep -c "tools/tty2oledplus.sh .*:/media/fat/tty2oledplus/")" "1"
+# Since 0.6.3b the launcher is the menu's only entry: what it opens lives in
+# the install folder, and a deploy putting them in Scripts would bring back
+# the clutter the launcher replaced.
 for f in tty2oledplus_update.sh tty2oledplus_settings.sh tty2oledplus_uninstall.sh; do
-  ok "${f} goes to the Scripts menu" \
-     "$(grep -c "^SCP .*tools/${f} .*:/media/fat/Scripts/\$" "${LOG}")" "1"
-  ok "and into the install folder, for place_menu_scripts to place from" \
+  ok "${f} goes to the install folder" \
      "$(grep '^SCP' "${LOG}" | grep -c "tools/${f} .*:/media/fat/tty2oledplus/")" "1"
+  ok "and not to the Scripts menu" \
+     "$(grep '^SCP' "${LOG}" | grep "tools/${f} " | grep -c ':/media/fat/Scripts/')" "0"
 done
 ok "the default coretypes.ini goes to a fresh MiSTer" "$(grep -c '^SCP.* coretypes.ini ' "${LOG}")" "1"
 # The daemon sources it, and a first deploy used to leave it missing.

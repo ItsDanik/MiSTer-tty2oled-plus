@@ -81,32 +81,37 @@ upstream_installed() {
 }
 
 # Start
-# The Scripts menu entries: the updater, the settings editor and the
-# uninstaller. They ship in the install folder because that is what a release
-# archive unpacks, and belong in /media/fat/Scripts because that is the menu -
-# and the uninstaller in particular has to outlive the folder it removes.
+# The Scripts menu entry: the launcher, tty2oledplus.sh, which opens the
+# updater, the settings editor and the uninstaller from the install folder.
+# It ships in the install folder because that is what a release archive
+# unpacks, and belongs in /media/fat/Scripts because that is the menu.
 #
 # Done here, on every start, rather than only by the installer: an update is
 # always applied by the *previous* version of the installer, so a new rule
 # about where a file goes can never apply to the update that introduces it.
 # The daemon's own start is the first thing the new version controls. That is
-# what carries the 0.4.8b renaming across: an older installer puts its own
-# update_tty2oledplus.sh in the menu and knows nothing of the new names, so
-# this places all three and sweeps the old ones away afterwards.
-MENU_SCRIPTS="tty2oledplus_update.sh tty2oledplus_settings.sh tty2oledplus_uninstall.sh"
+# what carried the 0.4.8b renaming across, and what carries the launcher: the
+# installer that applies the 0.6.3b update puts the three old entries back in
+# the menu itself, and knows nothing of the launcher.
+MENU_SCRIPTS="tty2oledplus.sh"
 
-# The names these three had before 0.4.8b. Removed only once the new ones are
-# actually in place, so a half-finished install is never left with no menu
-# entry at all. TTY2OLEDplus_Installer.sh is in the list because the starter
-# only deletes itself after a *successful* run.
-MENU_SCRIPTS_LEGACY="update_tty2oledplus.sh uninstall_tty2oledplus.sh TTY2OLEDplus_Installer.sh"
+# What the launcher replaced, and the names those had before 0.4.8b. Removed
+# only once the launcher is actually in place, so a half-finished install is
+# never left with no menu entry at all. TTY2OLEDplus_Installer.sh is in the
+# list because the starter only deletes itself after a *successful* run.
+#
+# The three 0.6.3b retired are also in the install folder, where the launcher
+# runs them from; only their copies in the menu go.
+MENU_SCRIPTS_LEGACY="tty2oledplus_update.sh tty2oledplus_settings.sh tty2oledplus_uninstall.sh
+                     update_tty2oledplus.sh uninstall_tty2oledplus.sh TTY2OLEDplus_Installer.sh"
 
 place_menu_scripts() {
   local dir="${SCRIPTSPATH:-/media/fat/Scripts}"
   local install="${TTY2OLED_PATH:-/media/fat/tty2oledplus}"
-  local f src dst placed=0
+  local f src dst want=0 placed=0
   [ -d "${dir}" ] || return 0
   for f in ${MENU_SCRIPTS}; do
+    want=$((want + 1))
     src="${install}/${f}"
     dst="${dir}/${f}"
     [ -f "${src}" ] || continue
@@ -117,7 +122,7 @@ place_menu_scripts() {
     cp "${src}" "${dst}" 2>/dev/null && chmod +x "${dst}" 2>/dev/null \
       && placed=$((placed + 1))
   done
-  [ "${placed}" -eq 3 ] || return 0
+  [ "${placed}" -eq "${want}" ] || return 0
   for f in ${MENU_SCRIPTS_LEGACY}; do
     [ -e "${dir}/${f}" ] && rm -f "${dir}/${f}" 2>/dev/null
   done

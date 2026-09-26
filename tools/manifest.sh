@@ -27,17 +27,23 @@ MANIFEST_TOOLS="tools/tty2oled-diag.sh tools/flash-mister.sh tools/fw-segments.p
                 tools/tty2oled-capture.sh tools/tty2oled-bootimg.sh tools/tty2oled-boothook.sh
                 tools/png2gsc.py"
 
+# What the launcher opens: the updater, the settings editor and the
+# uninstaller. They live in the install folder, not in the Scripts menu -
+# since 0.6.3b the menu carries the launcher alone - and the launcher runs
+# them from there.
+#
+# The updater is the one file an install cannot simply copy over: run from
+# the launcher, it *is* ${INSTALL}/tty2oledplus_update.sh while it runs, so it
+# places itself by rename at the end of the run, never in place.
+MANIFEST_APPS="tools/tty2oledplus_update.sh tools/tty2oledplus_settings.sh
+               tools/tty2oledplus_uninstall.sh"
+
 # Installed only when the MiSTer has none, because the user edits them.
 MANIFEST_DEFAULTS="coretypes.ini tty2oled-user.ini"
 
-# Go into /media/fat/Scripts, not the install folder: the Scripts menu is
-# where a user looks for them, and the uninstaller in particular has to outlive
-# the folder it removes. Both installers put them there, and the release
-# carries them inside the scripts archive as well - S60tty2oled places them
-# from there on every start, which is how a MiSTer updated by an installer
-# older than any of these names still ends up with them in its menu.
-#
-# Named so they sort together in the Scripts menu, which is alphabetical:
-# install, settings, uninstall, update.
-MANIFEST_MENU="tools/tty2oledplus_update.sh tools/tty2oledplus_settings.sh
-               tools/tty2oledplus_uninstall.sh"
+# The one entry in /media/fat/Scripts: the launcher. The release carries it
+# inside the scripts archive as well, and S60tty2oled places it from there on
+# every start - which is how a MiSTer updated by an installer older than the
+# launcher still ends up with it in its menu, and loses the three entries it
+# replaces.
+MANIFEST_MENU="tools/tty2oledplus.sh"

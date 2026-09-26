@@ -70,8 +70,8 @@ git push && git push --tags
 The tag push is also the release. CI (`.github/workflows/ci.yml`) runs every
 suite and builds the firmware for all three boards on every push; on a `v*`
 tag it then builds the title index, runs `tools/make-release.sh` and publishes
-a GitHub release - which is what `tty2oledplus_update` on every MiSTer installs
-from. Watch it through: `gh run watch`. It refuses a tag that is not `VERSION`
+a GitHub release - which is what **Update** in the `tty2oledplus` menu on every
+MiSTer installs from. Watch it through: `gh run watch`. It refuses a tag that is not `VERSION`
 and a version with no `CHANGELOG.md` section, so steps 1 and 2 are enforced
 there too.
 
@@ -101,7 +101,7 @@ MISTER=root@192.168.1.206 ./tools/deploy-mister.sh --firmware --flash
 
 `MiSTer.local` does not resolve on this workstation. The deploy keeps working
 between releases exactly as before - it is only that the MiSTer then holds the
-released version, so `tty2oledplus_update` finds nothing to do until the next
+released version, so **Update** finds nothing to do until the next
 one (`--force` overrides that).
 
 **Skip this step when the user wants to test the install path themselves.**
@@ -188,10 +188,11 @@ with scrolling text and an icon panel.
 | `tools/tty2oled-boothook.sh` | Adds the boot hook to `user-startup.sh`. Fed to the MiSTer on stdin by the deploy. |
 | `tools/manifest.sh` | What an install is made of. Read by the deploy and the release, so they agree. |
 | `tools/make-release.sh` | Builds the release assets into `dist/`. CI runs it on a tag; so can you. |
-| `tools/tty2oledplus_uninstall.sh` | Removes the install, the boot hook, every Scripts entry and the stored boot image - and itself. Lives in `/media/fat/Scripts`. **On the MiSTer**. |
-| `tools/tty2oledplus_settings.sh` | The `dialog` settings editor for `tty2oled-user.ini`. Lives in `/media/fat/Scripts`. **On the MiSTer**. |
+| `tools/tty2oledplus.sh` | The launcher: the one Scripts menu entry, a `dialog` menu of Settings / Update / Uninstall. Lives in `/media/fat/Scripts`. **On the MiSTer**. |
+| `tools/tty2oledplus_uninstall.sh` | Removes the install, the boot hook, the Scripts entry and the stored boot image. Lives in the install folder, runs from a copy in `/tmp`. **On the MiSTer**. |
+| `tools/tty2oledplus_settings.sh` | The `dialog` settings editor for `tty2oled-user.ini`. Lives in the install folder. **On the MiSTer**. |
 | `tools/tty2oledplus_install.sh` | The starter users drop in `/media/fat/Scripts`: fetches the latest installer, checks it, runs it, removes itself. **On the MiSTer**. |
-| `tools/tty2oledplus_update.sh` | Installs/updates from a GitHub release. **On the MiSTer**; `tty2oledplus_update` in its Scripts menu. |
+| `tools/tty2oledplus_update.sh` | Installs/updates from a GitHub release. Lives in the install folder; the launcher's **Update**. **On the MiSTer**. |
 | `.github/workflows/ci.yml` | Tests and firmware on every push; the release on a `v*` tag. |
 | `tools/flash-mister.sh` | Flashes the firmware. Runs **on the MiSTer**. |
 | `tools/fw-segments.py` | Which parts of a merged image to write, so the boot image and settings survive. **On the MiSTer**. |
@@ -703,7 +704,64 @@ session. These are the fork's additions, all ESP32-only:
 value along with anything non-printable. A short `CMDICON`/`CMDWRBOOT`
 transfer is dropped rather than half-applied.
 
-## The uninstaller, and why the init script places it
+## The launcher, and why the init script places it
+
+**One entry of ours in the Scripts menu**, since 0.6.3b: `tty2oledplus.sh`,
+the launcher. The menu is the user's, shared with update_all and everything
+else they run, and three lines of ours in it was clutter. The launcher is a
+`dialog --menu` - arrows and one button, for the reason every picker in the
+settings editor is one - offering Settings, Update and Uninstall, which live
+in the install folder beside everything else (`MANIFEST_APPS`). Over SSH,
+`tty2oledplus.sh update --no-firmware` goes straight to one with its options.
+
+**Settings returns to the menu; Update and Uninstall are `exec`'d.** The
+update replaces the launcher and the uninstall removes it, and bash reads a
+script as it runs it - so nothing of the launcher may run after either. With
+no terminal (`fb_terminal=0`) there is nothing to draw a menu on, so it runs
+the update: the only one of the three that asks nothing, and what its own
+Scripts entry did before there was a launcher.
+
+**Run from the launcher, the updater is the file the update replaces.** It
+used to live in Scripts and copy the archive into the install folder
+wholesale; now that copy would overwrite `${INSTALL}/tty2oledplus_update.sh`
+in place while bash is reading it, and bash would go on from the old byte
+offset into the new script. So the copy loop skips it and it goes in by
+rename. `test-installer.sh` runs an update from a shortened installed copy,
+and fails on the in-place copy - checked by putting it back.
+
+**The uninstaller runs from a copy in `/tmp`.** It lives in the folder it
+removes. Unlinking a running script is safe on Linux in principle, but the
+card is exFAT and there is no reason to depend on how its driver handles an
+open file: `relocate` copies itself to `/tmp` and `exec`s the copy, which
+removes itself on exit.
+
+**The launcher is placed by the daemon's start as well as by the installer.**
+It ships in the install folder too, and `place_menu_scripts` in `S60tty2oled`
+copies it into Scripts on every start (`cmp` first, so a boot is not a
+write). That is the only path that works for an existing install: **an update
+is always applied by the previous version of the installer**, so a rule about
+where a new file goes cannot apply to the update that introduces it. 0.4.3b
+shipped the uninstaller and it landed in the install folder, because 0.4.2b's
+installer put every file from the archive there; 0.6.3b's launcher is applied
+by 0.6.2b's installer, which knows nothing of it.
+
+The three entries the launcher replaced, and the pre-0.4.8b names, are swept
+from Scripts once the launcher is there, and never before: a half-finished
+update must not leave a menu with no way to update or uninstall. Two things do
+the sweeping, because two different installers can apply an update:
+
+- `tty2oledplus_update.sh` removes them itself, at the end of a run.
+- `place_menu_scripts` removes them on the next daemon start - which, for the
+  update to 0.6.3b, runs *before* 0.6.2b's installer finishes: that one puts
+  its own `tty2oledplus_update.sh` back in Scripts after starting the new
+  daemon, so the entry stays until the next boot. It is a working updater
+  (the new one, from the release asset), and running it sweeps it.
+
+The release asset keeps the name `tty2oledplus_update.sh`: every installed
+updater and every starter fetches exactly that. `selfupdate_running` in the
+daemon matches the name, not a path, for the same reason.
+
+## The uninstaller
 
 **It asks twice, with `dialog`, and cancel is the default of every path.**
 Once whether to go on at all (`--yesno`, `--defaultno`), then what to do with
@@ -721,58 +779,29 @@ OSD and nothing else - it **refuses** rather than proceeding on silence, and
 says that `--yes` is how to mean it. Proceeding was the old behaviour and is
 the wrong answer for something that cannot be undone.
 
-`tty2oledplus_uninstall` in the Scripts menu removes the install folder, the
-boot hook and the comment above it, every Scripts entry, the pid file and the
-logs, and the boot image in the display's own flash - then itself, but only
-when it is the copy under `/media/fat/Scripts`, so running the repo's copy
-cannot delete it. It keeps the firmware (an ESP32 with none shows nothing),
-`log_file_entry` (MiSTer's setting), and everything of upstream's.
+It removes the install folder, the boot hook and the comment above it, every
+Scripts entry any version put there, the pid file and the logs, and the boot
+image in the display's own flash. It keeps the firmware (an ESP32 with none
+shows nothing), `log_file_entry` (MiSTer's setting), and everything of
+upstream's.
 
-It is installed **twice on purpose**: into `/media/fat/Scripts`, where it has
-to live to outlive the folder it removes, and into the install folder, from
-where `place_menu_scripts` in `S60tty2oled` copies it to the menu on every
-start. That second path is the only one that works for an existing install:
-**an update is always applied by the previous version of the installer**, so a
-rule about where a new file goes cannot apply to the update that introduces
-it. 0.4.3b shipped the uninstaller and it landed in the install folder,
-because 0.4.2b's installer put every file from the archive there. The daemon's
-own start is the first thing a new version controls, so that is where the
-placement lives; `cmp` first, so a boot is not a write.
+## The Scripts menu names
 
-`MANIFEST_MENU` is all three of them now - `tty2oledplus_update.sh`,
-`tty2oledplus_settings.sh`, `tty2oledplus_uninstall.sh` - and the same
-reasoning covers all three.
+The menu is alphabetical, so the two entries sort together:
+**tty2oledplus** and **tty2oledplus_install**, the starter, which removes
+itself after a successful install. Before 0.6.3b there were three more -
+`tty2oledplus_settings`, `tty2oledplus_uninstall`, `tty2oledplus_update` - and
+before 0.4.8b those were `TTY2OLEDplus_Installer`, `update_tty2oledplus` and
+`uninstall_tty2oledplus`, which sorted into three different places.
 
-## The Scripts menu names, and the one-release alias
+Renaming a script renames a release asset, and that is the part with teeth:
+an installed updater fetches its asset by exact name, so a release without it
+leaves every MiSTer that has not updated yet unable to. 0.4.8b published the
+new updater a second time under the old name for one release. 0.6.3b renamed
+no asset: the updater is still `tty2oledplus_update.sh`, only its place moved.
 
-The menu is alphabetical, so the four entries are named to sort as a set:
-**tty2oledplus_install**, **tty2oledplus_settings**, **tty2oledplus_uninstall**,
-**tty2oledplus_update**. Before 0.4.8b they were `TTY2OLEDplus_Installer`,
-`update_tty2oledplus` and `uninstall_tty2oledplus`, which sorted into three
-different places in the list.
-
-Renaming them renames the release assets, and that is the part with teeth: an
-installed `update_tty2oledplus` fetches an asset called exactly
-`update_tty2oledplus.sh`. Publish a release without it and every MiSTer that
-has not updated yet fails with "Could not download update_tty2oledplus.sh" and
-has to be reinstalled by hand. So `make-release.sh` publishes the new updater
-a second time under the old name (`LEGACY_UPDATER`), **for one release only** -
-delete that block, and the test that pins it, in the release after 0.4.8b.
-
-The old names are swept once the new ones are in place, and never before: a
-half-finished update must not leave a menu with no way to update or uninstall.
-Two things do the sweeping, because two different installers can apply the
-update:
-
-- `tty2oledplus_update.sh` removes them itself, at the end of a run.
-- `place_menu_scripts` in `S60tty2oled` removes them on the next daemon start,
-  which is the only thing that can when the update was applied by an installer
-  older than the rename - it places its own `update_tty2oledplus.sh` in the
-  menu after the new daemon has already started.
-
-`selfupdate_running` in the daemon matches **both** spellings for the same
-reason: until that sweep happens, the updater on the machine may still be the
-old one.
+`selfupdate_running` in the daemon still matches the pre-0.4.8b spelling too:
+an install that has not been updated since has only that.
 
 ## The settings editor
 
@@ -1430,7 +1459,7 @@ fork's version of copying `tty2oled-user.ini` over the user's.
   a daemon the previous version of the script started. `children` reads ppids
   out of `/proc` instead of parsing `ps`.
 - **Two scripts placing the same file, and only one of them told.** The menu
-  scripts have to be in `/media/fat/Scripts` *and* in the install folder:
+  scripts (the launcher alone, since 0.6.3b) have to be in `/media/fat/Scripts` *and* in the install folder:
   `place_menu_scripts` in `S60tty2oled` copies install folder -> Scripts on
   every daemon start (`cmp` first), which is the only thing that can give the
   new names to a MiSTer updated by an installer older than them.
@@ -1839,8 +1868,8 @@ we set it*, and must not overwrite the record with "it was already like that".
 
 A tag push publishes a GitHub release (see step 4 at the top). Users install
 by copying the `tty2oledplus_install.sh` asset to `/media/fat/Scripts` and
-running it from the Scripts menu; afterwards `tty2oledplus_update` is there
-instead. Over SSH it is one line:
+running it from the Scripts menu; afterwards the launcher, `tty2oledplus`, is
+there instead. Over SSH it is one line:
 
 ```sh
 curl -fsSL --cacert /etc/ssl/certs/cacert.pem \
@@ -1877,31 +1906,24 @@ second keypress. With `fb_terminal=0` the script runs under `popen` with the
 OSD showing its output, has no terminal to read a key from, and returns to the
 menu when it exits. update_all.sh prompts in neither case, and nor do we.
 
-**The uninstaller lives in `/media/fat/Scripts`, not in the install folder**,
-because it has to outlive the folder it removes - `MANIFEST_MENU` is that one
-file, and both the installer and `deploy-mister.sh` put it there rather than
-into `${INSTALL}`. It removes what the install put anywhere else: the boot hook
-and the comment above it (only when that comment is directly above that line),
-both Scripts entries, the pid file and the logs, and the boot image **stored in
-the display's own flash**, which a reflash would not have cleared. It removes
-itself only when it is the copy in the Scripts folder, so running the repo's
-copy cannot delete it. What it leaves is deliberate: the firmware (the
-display's flash, and an ESP32 with none shows nothing), `log_file_entry=1` (MiSTer's
-own setting), upstream's `/media/fat/tty2oled` and upstream's pid file.
+**The Scripts folder gets the launcher and nothing else**; the updater, the
+settings editor and the uninstaller live in the install folder - see [The
+launcher](#the-launcher-and-why-the-init-script-places-it).
 
 **`tty2oledplus_install.sh` is only a starter**, so the copy a user
 downloads never goes stale: it fetches `tty2oledplus_update.sh` and
 `SHA256SUMS` from `/releases/latest`, refuses an installer that does not match,
 runs it with the same arguments, and deletes itself - by that exact name, and
-only after a successful run that left `tty2oledplus_update.sh` beside it. A
+only after a successful run that left the launcher, `tty2oledplus.sh`, beside it. A
 failed run leaves it in the menu to try again. Its temp folder is a global,
 not a `local`: the `EXIT` trap fires after `main` has returned, and a local
 was out of scope by then, so every successful run leaked it into `/tmp`.
 
 It lives in `main()`, called on the last line, because `curl | bash` runs the
 bytes as they arrive and a dropped connection would otherwise run half a script.
-It replaces `Scripts/tty2oledplus_update.sh` **by rename**, because that may be
-the very file bash is still reading.
+It installs itself into the install folder **by rename**, because run from the
+launcher it is the very file bash is still reading, and places the launcher in
+Scripts the same way.
 
 The display's `CMDHWINF` answer is parsed as `;`-separated tokens, not as a
 line: every command the daemon ever sent was followed by a `ttyack;`, and any it

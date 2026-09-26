@@ -86,8 +86,7 @@ release's checksums. Then it:
   what makes MiSTer report the loaded game, and remembers what was there before
 - starts the display, and adds the line to `/media/fat/linux/user-startup.sh`
   that starts it on every boot
-- leaves **tty2oledplus_settings**, **tty2oledplus_update** and
-  **tty2oledplus_uninstall** in the Scripts menu, and removes itself
+- leaves one entry in the Scripts menu, **tty2oledplus**, and removes itself
 
 **Over SSH**, instead of the Scripts menu, it is one line:
 
@@ -99,15 +98,33 @@ curl -fsSL --cacert /etc/ssl/certs/cacert.pem \
 If you want to manally name it the board:
 `... | bash -s -- --board lolin32` (or `esp32de`, `esp32s3`).
 
+### The Scripts menu entry
+
+**Scripts → tty2oledplus** opens a menu you can drive with a pad — arrows and
+one button:
+
+- **Settings** — what the display shows, see [Settings](#settings)
+- **Update** — install the newest release
+- **Uninstall** — remove it all again
+
+The three live in `/media/fat/tty2oledplus` beside everything else, so your
+Scripts folder carries one line of ours rather than three. An install from
+before 0.6.3b had them as three separate entries, and updating replaces them
+with this one - except **tty2oledplus_update**, which the old updater puts
+back on its way out and which goes at the next reboot.
+
+With `fb_terminal=0` in `MiSTer.ini` there is no screen to draw a menu on, so
+the entry runs **Update** straight away.
+
 ### Updating
 
-Run **tty2oledplus_update** from the Scripts menu. Your `tty2oled-user.ini` and
+**Scripts → tty2oledplus → Update.** Your `tty2oled-user.ini` and
 `coretypes.ini` are never overwritten, The firmware is flashed on every release,
 but the custom boot image is kept.
 
 ### Uninstalling
 
-Run **tty2oledplus_uninstall** from the Scripts menu. It asks twice before it
+**Scripts → tty2oledplus → Uninstall.** It asks twice before it
 does anything — whether to go on, and what to do with the files that are yours
 rather than ours — with arrows and one button, no typing.
 
@@ -117,9 +134,9 @@ Choosing **Keep them** copies your settings (`tty2oled-user.ini`,
 question stops the whole thing.
 
 Then it stops the display, removes the install folder, the start line in
-`user-startup.sh` and every Scripts entry it put there, clears any boot image
-stored on the display, puts `MiSTer.ini` back as it found it, and removes
-itself. The display's firmware is left alone.
+`user-startup.sh` and its Scripts entry, clears any boot image stored on the
+display, and puts `MiSTer.ini` back as it found it. The display's firmware is
+left alone.
 
 `--yes` skips both questions, `--dry-run` only lists what would go. With
 `fb_terminal=0` there is no screen to ask on, so it refuses rather than
@@ -153,7 +170,7 @@ if you have one.
 
 ## Settings
 
-Run **tty2oledplus_settings** from the Scripts menu. **Every setting is in
+**Scripts → tty2oledplus → Settings.** **Every setting is in
 there** — what the display shows, which details appear under a game, how bright
 the panel is and when it dims, how one picture replaces the last, what happens
 while updates run, and the connection and troubleshooting settings under
@@ -174,8 +191,11 @@ The editor needs a terminal to draw in: from the Scripts menu that means
 the console, or run it over SSH:
 
 ```sh
-/media/fat/Scripts/tty2oledplus_settings.sh
+/media/fat/Scripts/tty2oledplus.sh settings
 ```
+
+The same works for the other two — `tty2oledplus.sh update`, `tty2oledplus.sh
+uninstall` — with their options after the name.
 
 ### The files underneath
 
@@ -258,7 +278,7 @@ your computer; storing it is done on the MiSTer:
 Storing one takes a few seconds and no reflash.
 
 **The easy way, with no workstation at all:** put a PNG at
-`/media/fat/tty2oledplus/pics/boot.png` and run **tty2oledplus_settings → Boot
+`/media/fat/tty2oledplus/pics/boot.png` and run **tty2oledplus → Settings → Boot
 screen → Use my pics/boot.png**. It converts and stores it for you, and the
 same menu puts the built-in logo back.
 

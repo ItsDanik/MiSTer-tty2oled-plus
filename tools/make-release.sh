@@ -24,7 +24,7 @@
 #   tty2oledplus-pics.tar.gz    the artwork pack, separate: it is 12MB and
 #                               rarely changes, so updates skip it
 #   tty2oledplus-<board>.bin    merged firmware, one per board built
-#   tty2oledplus_update.sh      the installer itself, and the Scripts menu updater
+#   tty2oledplus_update.sh      the installer itself, which the launcher runs as Update
 #   tty2oledplus_install.sh     the starter a user drops into Scripts; it
 #                               fetches and runs the installer above
 #
@@ -95,7 +95,7 @@ say "Packing tty2oledplus.tar.gz"
 P="${STAGE}/tty2oledplus"
 mkdir -p "${P}/titleindex" "${P}/pics/icon"
 for f in ${MANIFEST_FILES} ${MANIFEST_DEFAULTS}; do cp -p "${f}" "${P}/"; done
-for f in ${MANIFEST_TOOLS} ${MANIFEST_MENU}; do cp -p "${f}" "${P}/$(basename "${f}")"; done
+for f in ${MANIFEST_TOOLS} ${MANIFEST_APPS} ${MANIFEST_MENU}; do cp -p "${f}" "${P}/$(basename "${f}")"; done
 cp -p "${INDEX}"/*.idx "${P}/titleindex/"
 cp -p "${PICS}/icon"/*.gsc "${P}/pics/icon/"
 pack "${OUT}/tty2oledplus.tar.gz" tty2oledplus
@@ -149,9 +149,9 @@ menu. Or on the MiSTer, over SSH:
 curl -fsSL --cacert /etc/ssl/certs/cacert.pem https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_update.sh | bash
 \`\`\`
 
-After that the Scripts menu has **tty2oledplus_settings** to change what the
-display shows, **tty2oledplus_update** for the next update, and
-**tty2oledplus_uninstall** to remove it all again.
+After that the Scripts menu has one entry, **tty2oledplus**: Settings to
+change what the display shows, Update for the next release, and Uninstall to
+remove it all again.
 EON
   } > "${NOTES}"
 fi

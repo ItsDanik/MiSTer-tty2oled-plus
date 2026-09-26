@@ -4,6 +4,23 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.6.3b — 2026-09-26
+
+- **One entry in the Scripts menu.** tty2oled+ used to put three entries in
+  your Scripts folder. Now there is one, **tty2oledplus**, which opens a menu
+  you can drive with a pad: **Settings**, **Update** and **Uninstall**. The
+  three live in `/media/fat/tty2oledplus` with the rest of the install.
+  Updating to this version removes the old entries. One of them,
+  `tty2oledplus_update`, is put back by the old updater as it finishes and
+  goes at the next reboot. With `fb_terminal=0` there is no screen for a
+  menu, so the entry runs Update. Over SSH, `tty2oledplus.sh update` (or
+  `settings`, `uninstall`) goes straight to one.
+- **Arcade games without artwork no longer go blank.** An arcade core with no
+  picture of its own - NBA Hang Time, for one - shows its name as text. After
+  the info card had been up once, the turn to "the artwork" showed an empty
+  screen for a whole interval instead of the name. It comes back now. This
+  needs the new firmware, which the update flashes.
+
 ## 0.6.2b — 2026-09-26
 
 - **The console icons are back.** This is the fix 0.6.1b was meant to

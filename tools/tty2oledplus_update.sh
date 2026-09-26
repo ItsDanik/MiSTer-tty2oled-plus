@@ -6,8 +6,8 @@
 #   curl -fsSL --cacert /etc/ssl/certs/cacert.pem \
 #     https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_update.sh | bash
 #
-# After that it is in the Scripts menu as tty2oledplus_update, and runs the same
-# way from there. Options, when run by hand:
+# After that it lives in the install folder, and the Scripts menu's one entry,
+# tty2oledplus, runs it as Update. Options, when run by hand:
 #
 #   --version 0.4.1b   that release instead of the newest
 #   --board lolin32    when the display cannot say what it is (lolin32,
@@ -27,9 +27,10 @@
 #   - sets log_file_entry=1 in MiSTer.ini, inside its [MiSTer] section, and
 #     records what was there so the uninstaller can put it back
 #   - adds the boot hook to /media/fat/linux/user-startup.sh
-#   - puts itself in /media/fat/Scripts as tty2oledplus_update.sh, with
-#     tty2oledplus_settings.sh and tty2oledplus_uninstall.sh beside it, and
-#     removes the pre-0.4.8b names once they are all there
+#   - puts the launcher in /media/fat/Scripts as tty2oledplus.sh - the one
+#     entry of ours there - with this, the settings editor and the uninstaller
+#     in the install folder for it to run, and removes the separate entries
+#     those had before 0.6.3b once the launcher is there
 #   - refuses to run at all while upstream tty2oled is installed in
 #     /media/fat/tty2oled - tty2oled+ replaces it, the two are not made to run
 #     side by side - and never touches that install itself
@@ -369,7 +370,7 @@ main() {
   # --- Download and verify everything before changing anything -----------
   say "Downloading"
   local assets=()
-  [ "${scripts}" = "yes" ] && assets+=(tty2oledplus.tar.gz tty2oledplus_update.sh)
+  [ "${scripts}" = "yes" ] && assets+=(tty2oledplus.tar.gz)
   [ "${pics}" = "yes" ] && assets+=(tty2oledplus-pics.tar.gz)
   [ "${flash}" = "yes" ] && assets+=("tty2oledplus-${board}.bin")
   local a
@@ -394,20 +395,16 @@ main() {
             note "kept your $(basename "${f}")"
             continue
           fi ;;
-        # Belong in the Scripts menu. They are copied into the install folder
-        # as well, because S60tty2oled places them from there on every start -
-        # which is what gets them into the menu on a MiSTer whose last update
-        # was run by an installer that predates them, this one included.
-        # The updater itself is not here: it may be the file bash is reading,
-        # so it is placed by rename at the end of the run.
-        tty2oledplus_uninstall.sh|tty2oledplus_settings.sh)
-          if [ -d "${FAT}/Scripts" ]; then
-            cp "${f}" "${FAT}/Scripts/$(basename "${f}")"
-            chmod +x "${FAT}/Scripts/$(basename "${f}")"
-          fi ;;
+        # Run from the launcher, this is the file bash is reading: copied
+        # over in place, bash would go on reading the new script from the old
+        # one's byte offset. So it goes in by rename, below.
+        tty2oledplus_update.sh) continue ;;
       esac
       cp -r "${f}" "${INSTALL}/"
     done
+    cp "${src}/tty2oledplus_update.sh" "${INSTALL}/.tty2oledplus_update.sh.new" \
+      && mv "${INSTALL}/.tty2oledplus_update.sh.new" "${INSTALL}/tty2oledplus_update.sh" \
+      || die "Could not install the updater into ${INSTALL}."
     chmod +x "${INSTALL}"/*.sh "${INSTALL}/S60tty2oled"
     # CRLF breaks the init script, and files pick it up on their way through
     # Windows shares.
@@ -446,26 +443,28 @@ main() {
   "${INIT}" status || note "It did not start - see ${DAEMON_LOG}"
 
   if [ "${scripts}" = "yes" ] && [ -d "${FAT}/Scripts" ]; then
-    # By rename, never in place: if this *is* tty2oledplus_update.sh, bash is
-    # still reading it, and overwriting the open file would feed it the new
-    # script from the old one's byte offset.
-    cp "${STAGE}/tty2oledplus_update.sh" "${FAT}/Scripts/.tty2oledplus_update.sh.new"
-    chmod +x "${FAT}/Scripts/.tty2oledplus_update.sh.new"
-    mv "${FAT}/Scripts/.tty2oledplus_update.sh.new" "${FAT}/Scripts/tty2oledplus_update.sh"
+    # By rename, never in place: the launcher exec's the updater, so it is not
+    # being read any more - but a copy of this run from the Scripts folder by
+    # an older name may be.
+    cp "${STAGE}/tty2oledplus/tty2oledplus.sh" "${FAT}/Scripts/.tty2oledplus.sh.new"
+    chmod +x "${FAT}/Scripts/.tty2oledplus.sh.new"
+    mv "${FAT}/Scripts/.tty2oledplus.sh.new" "${FAT}/Scripts/tty2oledplus.sh"
 
-    # The names these had before 0.4.8b. Swept only now, with the new entries
-    # beside them, so an interrupted run never leaves a menu with none. An
-    # update applied by an installer older than this one leaves its own
-    # update_tty2oledplus.sh behind instead; S60tty2oled sweeps that on its
-    # next start.
+    # The entries the launcher replaced, and the names those had before
+    # 0.4.8b. Swept only now, with the launcher beside them, so an interrupted
+    # run never leaves a menu with none. Deleting a script bash is running is
+    # safe: it keeps reading the file it opened. An update applied by an
+    # installer older than the launcher puts its own tty2oledplus_update.sh
+    # back instead; S60tty2oled sweeps that on its next start.
     local legacy
-    for legacy in update_tty2oledplus.sh uninstall_tty2oledplus.sh \
-                  TTY2OLEDplus_Installer.sh; do
+    for legacy in tty2oledplus_update.sh tty2oledplus_settings.sh \
+                  tty2oledplus_uninstall.sh update_tty2oledplus.sh \
+                  uninstall_tty2oledplus.sh TTY2OLEDplus_Installer.sh; do
       [ -e "${FAT}/Scripts/${legacy}" ] && rm -f "${FAT}/Scripts/${legacy}"
     done
 
-    note "the Scripts menu now has tty2oledplus_settings to change settings,"
-    note "tty2oledplus_update for the next update, and tty2oledplus_uninstall."
+    note "the Scripts menu now has one entry, tty2oledplus: Settings to change"
+    note "what the display shows, Update for the next release, and Uninstall."
   fi
 
   say "Checking MiSTer.ini"

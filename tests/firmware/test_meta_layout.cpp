@@ -565,6 +565,27 @@ int main() {
         okBool("card flag cleared",     metaShowingCard, false);
     }
 
+    section("a core name drawn as text comes back after the card");
+    {
+        // No artwork: the sketch drew the name straight into the framebuffer
+        // and left actPicType NONE. Coming back from the card rendered
+        // nothing, so the artwork half of the alternation was a blank panel.
+        meta_parse("CMDMETA,1,12,NBA Hang Time|Year=1996");
+        memset(logoBin, 0, sizeof(logoBin));
+        memset(oled.buf, 0, sizeof(oled.buf));
+        oled.buf[4000] = 0xF0;                  // the name, as far as this cares
+        actPicType = NONE;
+        srcBin = logoBin;
+
+        meta_showCard(7);
+        okInt ("kept as a 4bpp picture", actPicType, GSC);
+        okInt ("the name is in logoBin", logoBin[4000], 0xF0);
+
+        memset(oled.buf, 0, sizeof(oled.buf));  // the card is on the panel now
+        meta_showPicture(0);
+        okInt ("and is drawn again",     oled.buf[4000], 0xF0);
+    }
+
     section("arcade alternation respects the interval");
     {
         meta_parse("CMDMETA,1,10,Donkey Kong|Year=1981");

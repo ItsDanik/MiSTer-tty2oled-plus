@@ -84,7 +84,7 @@ for tool in ${NEED}; do
   command -v "${tool}" >/dev/null 2>&1 || die "'${tool}' is not installed on this machine."
 done
 
-for f in ${FILES} ${TOOLS} ${BOOTHOOK} ${MANIFEST_MENU} ${MANIFEST_DEFAULTS}; do
+for f in ${FILES} ${TOOLS} ${BOOTHOOK} ${MANIFEST_APPS} ${MANIFEST_MENU} ${MANIFEST_DEFAULTS}; do
   [ -f "${f}" ] || die "${f} is missing from the working copy."
 done
 
@@ -108,7 +108,7 @@ fi
 
 if [ "${DRY_RUN}" = "yes" ]; then
   say "Dry run - nothing will be copied to ${MISTER}:${REMOTE}"
-  for f in ${FILES} ${TOOLS}; do echo "  copy     ${f}"; done
+  for f in ${FILES} ${TOOLS} ${MANIFEST_APPS}; do echo "  copy     ${f}"; done
   for f in ${MANIFEST_MENU}; do echo "  copy     ${f} -> /media/fat/Scripts/"; done
   for f in ${MANIFEST_DEFAULTS}; do echo "  if absent ${f}"; done
   [ -n "${BIN}" ]                 && echo "  copy     ${BIN}"
@@ -160,21 +160,22 @@ say "Copying scripts to ${MISTER}:${REMOTE}"
 # to copy into yet.
 ssh "${MISTER}" "mkdir -p ${REMOTE}"
 # shellcheck disable=SC2086
-scp -q ${FILES} ${TOOLS} "${MISTER}:${REMOTE}/"
+scp -q ${FILES} ${TOOLS} ${MANIFEST_APPS} "${MISTER}:${REMOTE}/"
 
-# The menu scripts go to BOTH places, which is not a belt-and-braces choice
-# but the only arrangement that survives a daemon restart.
+# The launcher goes to BOTH places, which is not a belt-and-braces choice but
+# the only arrangement that survives a daemon restart.
 #
-# /media/fat/Scripts is where a user looks for them, and where the uninstaller
-# has to live to outlive the folder it removes. But place_menu_scripts in
-# S60tty2oled copies them from the install folder into Scripts on every start,
-# cmp first - which is how a MiSTer updated by an installer older than these
-# names still ends up with them in its menu. Copy only into Scripts, as this
-# did, and the next daemon start finds the install folder's older copy
-# different and puts *that* back: a deploy silently reverted its own menu
-# scripts to whatever a release had last left behind. The release does copy
-# them into the install folder (make-release.sh packs them there), so only the
-# deploy was ever wrong, and only the copy in the menu.
+# /media/fat/Scripts is where a user looks for it. But place_menu_scripts in
+# S60tty2oled copies it from the install folder into Scripts on every start,
+# cmp first - which is how a MiSTer updated by an installer older than the
+# launcher still ends up with it in its menu. Copy only into Scripts, as the
+# deploy once did with the three entries the launcher replaced, and the next
+# daemon start finds the install folder's older copy different and puts
+# *that* back: a deploy silently reverted its own menu script to whatever a
+# release had last left behind.
+#
+# The three entries it replaced need nothing from here: the daemon restart at
+# the end of this run sweeps them out of Scripts once the launcher is there.
 # shellcheck disable=SC2086
 scp -q ${MANIFEST_MENU} "${MISTER}:${REMOTE}/"
 # shellcheck disable=SC2086

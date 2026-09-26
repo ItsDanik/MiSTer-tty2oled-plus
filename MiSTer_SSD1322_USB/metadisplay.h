@@ -989,6 +989,17 @@ static void msg_parse(const char *cmd) {
 // Reuses the sketch's transition effects by pointing srcBin at metaBin.
 // ---------------------------------------------------------------------------
 void meta_showCard(int effect) {
+  // A core with no artwork has its name drawn as text, which leaves nothing
+  // in logoBin to come back to: meta_showPicture rendered an empty frame and
+  // the "artwork" half of the alternation was a blank panel. The name is
+  // still on the panel here, so keep it - as a 4bpp picture like any other.
+  if (actPicType != XBM && actPicType != GSC) {
+    uint8_t *fb = oled.getBuffer();
+    if (fb) {
+      memcpy(logoBin, fb, 8192);
+      actPicType = GSC;
+    }
+  }
   // A Fade darkens the picture on the panel step by step, so it has to take
   // that picture before the card is rendered over it in the framebuffer.
   if (effect_is_fade(effect)) transition_prepare();

@@ -8,8 +8,8 @@
 # It is only a starter: it downloads the newest release's real installer,
 # checks it against the release's SHA256SUMS and runs it, so a copy of this
 # file downloaded long ago still installs the current release. When the
-# install succeeds it deletes itself - the install puts tty2oledplus_update in
-# the Scripts menu, which is the same installer, for every update after.
+# install succeeds it deletes itself - the install puts tty2oledplus in the
+# Scripts menu, whose Update runs the same installer, for every update after.
 #
 # Options are passed through to the installer (--board lolin32, --no-firmware,
 # ...); see the top of tty2oledplus_update.sh for the list.
@@ -56,14 +56,14 @@ main() {
   bash "${tmp}/installer.sh" "$@"
   rc=$?
 
-  # Replaced by tty2oledplus_update once that is in place. Only this file, by
-  # name, and only after a successful run.
+  # Replaced by the launcher once that is in place. Only this file, by name,
+  # and only after a successful run.
   self="$(readlink -f "$0" 2>/dev/null)"
   if [ "${rc}" -eq 0 ] && [ "$(basename "${self}")" = "tty2oledplus_install.sh" ] \
-     && [ -e "$(dirname "${self}")/tty2oledplus_update.sh" ]; then
+     && [ -e "$(dirname "${self}")/tty2oledplus.sh" ]; then
     rm -f "${self}"
     say "tty2oledplus_install has done its job and removed itself."
-    printf '    Use tty2oledplus_update in the Scripts menu from now on.\n'
+    printf '    Use tty2oledplus in the Scripts menu from now on.\n'
   fi
   return "${rc}"
 }

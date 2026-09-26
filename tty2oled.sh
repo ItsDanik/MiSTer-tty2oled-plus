@@ -811,6 +811,8 @@ selfupdate_running() {
   [ "${SELF_UPDATE_SCREEN:-yes}" = "yes" ] || return 1
   # Both spellings: the scripts were renamed in 0.4.8b, and an install that
   # has not been updated since still has update_tty2oledplus.sh in Scripts.
+  # Where it runs from does not matter - the install folder, from the
+  # launcher, since 0.6.3b - which is why this matches the name, not a path.
   grep -qsa -e '[t]ty2oledplus_update' -e '[u]pdate_tty2oledplus' \
        "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null
 }
