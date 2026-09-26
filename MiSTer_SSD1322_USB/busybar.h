@@ -147,12 +147,18 @@ void busy_parse(const char *cmd) {
 // across a freshly drawn menu picture is exactly what it looks like, and
 // nothing would ever stop it: the daemon sends CMDBOOTPIC and no CMDCOR for
 // the MENU core.
+//
+// The label is forgotten whether the bar is running or not. It used to be
+// only while it ran, and update_all runs its downloader twice: between the two
+// the bar drains off the edge within a third of a second, and only then does
+// the update_all screen go back up over the label. The second run's label was
+// the one remembered, so it was taken for a repeat and never drawn - the bar
+// swept along under the update_all screen with no message above it.
 void busy_noteCommand(const char *cmd) {
-  if (!busyActive) return;
   if (strncmp(cmd, "CMDBUSY", 7) == 0) return;
   if (strncmp(cmd, "CMDBOOTPIC", 10) == 0 || !boot_quietCommand(cmd)) {
-    busy_cancel();
     busy_forgetLabel();
+    if (busyActive) busy_cancel();
   }
 }
 

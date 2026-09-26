@@ -13,6 +13,7 @@
 #   test-deploy.sh      deploy-mister.sh against a fake MiSTer, and the boot hook
 #   test-settings.sh    the Scripts-menu settings editor and the ini it writes
 #   test-png2gsc.py     the image converter, on both of its backends
+#   test-scrape.py      Scrape metadata: the gamelist.xml import
 #   test-installer.sh   the release package, and the installer that unpacks it
 #   test-flash.sh       flashing: what is written, and what is kept
 #   test_meta_parse     the firmware's CMDMETA parser
@@ -41,6 +42,7 @@ run "shell: daemon lifecycle"    "${HERE}/test-daemon.sh"
 run "shell: deploy"              "${HERE}/test-deploy.sh"
 run "shell: settings editor"     "${HERE}/test-settings.sh"
 run "tools: png2gsc"             "${HERE}/test-png2gsc.py"
+run "tools: scraper"             "${HERE}/test-scrape.py"
 run "release: installer"        "${HERE}/test-installer.sh"
 run "tools: flashing"            "${HERE}/test-flash.sh"
 

@@ -35,7 +35,7 @@ jobs:
     name: Tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # inotify-tools turns the one skipped daemon check into a real one;
       # ImageMagick lets png2gsc be tested on both of its backends.
@@ -64,12 +64,12 @@ jobs:
       matrix:
         board: [lolin32, esp32de, esp32s3]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The core alone is about a gigabyte. Keyed on its version and on the
       # build script, which decides the libraries.
       - name: Cache the ESP32 core and libraries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.arduino15
@@ -84,7 +84,7 @@ jobs:
           ./tools/build-tty2oled.sh MiSTer_SSD1322_USB "${{ matrix.board }}"
 
       - name: Keep the image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fw-${{ matrix.board }}
           path: MiSTer_SSD1322_USB/build-out-${{ matrix.board }}/MiSTer_SSD1322_USB.ino.merged.bin
@@ -98,18 +98,18 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Lands as fw/fw-<board>/..., which make-release reads the board from.
       - name: Fetch the firmware built above
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: fw-*
           path: fw
 
       # The index is generated and gitignored, so the release builds its own.
       - name: Cache the title index sources
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .index-cache
           key: index-cache-${{ hashFiles('tools/build-title-index.sh', 'tools/*.awk') }}

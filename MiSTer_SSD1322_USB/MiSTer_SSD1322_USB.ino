@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.6.4b"
+#define BuildVersion "0.6.5b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -370,6 +370,7 @@ inline void oled_drawEightPixelXY(int x, int y) { oled_drawEightPixelXY(x,y,x,y)
 // Game metadata command handlers (fork additions)
 void oled_readmeta(void);
 void oled_readicon(void);
+void oled_readdesc(void);
 static size_t serial_readTicking(uint8_t *dst, size_t want);
 void oled_readdim(void);
 void oled_readbootpic(void);
@@ -890,6 +891,14 @@ void loop(void) {
 
     else if (newCommand=="CMDICON") {                                       // Receive an 86x64 console icon
       oled_readicon();
+    }
+
+    else if (newCommand.startsWith("CMDDESC,")) {                           // Receive a game's description
+      oled_readdesc();
+    }
+
+    else if (newCommand.startsWith("CMDSCROLL,")) {                         // Marquee and description speeds
+      meta_parseScroll(newCommand.c_str());
     }
 
     else if (newCommand=="CMDSHMETA") {                                     // Force the metadata view now
@@ -2937,6 +2946,38 @@ void oled_readicon(void) {
     if (tfState == TF_IDLE && !pf_active()) meta_showConsole();
     else                                    metaIconRedraw = true;
   }
+#endif  // HAS_METADISPLAY
+}
+
+
+// CMDDESC,<bytes> followed by exactly that many raw bytes: the description
+// page's text (metadisplay.h). Read like the icon, keeping any transition
+// ticking, and for the same reason: it lands straight after the metadata that
+// started one.
+//
+// More than DESC_MAX is read and thrown away rather than left on the port,
+// where it would be taken for the next command. A short read - the transfer
+// cut off - keeps no description at all rather than half of one.
+void oled_readdesc(void) {
+#ifdef HAS_METADISPLAY
+  long want = meta_parseDescLength(newCommand.c_str());
+  if (want < 0) return;
+  size_t keep = (size_t)want > DESC_MAX ? DESC_MAX : (size_t)want;
+  static char buf[DESC_MAX];
+  size_t got = serial_readTicking((uint8_t *)buf, keep);
+  size_t rest = (size_t)want - keep;
+  while (got == keep && rest > 0) {
+    uint8_t sink[64];
+    size_t chunk = rest > sizeof(sink) ? sizeof(sink) : rest;
+    size_t r = serial_readTicking(sink, chunk);
+    if (r < chunk) { got = 0; break; }
+    rest -= r;
+  }
+  if (got == keep) meta_setDesc(buf, keep);
+  else             meta_setDesc(buf, 0);
+#ifdef XDEBUG
+  Serial.printf("Description bytes: %u (sent %ld)\n", (unsigned)got, want);
+#endif
 #endif  // HAS_METADISPLAY
 }
 

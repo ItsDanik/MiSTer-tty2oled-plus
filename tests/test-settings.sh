@@ -565,5 +565,98 @@ ok "and every one has a name" \
    "$(printf '%s' "${TRANSITION_SPEC}" | tr ';' '\n' | grep -c .)"
 
 # ---------------------------------------------------------------------------
+section "values reach the ini byte for byte"
+# ---------------------------------------------------------------------------
+# A backslash survives, now that the value goes to awk through the
+# environment rather than -v, which would have rewritten it - on the path that
+# replaces a line as well as the one that appends it.
+fresh_inis
+ini_put "${USR}" UPDATE_ALL_TEXT 'a\tb'
+ok "appended"  "$(ini_get "${USR}" UPDATE_ALL_TEXT)" 'a\tb'
+ini_put "${USR}" UPDATE_ALL_TEXT 'c\nd'
+ok "replaced"  "$(ini_get "${USR}" UPDATE_ALL_TEXT)" 'c\nd'
+ok "the scroll speeds are settings" \
+   "$(settings_in display | grep -cE '^(HSCROLL|VSCROLL)_SPEED\|int\|')" "2"
+ok "and so is the description page" \
+   "$(settings_in console | grep -c '^SHOW_DESCRIPTION|bool|')" "1"
+fresh_inis
+
+# ---------------------------------------------------------------------------
+section "Scrape metadata: which systems, and what the importer is asked"
+# ---------------------------------------------------------------------------
+# The menu run for real, on a terminal (script), against an install holding
+# the real settings editor and menu. dialog answers from a script of
+# "rc:output" steps, one per widget ("_" standing for a space), and records
+# each widget it drew; python3 is a stand-in that lists three systems and
+# records how the import itself was asked for.
+SI="${TMP}/scrape-install"; rm -rf "${SI}"; mkdir -p "${SI}"
+cp "${ROOT}/tools/tty2oledplus_settings.sh" "${ROOT}/tools/tty2oledplus_scrape.sh" "${SI}/"
+touch "${SI}/tty2oledplus_scrape.py" "${SI}/tty2oled-system.ini" "${SI}/tty2oled-user.ini"
+SBIN="${TMP}/sbin"; mkdir -p "${SBIN}"
+cat > "${SBIN}/dialog" <<'FAKE'
+#!/bin/bash
+w=""; for a in "$@"; do case "${a}" in --checklist|--menu|--yesno|--msgbox|--infobox|--inputbox|--passwordbox) w="${a#--}" ;; esac; done
+case "${w}" in infobox|"") exit 0 ;; esac
+if [ "${w}" = "checklist" ]; then
+  on=""; args=("$@"); i=0
+  while [ "${i}" -lt "${#args[@]}" ]; do
+    [ "${args[$((i+2))]:-}" = "on" ] && on="${on} ${args[${i}]}"
+    i=$((i + 1))
+  done
+  echo "checklist:${on# }" >> "${T2OP_SLOG}"
+else
+  echo "${w}" >> "${T2OP_SLOG}"
+fi
+n="$(cat "${T2OP_SSTEP}" 2>/dev/null || echo 0)"; echo $((n + 1)) > "${T2OP_SSTEP}"
+read -r -a steps <<< "${T2OP_SSEQ}"
+step="${steps[${n}]:-1:}"
+printf '%s' "${step#*:}" | tr '_' ' ' >&2
+exit "${step%%:*}"
+FAKE
+cat > "${SBIN}/python3" <<'FAKE'
+#!/bin/bash
+case " $* " in
+  *" --list-systems "*) printf 'NES\tNintendo NES\nSNES\tSuper Nintendo\nGBA\tGame Boy Advance\n' ;;
+  *)                    echo "import $*" >> "${T2OP_SLOG}"
+                        for a in "$@"; do [ "${prev:-}" = "--summary" ] && echo "all done" > "${a}"; prev="${a}"; done ;;
+esac
+FAKE
+chmod +x "${SBIN}/dialog" "${SBIN}/python3"
+export T2OP_SLOG="${TMP}/scrape.log" T2OP_SSTEP="${TMP}/scrape.step"
+scrape_menu() {  # scrape_menu "<rc:output> ..."
+  : > "${T2OP_SLOG}"; rm -f "${T2OP_SSTEP}"
+  script -qec "PATH='${SBIN}:${PATH}' T2OP_INSTALL='${SI}' T2OP_SSEQ='$1' \
+    bash '${SI}/tty2oledplus_scrape.sh'" /dev/null > "${TMP}/scrape.out" 2>&1
+}
+asked() { grep '^import ' "${T2OP_SLOG}" | sed "s|--install ${SI}/*||; s|--summary [^ ]*||" | tr -s ' '; }
+
+scrape_menu "0:NES 0:"
+ok "the first time, every system is ticked" "$(grep -m1 '^checklist' "${T2OP_SLOG}")" "checklist:NES SNES GBA"
+ok "the systems ticked go to the importer" \
+   "$(asked)" "import $(printf '%s' "${SI}/tty2oledplus_scrape.py") --systems NES "
+ok "the choice is remembered" "$(cat "${SI}/scraped/.systems")" "NES"
+ok "and the summary is shown at the end" "$(tail -n1 "${T2OP_SLOG}")" "msgbox"
+ok "with no account asked for anywhere" "$(grep -cE 'yesno|inputbox|passwordbox' "${T2OP_SLOG}")" "0"
+
+scrape_menu "2: 0:SNES 0:"
+ok "next time, it opens on what was ticked" "$(grep '^checklist' "${T2OP_SLOG}" | sed -n 1p)" "checklist:NES"
+ok "Select none unticks everything"         "$(grep '^checklist' "${T2OP_SLOG}" | sed -n 2p)" "checklist:"
+
+scrape_menu "3: 0:NES_SNES_GBA 0:"
+ok "Select all ticks everything" "$(grep '^checklist' "${T2OP_SLOG}" | sed -n 2p)" "checklist:NES SNES GBA"
+ok "several systems go as one comma-separated list" "$(asked | grep -c -- '--systems NES,SNES,GBA ')" "1"
+
+scrape_menu "0: 0:NES 0:"
+ok "nothing ticked is not an import: it says so and asks again, as it was left" \
+   "$(grep -v '^import' "${T2OP_SLOG}" | head -n3 | tr '\n' ' ')" "checklist:NES SNES GBA msgbox checklist: "
+
+scrape_menu "1:"
+ok "Back imports nothing" "$(asked)" ""
+
+OUT="$(T2OP_INSTALL="${SI}" bash "${SI}/tty2oledplus_scrape.sh" </dev/null 2>&1)"; RC="${?}"
+ok "no terminal: it says how to run the importer instead" "$(printf '%s' "${OUT}" | grep -c 'needs a terminal')" "1"
+ok "and exits 2" "${RC}" "2"
+
+# ---------------------------------------------------------------------------
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n' "${PASS}" "${FAIL}"
 [ "${FAIL}" -eq 0 ]

@@ -7,7 +7,7 @@
 # in /tmp, which removes itself when it is done.
 #
 #   --keep-settings    save what is yours - tty2oled-user.ini, coretypes.ini,
-#                      pics/boot.png and pics/user - into
+#                      pics/boot.png, pics/user and scraped - into
 #                      /media/fat/tty2oledplus-saved instead of removing it
 #   --keep-bootimage   leave a boot image stored on the display alone
 #   --dry-run          list what would go, change nothing
@@ -202,7 +202,8 @@ Are you sure?" 16 66 || { clear; return 1; }
       --menu "Keep the files that are yours rather than ours?
 
 Your settings (tty2oled-user.ini, coretypes.ini), your own
-banners in pics/user, and your boot.png." 16 66 3 \
+banners in pics/user, your boot.png, and what Scrape metadata
+found." 16 66 3 \
       keep   "Keep them - saved to $(basename "${SAVEDIR}")" \
       delete "Remove everything, mine included" \
       cancel "Cancel - change nothing" 2> "${tmp}"
@@ -294,12 +295,13 @@ main() {
 
   if [ "${keep_settings}" = "yes" ]; then
     # Everything here is the user's own work, not ours: two inis they edited,
-    # the banners they drew, and the boot screen they chose. pics/banner,
+    # the banners they drew, the boot screen they chose, and what Scrape
+    # metadata found - days of a daily quota to get again. pics/banner,
     # pics/alt and pics/icon are the release's and are not kept - a new
     # install brings them back.
     say "Keeping what is yours"
     local f kept=0
-    for f in tty2oled-user.ini coretypes.ini pics/boot.png pics/user; do
+    for f in tty2oled-user.ini coretypes.ini pics/boot.png pics/user scraped; do
       [ -e "${INSTALL}/${f}" ] || continue
       if [ "${DRYRUN}" = "yes" ]; then note "would save ${SAVEDIR}/$(basename "${f}")"
       else

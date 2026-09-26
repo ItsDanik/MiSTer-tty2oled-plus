@@ -203,6 +203,20 @@ static void scene_console(const char *name, const char *cmd, const char *icon,
   save(name);
 }
 
+// The description page, scrolled a little way in: what a game Scrape metadata
+// found a description for shows after its fields.
+static void scene_description(const char *name, const char *cmd, const char *icon,
+                              const char *desc, int scroll) {
+  meta_reset();
+  meta_parse(cmd);
+  metaHasIcon = icon && gsc_load((repoRoot + "/" + icon).c_str(), iconBin, ICON_BYTES);
+  meta_setDesc(desc, strlen(desc));
+  fieldPage   = meta_fieldPageCount();
+  descScrollY = scroll;
+  meta_renderConsole();
+  save(name);
+}
+
 static void scene_card(const char *name, const char *cmd, int page) {
   meta_reset();
   meta_parse(cmd);
@@ -280,6 +294,17 @@ int main(int argc, char **argv) {
                 "CMDMETA,2,0,2,Castlevania Aria of Sorrow"
                 "|System=Game Boy Advance|Year=2003|Company=Konami|Region=USA|Format=gba",
                 "pics/icon/GBA.gsc");
+
+  // The description page, three pixels into its scroll.
+  scene_description("console-description",
+                    "CMDMETA,2,0,2,Sonic The Hedgehog"
+                    "|System=Mega Drive|Year=1991|Players=1|Rating=8/10",
+                    "pics/icon/MegaDrive.gsc",
+                    "Sonic the Hedgehog is a platform game in which the player "
+                    "controls Sonic as he races through six zones to stop Doctor "
+                    "Robotnik, who has imprisoned the animals of South Island in "
+                    "robots. Collect rings, find the Chaos Emeralds and rescue "
+                    "your friends.", 3);
 
   // Arcade card, both pages: the grid, then the wide fields under a repeat of
   // the pinned row. 2 pinned, 8 paired two to a row.

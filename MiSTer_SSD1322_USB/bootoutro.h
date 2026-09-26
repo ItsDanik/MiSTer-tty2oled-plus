@@ -102,7 +102,7 @@ static inline void boot_barDraw(int head, int startX) {
 // Commands that change nothing on the panel. Everything else is assumed to.
 bool boot_quietCommand(const char *cmd) {
   static const char *const quiet[] = {
-    "CMDFADE", "CMDTFADE", "CMDCON", "CMDDIM", "CMDFLIP", "CMDSAVER",
+    "CMDFADE", "CMDTFADE", "CMDCON", "CMDDIM", "CMDFLIP", "CMDSCROLL", "CMDSAVER",
     "CMDSWSAVER",
     "CMDSETTIME", "CMDHWINF", "CMDMETAOFF", "CMDBOOTPIC", "CMDBOOTINF",
     "CMDTZONE", "CMDNULL",

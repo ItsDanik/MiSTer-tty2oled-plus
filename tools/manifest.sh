@@ -23,12 +23,14 @@ MANIFEST_FILES="tty2oled.sh tty2oled-meta.sh tty2oled-system.ini
 # png2gsc.py is here as well as being a workstation tool: the settings editor
 # turns pics/boot.png into the stored boot screen on the MiSTer itself, and
 # its standard-library PNG backend is there so that needs nothing installed.
+# tty2oledplus_scrape.py is Scrape metadata's worker, which the menu below
+# drives and which runs on its own over SSH.
 MANIFEST_TOOLS="tools/tty2oled-diag.sh tools/flash-mister.sh tools/fw-segments.py
                 tools/tty2oled-capture.sh tools/tty2oled-bootimg.sh tools/tty2oled-boothook.sh
-                tools/png2gsc.py"
+                tools/png2gsc.py tools/tty2oledplus_scrape.py"
 
-# What the launcher opens: the updater, the settings editor and the
-# uninstaller. They live in the install folder, not in the Scripts menu -
+# What the launcher opens: the updater, the settings editor, the
+# uninstaller and the scraper's menu. They live in the install folder, not in the Scripts menu -
 # since 0.6.3b the menu carries the launcher alone - and the launcher runs
 # them from there.
 #
@@ -36,7 +38,7 @@ MANIFEST_TOOLS="tools/tty2oled-diag.sh tools/flash-mister.sh tools/fw-segments.p
 # the launcher, it *is* ${INSTALL}/tty2oledplus_update.sh while it runs, so it
 # places itself by rename at the end of the run, never in place.
 MANIFEST_APPS="tools/tty2oledplus_update.sh tools/tty2oledplus_settings.sh
-               tools/tty2oledplus_uninstall.sh"
+               tools/tty2oledplus_uninstall.sh tools/tty2oledplus_scrape.sh"
 
 # Installed only when the MiSTer has none, because the user edits them.
 MANIFEST_DEFAULTS="coretypes.ini tty2oled-user.ini"

@@ -172,7 +172,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1546 checks, no hardware needed. |
+| `tests/` | 1983 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation **and MiSTer**: three backends, the third being a PNG reader built on the standard library, which is what the MiSTer has. |
@@ -188,9 +188,11 @@ with scrolling text and an icon panel.
 | `tools/tty2oled-boothook.sh` | Adds the boot hook to `user-startup.sh`. Fed to the MiSTer on stdin by the deploy. |
 | `tools/manifest.sh` | What an install is made of. Read by the deploy and the release, so they agree. |
 | `tools/make-release.sh` | Builds the release assets into `dist/`. CI runs it on a tag; so can you. |
-| `tools/tty2oledplus.sh` | The launcher: the one Scripts menu entry, a `dialog` menu of Settings / Update / Uninstall. Lives in `/media/fat/Scripts`. **On the MiSTer**. |
+| `tools/tty2oledplus.sh` | The launcher: the one Scripts menu entry, a `dialog` menu of Settings / Update / Scrape metadata / Uninstall. Lives in `/media/fat/Scripts`. **On the MiSTer**. |
 | `tools/tty2oledplus_uninstall.sh` | Removes the install, the boot hook, the Scripts entry and the stored boot image. Lives in the install folder, runs from a copy in `/tmp`. **On the MiSTer**. |
 | `tools/tty2oledplus_settings.sh` | The `dialog` settings editor for `tty2oled-user.ini`. Lives in the install folder. **On the MiSTer**. |
+| `tools/tty2oledplus_scrape.sh` | Scrape metadata's menu: which systems to import. Lives in the install folder; the launcher's third entry. **On the MiSTer**. |
+| `tools/tty2oledplus_scrape.py` | The importer: each system's `games/<folder>/gamelist.xml` into `scraped/<system>.txt`. Standard library only. **On the MiSTer**. |
 | `tools/tty2oledplus_install.sh` | The starter users drop in `/media/fat/Scripts`: fetches the latest installer, checks it, runs it, removes itself. **On the MiSTer**. |
 | `tools/tty2oledplus_update.sh` | Installs/updates from a GitHub release. Lives in the install folder; the launcher's **Update**. **On the MiSTer**. |
 | `.github/workflows/ci.yml` | Tests and firmware on every push; the release on a `v*` tag. |
@@ -722,6 +724,8 @@ session. These are the fork's additions, all ESP32-only:
 | `CMDBUSY,<0\|1>[,<label>[,<effect>]]` | one line; 1 runs the boot sweep in the bottom band, 0 lets it finish its cycle and stop. A label blacks the panel above the band and writes it there, so the message is all that shows; the same label again is ignored, a different one redraws and rewinds the sweep. With an effect the label screen is transitioned to rather than drawn. Any drawing command stops it at once |
 | `CMDMSG,<effect>,<text>` | one line; a centred message, transitioned to like a picture. The text is the rest of the line, so commas in it are safe |
 | `CMDFLIP,<seconds>` | one line; 0 disables and returns to the normal side |
+| `CMDDESC,<bytes>` | followed by exactly that many raw bytes: the description page's text, printable ASCII, up to 1024 kept. Sent after `CMDMETA`, which clears it |
+| `CMDSCROLL,<h>,<v>` | one line; the title marquee's and the description's speeds, pixels per second, 1..200 and 1..100 |
 | `CMDWRBOOT` | followed by exactly 6912 raw bytes (256x54, 4bpp) |
 | `CMDCLRBOOT` | none - forget the stored boot image |
 | `CMDBOOTINF` | none - replies with the boot image status |
@@ -736,16 +740,17 @@ transfer is dropped rather than half-applied.
 the launcher. The menu is the user's, shared with update_all and everything
 else they run, and three lines of ours in it was clutter. The launcher is a
 `dialog --menu` - arrows and one button, for the reason every picker in the
-settings editor is one - offering Settings, Update and Uninstall, which live
+settings editor is one - offering Settings, Update, Scrape metadata and Uninstall, which live
 in the install folder beside everything else (`MANIFEST_APPS`). Over SSH,
 `tty2oledplus.sh update --no-firmware` goes straight to one with its options.
 
-**Settings returns to the menu; Update and Uninstall are `exec`'d.** The
-update replaces the launcher and the uninstall removes it, and bash reads a
-script as it runs it - so nothing of the launcher may run after either. With
-no terminal (`fb_terminal=0`) there is nothing to draw a menu on, so it runs
-the update: the only one of the three that asks nothing, and what its own
-Scripts entry did before there was a launcher.
+**Settings and Scrape metadata return to the menu; Update and Uninstall are
+`exec`'d.** Uninstall is the last entry, where it is hardest to pick by
+accident. The update replaces the launcher and the uninstall removes it, and
+bash reads a script as it runs it - so nothing of the launcher may run after
+either. With no terminal (`fb_terminal=0`) there is nothing to draw a menu on,
+so it runs the update: the only one of them that asks nothing, and what its
+own Scripts entry did before there was a launcher.
 
 **Run from the launcher, the updater is the file the update replaces.** It
 used to live in Scripts and copy the archive into the install folder
@@ -907,15 +912,80 @@ is the order Pillow does it in. The settings editor names `--backend pure`
 rather than leaving it to `auto`, so a MiSTer that happens to have Pillow
 converts identically to one that does not.
 
+## Scrape metadata, and the description page
+
+**The launcher's Scrape metadata imports the `gamelist.xml` a scraper left in
+each system's own games folder** - `games/<folder>/gamelist.xml` on every
+`GAME_ROOTS` root, the file name matched without case - and keeps it in
+`scraped/<system>.txt` in the install folder. That is EmulationStation's
+format, what Skraper, ES-DE, Batocera and Skyscraper write, so the scraping is
+done on a PC with their accounts and developer IDs and this only reads the
+result. `tty2oledplus_scrape.sh` is the `dialog` side - which systems -
+and `tty2oledplus_scrape.py` the work, which runs on its own over SSH.
+Python because it is XML; standard library only because Python 3.9 bare is
+what a MiSTer has. It is named for what the user is doing, not for what the
+code does.
+
+**Only systems with a console icon are offered**, one per system: `SYSTEMS` in
+the importer is keyed by icon name and carries the `games/` folders and the
+extensions. `Genesis` and `NEOGEO` are icons too, and `ICON_ALIASES` keeps
+each system in the menu once. The first folder is the system's own and its
+gamelist is taken whole - it may name an `.m3u` where MiSTer loads the
+`.cue`, and the base name is the same. A later folder is shared - the Game Boy
+Color's games in `GAMEBOY` - and only that system's extensions come from it.
+
+**Keyed on the file name without its extension**, which `<path>` names and
+`CURRENTPATH` carries; the daemon's `lookup_scraped` tries `CURRENTPATH` with
+its extension stripped and as it is (MiSTer strips it for single-extension
+cores). `<releasedate>` `19850913T000000` becomes `1985-09-13`, `<rating>`
+0..1 becomes a /20 that the daemon shows as /10, `<family>` (Batocera) is the
+series. The CRC column is empty; the daemon's CRC fallback is there for a line
+that has one.
+
+**`|`-separated, like the title index, and not tab-separated.** A tab is IFS
+whitespace, and bash's `read` folds a run of them into one, which slides every
+field after an empty one. Everything is folded to printable ASCII on the way
+in - `unicodedata` plus a table for what NFKD does not decompose - since the
+firmware counts a byte as a character when it wraps.
+
+**An import replaces the lines of the games it lists and keeps the rest**, and
+writes each system's file whole and atomically. A gamelist that will not
+parse is reported and skipped, and loses nothing already imported. The
+folder is the user's: no update writes it and the uninstaller's "Keep them"
+saves it.
+
+**The description page** is the last page of the console pager, after the
+fields, so page 0 is always what it was before. It keeps the header, the title
+and the icon and gives the whole field area - pinned rows too - to the text,
+word-wrapped to the column in the 5x7 font (`meta_descWrap`, rewrapped when
+the side swap changes the width) and scrolling up a pixel every
+`metaVStepMs` after a `DESC_HOLD_MS` pause. It does not dwell like a field
+page: `meta_tick` turns it when `meta_descTravel()` says the last line has
+gone past `DESC_TOP`. A turn to or from it fades the whole area, since the
+pinned rows are on one side of it only. The text is drawn first and the rows
+above `DESC_TOP` blacked out before the header and title go on - u8g2 has no
+clipping.
+
+`CMDDESC` is a length-prefixed transfer rather than a field in `CMDMETA`: a
+kilobyte of line could overflow the 256-byte serial buffer while the firmware
+is animating, where `serial_readTicking` cannot. `CMDMETA` clears it, so the
+daemon's "unchanged, not resending" check includes it; and it redraws a
+layout already on the panel, by the icon's rules, because its page adds a pip.
+
+**Speeds are pixels per second** in the ini and on the wire - bigger is
+faster, which a period is not - and periods in the firmware, because that is
+what a tick compares. 25 and 5 are the old 40ms marquee and one pixel every
+200ms.
+
 ## Running the tests
 
 ```bash
 ./tests/run-all.sh
 ```
 
-Twelve suites: metadata extraction, wire protocol, title index, versioning,
-daemon lifecycle, deploy, settings editor, png2gsc, installer, flashing,
-firmware parser, firmware layout. CI runs
+Thirteen suites: metadata extraction, wire protocol, title index, versioning,
+daemon lifecycle, deploy, settings editor, png2gsc, scraper, installer,
+flashing, firmware parser, firmware layout. CI runs
 all of them on every push (`.github/workflows/ci.yml`), with inotify-tools and
 ImageMagick installed so nothing is skipped there.
 
@@ -1500,6 +1570,27 @@ fork's version of copying `tty2oled-user.ini` over the user's.
   `test-deploy.sh` had **pinned the bug** with an assertion that the menu
   scripts go to Scripts "and not into the install folder". A test can be wrong;
   when behaviour and test agree and reality does not, suspect both.
+- **A remembered label outlived the screen it was on.** The busy bar skips a
+  label it is already showing, so a poll every couple of seconds does not
+  redraw the panel. It forgot the label only when a drawing command arrived
+  *while the bar ran* - and update_all runs its downloader twice. Between the
+  two the daemon stops the bar, which drains off the edge in a third of a
+  second, then sends `CMDMETAOFF`, waits 0.2s and redraws the update_all
+  screen over the label: the bar has already stopped, so nothing is
+  forgotten, and the second run's "Updating System ..." was taken for a
+  repeat. The bar swept along under the update_all screen with no message.
+  `busy_noteCommand` forgets the label on any drawing command now, running
+  bar or not. Its test passed against the bug at first - `resetProbe` does
+  not clear `lastPrint`, so it read the first run's label - and only failed
+  once it counted draws instead.
+- **ScreenScraper refuses every call without developer credentials.** A
+  scraper for its API was built with the gamelist importer and taken out
+  again before release: `jeuInfos.php` wants the *program's* `devid` and
+  `devpassword` beside the user's account, and answers 403 "Vérifier vos
+  identifiants développeur" to anything else - measured, not assumed. The
+  frontends that let a user scrape with a name and password ship their own
+  developer ID inside the program; this fork has none. The gamelist route
+  gets the same data through the tools that do.
 - **Two things drawing into one ten-row band is one thing too many.** The
   power-on outro ran the comet's last sweep and the version's fade together.
   Every version step blacks the left half of the band and re-renders the text

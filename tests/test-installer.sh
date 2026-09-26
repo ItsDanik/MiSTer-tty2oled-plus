@@ -235,6 +235,8 @@ echo '# stale' >> "${INSTALL}/tty2oled.sh"
 mkdir -p "${INSTALL}/pics/user"
 echo bootpng > "${INSTALL}/pics/boot.png"
 echo mine    > "${INSTALL}/pics/user/NES.gsc"
+mkdir -p "${INSTALL}/scraped"
+echo 'Game|x|ok|Game||||||||' > "${INSTALL}/scraped/NES.txt"
 set_installed_version "0.0.1b"
 T2OP_HWINF="HWLOLIN32;${VERSION};" install; RC="${?}"
 ok "an update succeeds" "${RC}" "0"
@@ -250,6 +252,8 @@ ok "an artwork pack already there is not fetched again" "$(said 'Installing the 
 # nothing removes what it does not carry.
 ok "your boot.png survives an update"  "$(cat "${INSTALL}/pics/boot.png" 2>/dev/null)" "bootpng"
 ok "and your own banners with it"      "$(cat "${INSTALL}/pics/user/NES.gsc" 2>/dev/null)" "mine"
+# Scraped on this MiSTer against a daily quota, and in no archive.
+ok "and what Scrape metadata found"    "$(cat "${INSTALL}/scraped/NES.txt" 2>/dev/null)" "Game|x|ok|Game||||||||"
 ok "the boot hook is not added twice" "$(grep -c "${INSTALL}/S60tty2oled" "${FAT}/linux/user-startup.sh")" "1"
 
 rm "${INSTALL}/pics/banner/NES.gsc"
@@ -623,6 +627,8 @@ mkdir -p "${INSTALL}/pics/user" "${INSTALL}/pics/banner"
 echo mine   > "${INSTALL}/pics/user/NES.gsc"
 echo bootpng > "${INSTALL}/pics/boot.png"
 echo theirs > "${INSTALL}/pics/banner/SNES.gsc"
+mkdir -p "${INSTALL}/scraped"
+echo scraped > "${INSTALL}/scraped/NES.txt"
 SAVED="${FAT}/tty2oledplus-saved"
 uninstall --keep-settings
 ok "--keep-settings saves your ini" "$(cat "${SAVED}/tty2oled-user.ini")" 'TTYDEV="/dev/ttyUSB1"   # mine'
@@ -631,6 +637,7 @@ ok "and your core types" "$(yesno test -e "${SAVED}/coretypes.ini")" "yes"
 # screen you chose are yours too, and nothing else on the MiSTer holds a copy.
 ok "and the banners you drew"  "$(cat "${SAVED}/user/NES.gsc")" "mine"
 ok "and your boot.png"         "$(cat "${SAVED}/boot.png")" "bootpng"
+ok "and what Scrape metadata found" "$(cat "${SAVED}/scraped/NES.txt")" "scraped"
 # The artwork pack is not yours and a new install brings it back, so keeping
 # it would only be 80MB of duplicate.
 ok "but not the shipped artwork" "$(yesno test -e "${SAVED}/banner")" "no"
@@ -731,7 +738,7 @@ LFAT="${TMP}/lfat"; LINST="${LFAT}/tty2oledplus"
 rm -rf "${LFAT}"; mkdir -p "${LINST}" "${LFAT}/Scripts"
 cp "${ROOT}/tools/tty2oledplus.sh" "${LFAT}/Scripts/"
 printf 'TTY2OLED_VERSION="9.9.9b"\n' > "${LINST}/tty2oled-system.ini"
-for t in settings update uninstall; do
+for t in settings update uninstall scrape; do
   printf '#!/bin/bash\necho "%s $*" >> "${FAKE_CALLS}"\n' "${t}" > "${LINST}/tty2oledplus_${t}.sh"
 done
 LBIN="${TMP}/lbin"; mkdir -p "${LBIN}"
@@ -777,6 +784,15 @@ ok "and does not come back either" "$(menus)" "1"
 T2OP_FAKE_PICKS="settings settings update" launch
 ok "one after another, as a pad would" "$(ran)" "settings ;settings ;update ;"
 
+T2OP_FAKE_PICKS="scrape" launch
+ok "Scrape metadata opens the scraper's menu" "$(ran)" "scrape ;"
+ok "and comes back to the menu afterwards, like Settings" "$(menus)" "2"
+ok "the menu's order: Uninstall last, where it is hard to pick by accident" \
+   "$(sed -n '/--menu "What would you like to do?"/,/2> "\${tmp}"/p' "${ROOT}/tools/tty2oledplus.sh" \
+      | grep -oE '^ +[a-z]+ +"' | tr -d ' "' | tr '\n' ' ')" "settings update scrape uninstall "
+launch scrape
+ok "by name too" "$(ran)" "scrape ;"
+
 launch update --no-firmware --board lolin32
 ok "named on the command line, it goes straight there" "$(ran)" "update --no-firmware --board lolin32;"
 ok "without a menu" "$(menus)" "0"
@@ -785,7 +801,7 @@ ok "for the uninstaller too" "$(ran)" "uninstall --keep-settings;"
 
 launch banana; RC="${?}"
 ok "an unknown choice is refused" "${RC}" "1"
-ok "saying what there is" "$(said 'settings, update or uninstall')" "1"
+ok "saying what there is" "$(said 'settings, update, uninstall or scrape')" "1"
 
 # fb_terminal=0: no terminal, no menu. The update is the one of the three
 # that asks nothing, and was what its own Scripts entry did before.

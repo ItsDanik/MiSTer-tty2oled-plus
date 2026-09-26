@@ -2531,6 +2531,42 @@ int main() {
         busy_cancel(); busy_forgetLabel();
     }
 
+    section("busy bar: the label comes back after the screen it was on is redrawn");
+    {
+        // update_all runs the downloader twice - its own update, then the
+        // real one. Between them the daemon stops the bar and puts the
+        // update_all screen back, and by then the bar has drained: it is
+        // not running when the screen is drawn over the label. The second
+        // run sends the same label, and it has to be drawn again - the one
+        // the firmware remembers is no longer on the panel.
+        busy_cancel();
+        busy_forgetLabel();
+        tfState = TF_IDLE;
+        busy_parse("CMDBUSY,1,Updating System ...");
+        busy_parse("CMDBUSY,0");
+        for (int i = 0; i < 1000 && busyActive; i++) { g_fakeMillis += BOOT_BAR_PX_MS; busy_tick(); }
+        okBool("the bar has run off before the next screen", busyActive, false);
+
+        busy_noteCommand("CMDMETAOFF");                // quiet: the label is still up
+        busy_noteCommand("CMDMSG,-2,update_all");      // the update_all screen, over it
+        u8g2.resetProbe();
+        busy_parse("CMDBUSY,1,Updating System ...");
+        okBool("the second run's label is drawn",
+               u8g2.printCalls == 1 && u8g2.find("Updating System ...") != nullptr, true);
+        okBool("with the bar under it", busyActive, true);
+
+        // A quiet command in between leaves the label on the panel, so the
+        // same label again is still nothing to draw.
+        busy_parse("CMDBUSY,0");
+        for (int i = 0; i < 1000 && busyActive; i++) { g_fakeMillis += BOOT_BAR_PX_MS; busy_tick(); }
+        busy_noteCommand("CMDCON,120");
+        u8g2.resetProbe();
+        busy_parse("CMDBUSY,1,Updating System ...");
+        okInt ("a label still on the panel is not drawn twice", u8g2.printCalls, 0);
+        busy_cancel();
+        busy_forgetLabel();
+    }
+
     section("busy bar: a label that replaces a picture transitions in");
     {
         // The updater's screen takes over from whatever core was loaded, so
@@ -2722,6 +2758,236 @@ int main() {
         g_fakeMillis += BOOT_BAR_PX_MS; busy_tick();
         okInt ("and it starts after", (long)oled.rects.size(), 1);
         busy_cancel();
+    }
+
+    section("CMDSCROLL sets both speeds, in pixels per second");
+    {
+        okBool("parsed",                   meta_parseScroll("CMDSCROLL,10,4"), true);
+        okInt ("10 px/s is 100ms a pixel", (long)metaHStepMs, 100);
+        okInt ("4 px/s is 250ms a pixel",  (long)metaVStepMs, 250);
+        meta_parseScroll("CMDSCROLL,0,0");
+        okInt ("nothing slower than 1 px/s", (long)metaHStepMs, 1000);
+        okInt ("either way",                 (long)metaVStepMs, 1000);
+        meta_parseScroll("CMDSCROLL,9999,9999");
+        okInt ("nor faster than the cap",    (long)metaHStepMs, 1000 / HSCROLL_SPEED_MAX);
+        okInt ("vertically too",             (long)metaVStepMs, 1000 / VSCROLL_SPEED_MAX);
+        okBool("junk is refused", meta_parseScroll("CMDSCROLL,x"), false);
+        okBool("it changes nothing on the panel, so the boot screen stays",
+               boot_quietCommand("CMDSCROLL,25,5"), true);
+
+        // The marquee runs at the period it was given, not the old constant.
+        meta_parseScroll("CMDSCROLL,10,5");
+        std::string cmd = "CMDMETA,2,0,An Extraordinarily Long Title That Overflows|System=NES";
+        meta_parse(cmd.c_str());
+        metaNeedsDraw   = false;
+        g_fakeMillis   += 100000;
+        scrollHoldUntil = 0;
+        lastScrollTick  = g_fakeMillis;
+        titleScrollX    = 0;
+        g_fakeMillis   += 60;
+        meta_tick();
+        okInt("not a pixel before its 100ms are up", titleScrollX, 0);
+        g_fakeMillis   += 41;
+        meta_tick();
+        okInt("one when they are",                   titleScrollX, 1);
+        meta_parseScroll("CMDSCROLL,25,5");
+        okInt("and the defaults are the old constants", (long)metaHStepMs, SCROLL_STEP_MS);
+        okInt("and 1px every 200ms",                    (long)metaVStepMs, DESC_STEP_MS);
+    }
+
+    section("CMDDESC: the length, and what is kept of the bytes");
+    {
+        okInt("a length",            meta_parseDescLength("CMDDESC,120"), 120);
+        okInt("none is refused",     meta_parseDescLength("CMDDESC,"), -1);
+        okInt("negative is refused", meta_parseDescLength("CMDDESC,-4"), -1);
+
+        meta_reset();
+        const char raw[] = "Tab\there\nnewline\x01 and \xc3\xa9";
+        meta_setDesc(raw, sizeof(raw) - 1);
+        ok("anything unprintable becomes a space", metaDesc,
+           std::string("Tab here newline  and   "));
+
+        std::string big(DESC_MAX + 300, 'a');
+        meta_setDesc(big.c_str(), big.size());
+        okInt("cut to DESC_MAX", metaDescLen, DESC_MAX);
+        meta_setDesc("", 0);
+        okInt("an empty one is none", metaDescLen, 0);
+    }
+
+    section("the description is a page after the fields");
+    {
+        meta_parse("CMDMETA,2,0,2,Sonic The Hedgehog|System=Mega Drive|Year=1991"
+                   "|Genre=Platform|Region=USA|Format=MD");
+        okInt ("three fields paged under two pinned: two pages", meta_pageCount(), 2);
+        meta_setDesc("A blue hedgehog runs very fast.", 31);
+        okInt ("the description adds one",  meta_pageCount(), 3);
+        okBool("after the fields",          meta_isDescPage(2), true);
+        okBool("page 0 is still fields",    meta_isDescPage(0), false);
+
+        meta_parse("CMDMETA,2,0,2,Sonic|System=Mega Drive");
+        okInt ("a new game drops the last one's description", metaDescLen, 0);
+        okInt ("and its page",                                meta_pageCount(), 1);
+        meta_setDesc("Text.", 5);
+        meta_reset();
+        okInt ("so does leaving metadata", metaDescLen, 0);
+    }
+
+    section("the description wraps to the text column");
+    {
+        meta_parse("CMDMETA,2,0,Game|System=NES");
+        std::string text = "Sonic the Hedgehog is a platform game developed by Sonic Team "
+                           "and published by Sega for the Mega Drive in 1991. "
+                           "Supercalifragilisticexpialidociousandthensomemoreletters ends it.";
+        meta_setDesc(text.c_str(), text.size());
+        meta_descEnsureWrapped();
+
+        const int tw = meta_textW();
+        bool fits = true, noLead = true;
+        std::string joined;
+        for (int l = 0; l < descLineCount; l++) {
+            std::string line(metaDesc + descLineStart[l], descLineLen[l]);
+            if ((int)line.size() * 5 > tw) fits = false;           // 5px a character
+            if (!line.empty() && line[0] == ' ') noLead = false;
+            joined += line;
+        }
+        okBool("several lines",            descLineCount > 3, true);
+        okBool("each within the column",   fits, true);
+        okBool("none starting with a space", noLead, true);
+        // Every character but the spaces the wrap broke at is still there, in
+        // order: nothing dropped, nothing doubled.
+        std::string want, got;
+        for (char c : text)   if (c != ' ') want += c;
+        for (char c : joined) if (c != ' ') got  += c;
+        ok("nothing lost", got, want);
+        // "Sonic the Hedgehog is a platform game" is 37 characters, more
+        // than the 33 that fit, so the first line stops at a word.
+        ok("words stay whole", std::string(metaDesc + descLineStart[0], descLineLen[0]),
+           "Sonic the Hedgehog is a platform");
+
+        // The side swap changes the column's width, and the lines with it.
+        int before = descWrapW;
+        metaFlipped = true;
+        meta_descEnsureWrapped();
+        okBool("re-wrapped for the other side", descWrapW != before && descWrapW == meta_textW(), true);
+        metaFlipped = false;
+        meta_descEnsureWrapped();
+    }
+
+    section("the description page: header, title and icon, then the text");
+    {
+        meta_parse("CMDMETA,2,0,2,Sonic|System=Mega Drive|Year=1991");
+        std::string text;
+        for (int i = 0; i < 12; i++) { char w[16]; snprintf(w, sizeof w, "line%02d ", i); text += w; text += "xxxxxxxxxxxxxxxxxxxxxxxxx "; }
+        meta_setDesc(text.c_str(), text.size());
+        fieldPage = meta_fieldPageCount();
+        okBool("on it", meta_onDescPage(), true);
+
+        descScrollY = 0;
+        u8g2.resetProbe();
+        oled.resetProbe();
+        meta_renderConsole();
+        okBool("the header is still there", u8g2.find(CON_HEADER_TEXT) != nullptr, true);
+        okBool("and the title",             u8g2.find("Sonic") != nullptr, true);
+        okBool("but not the pinned fields", u8g2.find("System") == nullptr, true);
+        const FakeU8g2::Draw *first = u8g2.find("line00");
+        okBool("the first line sits where the first field would",
+               first && first->y == CON_FIELD_Y0 && first->x == meta_textX(), true);
+        int lines = 0;
+        for (size_t i = 0; i < u8g2.draws.size(); i++)
+            if (u8g2.draws[i].text.rfind("line", 0) == 0 || u8g2.draws[i].text.rfind("xxx", 0) == 0) lines++;
+        okInt("as many lines as the area holds", lines, CON_FIELD_ROWS);
+        okBool("and every page's pip, the description's included",
+               (int)oled.rects.size() >= meta_pageCount(), true);
+
+        // Scrolled so that the first line is half out: it is drawn - and the
+        // strip above the area is blacked afterwards, so it cannot reach the
+        // title - and a line that is wholly out is not drawn at all.
+        descScrollY = CON_FIELD_PITCH + 3;
+        u8g2.resetProbe();
+        oled.resetProbe();
+        meta_renderConsole();
+        okBool("a line wholly past the top is not drawn", u8g2.find("line00") == nullptr, true);
+        bool clipped = false, above = false;
+        for (size_t i = 0; i < oled.rects.size(); i++) {
+            const FakeOled::Rect &r = oled.rects[i];
+            if (r.color == SSD1322_BLACK && r.y == 0 && r.h == DESC_TOP && r.w == (int)DispWidth) clipped = true;
+        }
+        for (size_t i = 0; i < u8g2.draws.size(); i++)
+            if (u8g2.draws[i].y < DESC_TOP && u8g2.draws[i].text.rfind("xxx", 0) == 0) above = true;
+        okBool("the strip above the area is blacked", clipped, true);
+        okBool("no line is drawn with its baseline above the area", above, false);
+        okBool("nothing wider than the panel", u8g2.maxRight <= (int)DispWidth, true);
+        fieldPage = 0;
+        descScrollY = 0;
+    }
+
+    section("the description scrolls through, then the pager moves on");
+    {
+        uint16_t keepFade = tfFadeMs;
+        tfFadeMs = 0;                             // page turns land at once
+        meta_parseScroll("CMDSCROLL,25,5");
+        meta_parse("CMDMETA,2,0,2,Sonic|System=Mega Drive|Year=1991");
+        metaNeedsDraw = false;
+        std::string text = "One two three four five six seven eight nine ten eleven twelve "
+                           "thirteen fourteen fifteen sixteen seventeen eighteen nineteen.";
+        meta_setDesc(text.c_str(), text.size());
+        okInt("fields fit on one page, so two pages", meta_pageCount(), 2);
+
+        g_fakeMillis += 100000;
+        lastPageTick  = g_fakeMillis;
+        fieldPage     = 0;
+        g_fakeMillis += VSCROLL_MS + 1;
+        meta_tick();
+        okInt ("the fields dwell, then the description", fieldPage, 1);
+        okInt ("from its first line",                   descScrollY, 0);
+
+        // The turn to it fades the whole area, pinned rows too.
+        int x, w, y0, y1;
+        meta_consolePagedRect(&x, &w, &y0, &y1, true);
+        okInt ("a turn to it covers the whole area", y0, DESC_TOP);
+
+        g_fakeMillis += DESC_HOLD_MS - 10;
+        meta_tick();
+        okInt ("it holds before moving", descScrollY, 0);
+        g_fakeMillis += 20;
+        meta_tick();
+        okInt ("then moves a pixel",    descScrollY, 1);
+        g_fakeMillis += DESC_STEP_MS - 1;
+        meta_tick();
+        okInt ("not before the next period", descScrollY, 1);
+        g_fakeMillis += 1;
+        meta_tick();
+        okInt ("then another",               descScrollY, 2);
+
+        // It stays on its page, however long it takes, until the last line
+        // has gone - the dwell that turns field pages does not apply here.
+        const long travel = meta_descTravel();
+        okBool("a travel of several lines", travel > 3 * CON_FIELD_PITCH, true);
+        int guard = 0;
+        while (fieldPage == 1 && guard++ < 10000) {
+            g_fakeMillis += DESC_STEP_MS;
+            meta_tick();
+        }
+        okInt ("back to the fields after exactly the travel", guard, (int)travel - 2);
+        okInt ("on page 0",                                   fieldPage, 0);
+        tfFadeMs = keepFade;
+    }
+
+    section("a description arriving for a layout already up redraws it");
+    {
+        meta_parse("CMDMETA,2,0,Sonic|System=Mega Drive");
+        metaNeedsDraw   = false;
+        coreBootHolding = false;
+        metaIconRedraw  = false;
+        oled.resetProbe();
+        meta_setDesc("Text.", 5);
+        okBool("drawn at once when the panel is idle", oled.displayCalls > 0, true);
+
+        meta_parse("CMDMETA,2,0,Sonic|System=Mega Drive");
+        oled.resetProbe();
+        meta_setDesc("Text.", 5);
+        okBool("not before the layout's own first draw", oled.displayCalls == 0 && !metaIconRedraw, true);
+        meta_reset();
     }
 
     section("meta_reset returns to plain picture display");

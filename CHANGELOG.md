@@ -4,6 +4,30 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.6.5b — 2026-09-26
+
+- **Game descriptions, and more details for every console game.** A new
+  entry in the tty2oledplus menu, **Scrape metadata**, imports the
+  `gamelist.xml` that Skraper, ES-DE, Batocera or Skyscraper wrote when you
+  scraped your ROMs. Put it in the system's own games folder -
+  `games/NES/gamelist.xml` - tick the systems and Import. No account, no
+  network. It brings the number of players, a rating, the release date and
+  the series, as extra pages under the game, and fills in the year and
+  publisher the disc systems never had.
+- **A description page.** A game with a description gets one more page after
+  its details: "Now playing", the title and the icon stay, and the
+  description scrolls slowly up beneath them. When it has all gone past, the
+  details come round again. `SHOW_DESCRIPTION` turns it off.
+- **Scroll speeds are settings.** Under Settings: how fast a long title
+  scrolls sideways (`HSCROLL_SPEED`, 25 pixels a second, as before) and how
+  fast a description scrolls up (`VSCROLL_SPEED`, 5).
+- **"Updating System ..." shows for the whole of an update_all run.** It
+  appeared for update_all's own update and then went missing for the main
+  download, leaving the busy bar running under the update_all screen with no
+  message. This needs the new firmware, which the update flashes.
+- **Uninstall is the last entry in the menu**, below Scrape metadata.
+- **The uninstaller's "Keep them" also keeps what Scrape metadata imported.**
+
 ## 0.6.4b — 2026-09-26
 
 - **The arcade info card matches the console layout.** It has the same

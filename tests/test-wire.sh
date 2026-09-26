@@ -784,5 +784,123 @@ rm -f "${bannerfolder}/MENU.gsc" "${bannerfolder}/NES.gsc"
 TRANSITION="-1"
 
 # ---------------------------------------------------------------------------
+section "scraped metadata: more fields, and the description after the line"
+# ---------------------------------------------------------------------------
+# What tty2oledplus_scrape.py left in scraped/<system>.txt, one game a line:
+#   key|crc|status|title|released|players|rating|genre|developer|publisher|series|description
+SCRAPE_DIR="${TMP}/scraped"
+rm -rf "${SCRAPE_DIR}"; mkdir -p "${SCRAPE_DIR}"
+DESC="A potato must escape a maze. It is harder than it sounds, and it sounds hard."
+printf '%s\n' \
+  "A-mazing Tater (USA)|d229ac62|ok|A-Mazing Tater|1991-06-01|1|16|Puzzle|Atlus|Atlus|Tater|${DESC}" \
+  "Unknown Game (USA)|00000000|missing|||||||||" \
+  > "${SCRAPE_DIR}/GAMEBOY.txt"
+
+scraped_game() {  # scraped_game <file name> [crc]
+  reset_capture
+  printf 'GAMEBOY=console\n' > "${TMP}/coretypes"
+  printf 'GAMEBOY\n' > "${TMP}/CORENAME"
+  printf 'GAMEBOY\n' > "${TMP}/RBFNAME"
+  sleep 0.05
+  printf 'games/GAMEBOY\n' > "${TMP}/FULLPATH"
+  printf '%s\n' "${1}"     > "${TMP}/CURRENTPATH"
+  printf 'selected\n'      > "${TMP}/FILESELECT"
+  printf 'CRC32: %s\n' "${2:-FFFFFFFF}" > "${TMP}/GAMEID"
+}
+
+unset METADATA_FIELDS; METADATA_FIELDS=""
+scraped_game "A-mazing Tater (USA).gb"
+sendmeta "GAMEBOY"
+out="$(captured)"
+line="$(printf '%s' "${out}" | head -n1)"
+contains "the scraped title replaces the file name's" "${line}" ",A-Mazing Tater|"
+contains "players"                   "${line}" "|Players=1|"
+contains "the rating out of ten"     "${line}" "|Rating=8/10|"
+contains "the release date"          "${line}" "|Released=1991-06-01|"
+contains "the series"                "${line}" "|Series=Tater"
+contains "and what the index lacked" "${line}" "|Genre=Puzzle|"
+# COMPACT_YEAR_COMPANY's ", " comes through metasanitize as two spaces.
+contains "the year, from the date"   "${line}" "|Year=1991  Atlus|"
+ok "the description follows the line, announced by its length" \
+   "$(printf '%s' "${out}" | sed -n 2p | tr -d '\r')" "CMDDESC,${#DESC}"
+ok "and then exactly its bytes" \
+   "$(sync_capture; tail -c "${#DESC}" "${CAPTURE}")" "${DESC}"
+HDR="CMDDESC,${#DESC}"
+ok "and nothing else after them" \
+   "$(sync_capture; stat -c%s "${CAPTURE}")" "$(( ${#line} + 1 + ${#HDR} + 1 + ${#DESC} ))"
+
+# The resend check covers the description: the same game again sends nothing,
+# a changed description sends everything again.
+sync_capture; : > "${CAPTURE}"
+sendmeta "GAMEBOY"
+ok "the same game twice is sent once" "$(captured)" ""
+sed -i 's/harder than it sounds/easier than it looks/' "${SCRAPE_DIR}/GAMEBOY.txt"
+sendmeta "GAMEBOY"
+contains "a new description is news" "$(captured)" "easier than it looks"
+
+# MiSTer strips the extension for single-extension cores; the key has none.
+scraped_game "A-mazing Tater (USA)"
+sendmeta "GAMEBOY"
+contains "found without the extension too" "$(captured)" "|Players=1|"
+
+# The CRC is the fallback, for a renamed file.
+scraped_game "tater-renamed.gb" "D229AC62"
+sendmeta "GAMEBOY"
+contains "found by CRC when the name misses" "$(captured)" "|Players=1|"
+
+# Looked up and not found is not a hit.
+scraped_game "Unknown Game (USA).gb" "00000000"
+sendmeta "GAMEBOY"
+out="$(captured)"
+ok "a game recorded as missing gets no scraped fields" "$(printf '%s' "${out}" | grep -c 'Players=')" "0"
+ok "and no description" "$(printf '%s' "${out}" | grep -c 'CMDDESC')" "0"
+
+# The Game Boy core plays .gbc files, which the scraper filed under GBC.
+mv "${SCRAPE_DIR}/GAMEBOY.txt" "${SCRAPE_DIR}/gbc.txt"
+scraped_game "A-mazing Tater (USA).gb"
+sendmeta "GAMEBOY"
+contains "a sibling system's file is searched, whatever its case" "$(captured)" "|Players=1|"
+mv "${SCRAPE_DIR}/gbc.txt" "${SCRAPE_DIR}/GAMEBOY.txt"
+
+SHOW_DESCRIPTION="no"
+scraped_game "A-mazing Tater (USA).gb"
+sendmeta "GAMEBOY"
+out="$(captured)"
+ok "SHOW_DESCRIPTION=no sends no description" "$(printf '%s' "${out}" | grep -c 'CMDDESC')" "0"
+contains "but still the fields" "${out}" "|Players=1|"
+unset SHOW_DESCRIPTION
+
+# Only printable ASCII reaches the panel, and never more than it keeps.
+LONG="$(printf 'word%.0s ' $(seq 1 400))"
+printf 'Long (USA)|x|ok|Long||||||||%s\tafter a tab\n' "${LONG}" >> "${SCRAPE_DIR}/GAMEBOY.txt"
+scraped_game "Long (USA).gb"
+sendmeta "GAMEBOY"
+ok "cut to the firmware's 1024 bytes" \
+   "$(captured | sed -n 2p | tr -d '\r')" "CMDDESC,1024"
+SCRAPE_DIR="${TMP}/no-such-dir"
+
+# An arcade game has no description to send.
+reset_capture
+printf '%s\n' "${FIX}/mra/dkong.mra" > "${TMP}/STARTPATH"
+sendmeta "dkong"
+ok "arcade sends none" "$(captured | grep -c 'CMDDESC')" "0"
+
+# ---------------------------------------------------------------------------
+section "scroll speeds: pixels a second, sent once at startup"
+# ---------------------------------------------------------------------------
+reset_capture
+unset HSCROLL_SPEED VSCROLL_SPEED
+sendscroll
+ok "the defaults: today's marquee, and 1px every 200ms" "$(captured | tr -d '\r\n')" "CMDSCROLL,25,5"
+reset_capture
+HSCROLL_SPEED="40"; VSCROLL_SPEED="2"
+sendscroll
+ok "and what the ini says"  "$(captured | tr -d '\r\n')" "CMDSCROLL,40,2"
+ok "the ini's defaults are those" \
+   "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${HSCROLL_SPEED},${VSCROLL_SPEED}")" "25,5"
+ok "sent with the rest of the startup settings" \
+   "$(grep -c '^  sendscroll' "${ROOT}/tty2oled.sh")" "1"
+
+# ---------------------------------------------------------------------------
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n\n' "${PASS}" "${FAIL}"
 [ "${FAIL}" -eq 0 ] || exit 1

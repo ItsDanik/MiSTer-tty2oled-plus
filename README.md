@@ -26,6 +26,14 @@ the same lit pixels all day.
 
 ![The same layout mirrored: icon left, text right](docs/img/console-flipped.png)
 
+A game that [Scrape metadata](#scrape-metadata) imported a description for gets
+one more page after its fields: the header, the title and the icon stay, and
+the description scrolls slowly up beneath them. When the last line has gone,
+the fields come round again.
+
+![The description page: Sonic the Hedgehog's description scrolling under its
+title, the Mega Drive icon beside it](docs/img/console-description.png)
+
 **Arcade cores** alternate the artwork with an info card, one step every
 `METADATA_INTERVAL` seconds — artwork, each page of the card in turn, then the
 artwork again. The card's top half is the console layout's, across the whole
@@ -108,10 +116,12 @@ one button:
 
 - **Settings** — what the display shows, see [Settings](#settings)
 - **Update** — install the newest release
+- **Scrape metadata** — import the game details your scraper already
+  found, see [Scrape metadata](#scrape-metadata)
 - **Uninstall** — remove it all again
 
-The three live in `/media/fat/tty2oledplus` beside everything else, so your
-Scripts folder carries one line of ours rather than three. An install from
+They live in `/media/fat/tty2oledplus` beside everything else, so your
+Scripts folder carries one line of ours rather than four. An install from
 before 0.6.3b had them as three separate entries, and updating replaces them
 with this one - except **tty2oledplus_update**, which the old updater puts
 back on its way out and which goes at the next reboot.
@@ -132,7 +142,8 @@ does anything — whether to go on, and what to do with the files that are yours
 rather than ours — with arrows and one button, no typing.
 
 Choosing **Keep them** copies your settings (`tty2oled-user.ini`,
-`coretypes.ini`), the banners in `pics/user` and your `pics/boot.png` into
+`coretypes.ini`), the banners in `pics/user`, your `pics/boot.png` and what
+Scrape metadata found (`scraped/`) into
 `/media/fat/tty2oledplus-saved` before the rest goes. **Cancel** on that
 question stops the whole thing.
 
@@ -145,6 +156,7 @@ left alone.
 `fb_terminal=0` there is no screen to ask on, so it refuses rather than
 guessing — run it with `--yes` if that is what you meant.
 
+[Skraper]: https://www.skraper.net
 [tty2oledplus_install.sh]: https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_install.sh
 
 ## Where the game details come from
@@ -170,6 +182,60 @@ straight out of the `.mra` file the core was started from.
 
 Cores are named on screen the way your MiSTer menu names them, from `names.txt`
 if you have one.
+
+## Scrape metadata
+
+**Scripts → tty2oledplus → Scrape metadata** gives your games the details a
+filename cannot: the number of players, a rating, the release date, the
+series, and a description for the [description page](#what-is-on-screen).
+Where the index above has nothing — the disc systems' year and publisher — it
+fills that in too.
+
+It reads them from a `gamelist.xml`: the file **[Skraper]**, ES-DE, Batocera
+and Skyscraper write when they scrape. Put it in the system's own games
+folder, beside the games it describes —
+
+```
+/media/fat/games/NES/gamelist.xml
+/media/usb0/games/SNES/gamelist.xml
+```
+
+— then tick the systems and **Import**. **Select all** and **Select none**
+are the buttons beside it, and the choice is remembered for next time. No
+account, no network: the scraping was done elsewhere, this only reads what it
+wrote. Only systems with a console icon are offered, since the description
+page is part of the console layout.
+
+Games are matched by file name, so the gamelist has to come from the same
+ROMs, not renamed since. An import replaces what was there for the games it
+lists and leaves the rest alone, so importing again after re-scraping is
+safe. What it imports lands in `/media/fat/tty2oledplus/scraped/`, one file
+per system, and no update touches that folder.
+
+**With Skraper**, point it at the MiSTer's `games` folder over the network,
+choose the EmulationStation / Batocera / Recalbox output so it writes
+`gamelist.xml` into each system's folder, and untick every image and video —
+only the text is used, and media would be thousands of files on the SD card
+for nothing. It may not know MiSTer's folder names (`GAMEBOY`, `MegaDrive`,
+`TGFX16-CD`…) as systems; set those by hand in the system's settings.
+
+Running Skraper under Wine on Linux, the path GNOME mounts the share at
+(`/run/user/1000/gvfs/smb-share:server=…`) has a `:` in it, which a Windows
+path cannot. A symlink without one fixes it:
+
+```sh
+ln -s "/run/user/1000/gvfs/smb-share:server=192.168.1.206,share=sdcard" ~/mister-sd
+```
+
+and then `Z:\home\<you>\mister-sd\games` in Skraper.
+
+Over SSH:
+
+```sh
+/media/fat/tty2oledplus/tty2oledplus_scrape.py --list-systems
+/media/fat/tty2oledplus/tty2oledplus_scrape.py --systems NES,SNES
+/media/fat/tty2oledplus/tty2oledplus_scrape.py --systems all
+```
 
 ## Settings
 
@@ -228,9 +294,12 @@ sent over when it restarts, so nothing needs reflashing.
 | `SHOW_METADATA` | `yes` | Master switch. `no` shows core artwork only. |
 | `core_bootscreen_time` | `3000` | A console core launched with its game already chosen holds its own full-screen artwork this long, in ms, before the game's details replace it. `0` goes straight to the details. A game loaded into a running core is unaffected. |
 | `METADATA_INTERVAL` | `12` | Arcade: seconds per screen — artwork, each card page in turn, then the artwork again. `0` never swaps. |
-| `METADATA_FIELDS` | `System Year Genre Region Format` | Which console fields show, and in what order. Four fit at once; the rest page every 2.5s. Available: System Region Year Company Genre Developer Format. |
+| `METADATA_FIELDS` | `System Year Genre Region Format Players Rating Released Series` | Which console fields show, and in what order. Four fit at once; the rest page every 2.5s. Available: System Region Year Company Genre Developer Format Players Rating Released Series — the last four only for games Scrape metadata imported. |
 | `METADATA_PINNED` | `System Year` | Fields that stay put while the rest page under them. |
 | `COMPACT_YEAR_COMPANY` | `yes` | Fold the publisher into the year: `1989, Acclaim` on one row. |
+| `SHOW_DESCRIPTION` | `yes` | The description page, for games Scrape metadata imported a description for. |
+| `HSCROLL_SPEED` | `25` | How fast a title too long for the screen scrolls sideways, in pixels a second. Bigger is faster. |
+| `VSCROLL_SPEED` | `5` | How fast a description scrolls up, in pixels a second. |
 | `ARCADE_FIELDS` | `Year Manufacturer Region Orientation Core Author Set MAME` | Short arcade fields, paired two to a row. |
 | `ARCADE_FIELDS_WIDE` | `Players Controls Buttons` | Arcade fields whose values need a row of their own. |
 | `ARCADE_PINNED` | `Year Manufacturer` | The grid row repeated above each wide page. |

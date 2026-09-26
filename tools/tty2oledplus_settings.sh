@@ -60,7 +60,7 @@ die()  { printf '\n*** %s\n' "$1" >&2; exit 1; }
 #   NAMES_TXT, TITLE_INDEX, TITLE_INDEX_DIR
 #              where the installer put things, not settings - editing them
 #              points the daemon at files that are not there
-#
+
 # The picture-variant and screensaver options that used to be excluded here
 # are gone from the release entirely (0.4.10b, 0.4.9b).
 CATEGORIES="display console arcade panel transition updates advanced"
@@ -79,7 +79,7 @@ cat_label() {
 
 # The vocabularies. Console fields are what tty2oled-meta.sh can fill in from
 # the filename and the title index; arcade fields are the tags an .mra carries.
-CONSOLE_FIELDS_ALL="System Region Year Company Genre Developer Format"
+CONSOLE_FIELDS_ALL="System Region Year Company Genre Developer Format Players Rating Released Series"
 ARCADE_FIELDS_ALL="Year Manufacturer Region Orientation Core Author Set MAME Genre Platform Version Players Controls Buttons"
 
 # The transition effects, as tty2oled-system.ini lists them. Kept in step with
@@ -101,11 +101,14 @@ METADATA_INTERVAL|int|0 600|Arcade: seconds per screen|Artwork, then each page o
 ROTATE|bool||Upside down|Turn the whole display 180 degrees, for a panel mounted the other way up.
 RANDOMIZE_ALT_BANNERS|bool||Vary the artwork|Where a core has alternative pictures, pick between them at random each time it loads, instead of always showing the same one.
 PRIORITIZE_USER_BANNERS|bool||Prefer your own artwork|Look in pics/user before the artwork pack, so a picture you put there replaces the shipped one. Off searches the pack first.
+HSCROLL_SPEED|int|1 200|Horizontal scroll speed (pixels/s)|How fast a title too long for the screen scrolls sideways. Bigger is faster; 25 is a pixel every 40ms.
+VSCROLL_SPEED|int|1 100|Vertical scroll speed (pixels/s)|How fast a game's description scrolls up. Bigger is faster; 5 is a pixel every 200ms.
 EOS
     ;;
     console) cat <<'EOS'
 METADATA_FIELDS|list|CONSOLE_FIELDS_ALL|Fields to show|Which details appear under a console game's title, in this order. Four fit at once; any more take turns every 2.5 seconds.
 METADATA_PINNED|list|SELECTED_CONSOLE|Fields that stay put|These stay on screen while the rest take turns underneath. They have to be fields you are showing.
+SHOW_DESCRIPTION|bool||Description page|After the fields, a page with the game's description scrolling up under its title. Needs Scrape metadata to have imported one.
 EOS
     ;;
     arcade) cat <<'EOS'
@@ -202,12 +205,15 @@ current_value() {
 # where it is not, and every other line kept: the file is the user's, they may
 # have commented it or put their own notes in it, and an editor that rewrote
 # the whole file would quietly eat all of that.
+#
+# The value goes to awk through ENVIRON, not -v, which would rewrite its
+# backslashes.
 ini_put() {  # ini_put <file> <key> <value>
-  local file="$1" key="$2" value="$3" tmp
+  local file="$1" key="$2" lit="\"$3\"" tmp
   tmp="${file}.t2op.$$"
   if [ -r "${file}" ] && grep -qE "^[[:space:]]*${key}=" "${file}"; then
-    awk -v k="${key}" -v v="${value}" '
-      $0 ~ "^[[:space:]]*" k "=" { if (!done) { print k "=\"" v "\""; done = 1 } ; next }
+    T2OP_LIT="${lit}" awk -v k="${key}" '
+      $0 ~ "^[[:space:]]*" k "=" { if (!done) { print k "=" ENVIRON["T2OP_LIT"]; done = 1 } ; next }
       { print }
     ' "${file}" > "${tmp}" || { rm -f "${tmp}"; return 1; }
   else
@@ -216,7 +222,7 @@ ini_put() {  # ini_put <file> <key> <value>
       printf '\n# Written by tty2oledplus_settings. Remove a line to go back to\n' >> "${tmp}"
       printf '# whatever tty2oled-system.ini says.\n' >> "${tmp}"
     fi
-    printf '%s="%s"\n' "${key}" "${value}" >> "${tmp}"
+    printf '%s=%s\n' "${key}" "${lit}" >> "${tmp}"
   fi
   mv "${tmp}" "${file}" || { rm -f "${tmp}"; return 1; }
 }

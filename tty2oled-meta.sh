@@ -55,6 +55,16 @@
 # existing hand-made index keeps working.
 : "${TITLE_INDEX:=/media/fat/tty2oledplus/titleindex.txt}"
 
+# What tty2oledplus_scrape.py imported from the gamelist.xml files in the
+# games folders: one file per system, <system>.txt, one game a line. Written on the
+# MiSTer, never shipped, and optional - without it nothing changes.
+#
+# "|"-separated like the title index, not tab-separated: a tab is whitespace
+# to bash's read, which folds a run of them into one and would slide every
+# field after an empty one into the wrong place. The importer keeps "|" out
+# of the values.
+: "${SCRAPE_DIR:=/media/fat/tty2oledplus/scraped}"
+
 # ---------------------------------------------------------------------------
 # Outputs. Cleared by meta_reset, populated by build_meta.
 # ---------------------------------------------------------------------------
@@ -62,8 +72,9 @@ META_KIND=""        # arcade | console | computer | unknown
 META_TITLE=""       # primary display line
 META_FIELDS=()      # ordered "Label\tValue" pairs for the console layout
 META_ICON=""        # icon key used to find the 86x64 art
-META_SOURCE=""      # where the title came from: mra | index | filename | core
+META_SOURCE=""      # where the title came from: mra | index | scraped | filename | core
 META_GAME="no"      # yes when a real game is loaded, not just a core
+META_DESC=""        # the game's description, for the description page
 
 # The selection rejected as leftover at the last core change, as
 # "<romref>|<CURRENTPATH mtime>". Polls keep rejecting exactly this one until
@@ -87,6 +98,7 @@ meta_reset() {
   META_FIELDS=()
   META_ICON=""
   META_SOURCE=""
+  META_DESC=""
   META_GAME="no"        # yes once an actual game, not just a core, is identified
 }
 
@@ -632,6 +644,95 @@ lookup_crc() {
 }
 
 # ---------------------------------------------------------------------------
+# lookup_scraped - what the imported gamelist said about this game, if
+# anything.
+#
+# Keyed on the file name without its extension, which is what a gamelist's
+# <path> names and what CURRENTPATH carries - with or without the extension,
+# since MiSTer strips it for single-extension cores, so both are tried. A CRC
+# in the second column is the fallback, for a line that carries one; a
+# gamelist does not, and MiSTer's GAMEID is not always the whole file's CRC
+# anyway (an iNES header is enough to differ), which is why it is not the key.
+#
+# A system's games can be run by a core of another name - the Game Boy core
+# plays .gbc files, the TurboGrafx core reports TGFX16 for CDs too, and older
+# MiSTers call the Mega Drive core Genesis - so the siblings are searched
+# after the core's own file.
+#
+# Only a line whose status is "ok" is a hit.
+#
+# Sets: SCR_TITLE SCR_RELEASED SCR_PLAYERS SCR_RATING SCR_GENRE SCR_DEVELOPER
+#       SCR_PUBLISHER SCR_SERIES SCR_DESC
+# ---------------------------------------------------------------------------
+scr_reset() {
+  SCR_TITLE=""; SCR_RELEASED=""; SCR_PLAYERS=""; SCR_RATING=""; SCR_GENRE=""
+  SCR_DEVELOPER=""; SCR_PUBLISHER=""; SCR_SERIES=""; SCR_DESC=""
+}
+scr_reset
+
+_scrape_systems() {  # the scraped files that may hold this core's games
+  case "${1^^}" in
+    GENESIS|MEGADRIVE)          echo "MegaDrive" ;;
+    GAMEBOY|GB)                 echo "GAMEBOY GBC" ;;
+    GBC|GAMEBOYCOLOR)           echo "GBC GAMEBOY" ;;
+    TGFX16|PCE)                 echo "TGFX16 TGFX16CD" ;;
+    TGFX16CD|TGFX16-CD|PCECD)   echo "TGFX16CD TGFX16" ;;
+    NEOGEO)                     echo "NeoGeo" ;;
+    *)                          echo "${1}" ;;
+  esac
+}
+
+_scrape_file() {  # the file for one system name, matched case-insensitively
+  local want="${1}" f="" base=""
+  [ -r "${SCRAPE_DIR}/${want}.txt" ] && { printf '%s' "${SCRAPE_DIR}/${want}.txt"; return 0; }
+  for f in "${SCRAPE_DIR}"/*.txt; do
+    [ -r "${f}" ] || continue
+    base="${f##*/}"; base="${base%.txt}"
+    [ "${base,,}" = "${want,,}" ] && { printf '%s' "${f}"; return 0; }
+  done
+  return 1
+}
+
+lookup_scraped() {
+  local romref="${1:-}" crc="${2:-}" corename="${3:-}" sys="" file="" hit="" name="" bare=""
+  scr_reset
+  [ -d "${SCRAPE_DIR}" ] || return 1
+  name="${romref##*/}"
+  bare="${name}"
+  # An extension is short and has no spaces; "Super Mario Bros. 3" has none.
+  [[ "${name}" =~ \.[A-Za-z0-9]{1,4}$ ]] && bare="${name%.*}"
+  [ -n "${bare}" ] || return 1
+
+  for sys in $(_scrape_systems "${corename}"); do
+    file="$(_scrape_file "${sys}")" || continue
+    # The last line for a key wins, should a file ever carry two. Matched
+    # exactly - a file name is a plain string, full of regex metacharacters.
+    hit="$(awk -F'|' -v n="${bare,,}" -v f="${name,,}" -v c="${crc,,}" '
+      $3 != "ok" { next }
+      tolower($1) == n || tolower($1) == f { byname = $0; next }
+      c != "" && tolower($2) == c        { bycrc = $0 }
+      END { if (byname != "") print byname; else if (bycrc != "") print bycrc }
+    ' "${file}" 2>/dev/null)"
+    [ -n "${hit}" ] && break
+  done
+  [ -n "${hit}" ] || return 1
+
+  IFS='|' read -r _ _ _ SCR_TITLE SCR_RELEASED SCR_PLAYERS SCR_RATING SCR_GENRE \
+                   SCR_DEVELOPER SCR_PUBLISHER SCR_SERIES SCR_DESC <<<"${hit}"
+  return 0
+}
+
+# "16" out of 20, as the importer stores a rating, reads better out of ten: "8/10",
+# and "7.5/10" for an odd one.
+_scr_rating() {
+  local n="${1}"
+  case "${n}" in ''|*[!0-9]*) return 0 ;; esac
+  [ "${n}" -gt 20 ] && return 0
+  if [ $((n % 2)) -eq 0 ]; then printf '%d/10' $((n / 2))
+  else printf '%d.5/10' $((n / 2)); fi
+}
+
+# ---------------------------------------------------------------------------
 # meta_addfield - append a "Label\tValue" pair, skipping empty values.
 # ---------------------------------------------------------------------------
 # Which console fields to show, in this order. The split layout has three rows
@@ -642,8 +743,9 @@ lookup_crc() {
 # expect. Arcade fields have their own vocabulary and are not filtered by this.
 : "${METADATA_FIELDS:=}"
 
-# The order used when METADATA_FIELDS is not set.
-_FIELD_ORDER_DEFAULT="System Region Year Company Genre Developer Format"
+# The order used when METADATA_FIELDS is not set. The last four come only from
+# an imported gamelist - a game it does not list simply has none of them.
+_FIELD_ORDER_DEFAULT="System Region Year Company Genre Developer Format Players Rating Released Series"
 
 # The arcade card draws from the MRA, which has a vocabulary of its own - an
 # arcade board has players, a joystick and named buttons where a console game
@@ -1063,6 +1165,22 @@ build_meta() {
           [ -n "${IDX_REGION}" ] && ROM_REGION="${IDX_REGION}"
         fi
 
+        # What the imported gamelist said. The index stays first for
+        # everything the two share - it is keyed on the dump itself - and these
+        # fill whatever it left empty, which on the disc systems is the year,
+        # the publisher, the genre and the developer. The rest - players,
+        # rating, release date, series, description - only the gamelist has.
+        lookup_scraped "${romref}" "${GAME_CRC32}" "${corename}"
+        if [ -z "${IDX_TITLE}" ] && [ -n "${SCR_TITLE}" ]; then
+          META_TITLE="${SCR_TITLE}"
+          META_SOURCE="scraped"
+        fi
+        [ -z "${IDX_YEAR}" ]      && IDX_YEAR="${SCR_RELEASED:0:4}"
+        [ -z "${IDX_PUBLISHER}" ] && IDX_PUBLISHER="${SCR_PUBLISHER}"
+        [ -z "${IDX_GENRE}" ]     && IDX_GENRE="${SCR_GENRE}"
+        [ -z "${IDX_DEVELOPER}" ] && IDX_DEVELOPER="${SCR_DEVELOPER}"
+        [ "${SHOW_DESCRIPTION:-yes}" = "yes" ] && META_DESC="${SCR_DESC}"
+
         # "1990, Acclaim" on one row rather than two. Either half on its own
         # still shows under its own label.
         local _year="${IDX_YEAR}" _company="${IDX_PUBLISHER}"
@@ -1080,6 +1198,10 @@ build_meta() {
           [Genre]="${IDX_GENRE}"
           [Developer]="${IDX_DEVELOPER}"
           [Format]="${ROM_EXT^^}"
+          [Players]="${SCR_PLAYERS}"
+          [Rating]="$(_scr_rating "${SCR_RATING}")"
+          [Released]="${SCR_RELEASED}"
+          [Series]="${SCR_SERIES}"
         )
         meta_addfields_ordered
         # CRC32 is deliberately not shown. It is how the title index is keyed,

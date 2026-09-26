@@ -335,13 +335,17 @@ sendmeta() {
   # and a firmware that predates either count simply reads the title from
   # where that count starts.
   wire="CMDMETA,${kindnum},${METADATA_INTERVAL},${META_PINNED_COUNT:-0},${META_COMPACT_COUNT:-0},${payload}"
+  # The description goes out as its own transfer after the line, and the
+  # firmware drops it on every CMDMETA - so it is part of what "unchanged"
+  # means, or a game whose description arrived late would never show it.
+  local sent="${wire}${META_DESC:+|DESC|${META_DESC}}"
 
   # The daemon now also wakes on game-state changes, and MiSTer rewrites those
   # files while the user is merely browsing. Resending an identical line would
   # restart the card's scroll and animation for no reason, so send only what
   # actually changed. "force" is used on a core change, where the firmware has
   # just been reset and must be told again regardless.
-  if [ "${force}" != "force" ] && [ "${wire}" = "${META_WIRE_LAST:-}" ]; then
+  if [ "${force}" != "force" ] && [ "${sent}" = "${META_WIRE_LAST:-}" ]; then
     dbug "Metadata unchanged, not resending"
     return 1
   fi
@@ -349,7 +353,32 @@ sendmeta() {
   dbug "Sending: ${wire}"
   echo "${wire}" >${TTYDEV}
   sleep ${WAITSECS}
-  META_WIRE_LAST="${wire}"
+  senddesc
+  META_WIRE_LAST="${sent}"
+  return 0
+}
+
+# The description page's text, for a console game an imported gamelist
+# described.
+#
+# CMDDESC,<bytes> and then exactly that many bytes, like an icon: at up to a
+# kilobyte it is longer than the rest of the metadata put together, and a
+# line that long could overflow the firmware's 256-byte serial buffer while
+# it is busy animating. Printable ASCII only - the importer already folds
+# accents away, and the firmware counts a byte as a character when it wraps.
+DESC_MAX_BYTES=1024
+senddesc() {
+  local text=""
+  [ "${META_KIND}" = "console" ] || return 1
+  [ -n "${META_DESC:-}" ] || return 1
+  text="$(printf '%s' "${META_DESC}" | LC_ALL=C tr -c ' -~' ' ' | LC_ALL=C tr -s ' ')"
+  text="${text:0:${DESC_MAX_BYTES}}"
+  [ -n "${text// /}" ] || return 1
+  dbug "Sending: CMDDESC,${#text}"
+  echo "CMDDESC,${#text}" >${TTYDEV}
+  sleep ${WAITSECS}
+  printf '%s' "${text}" >${TTYDEV}
+  sleep ${WAITSECS}
   return 0
 }
 
@@ -432,6 +461,13 @@ senddim() {
   cmdwait
 }
 
+# How fast the title marquee and the description move, in pixels a second.
+sendscroll() {
+  dbug "Sending: CMDSCROLL,${HSCROLL_SPEED:-25},${VSCROLL_SPEED:-5}"
+  echo "CMDSCROLL,${HSCROLL_SPEED:-25},${VSCROLL_SPEED:-5}" >${TTYDEV}
+  cmdwait
+}
+
 sendflip() {
   local secs=$(( ${FLIP_MINUTES:-5} * 60 ))
   dbug "Sending: CMDFLIP,${secs}"
@@ -501,6 +537,7 @@ deferred_setup() {
   sendtime													# Set time and date
   senddim													# Set idle dimming
   sendflip													# Set console side swapping
+  sendscroll												# Set marquee and description speeds
 
   # Metadata needs MiSTer to publish its state files. That is off by default,
   # so say so once rather than silently showing core-level info forever.

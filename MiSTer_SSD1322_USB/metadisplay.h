@@ -44,6 +44,8 @@
                 its pages back to back before the artwork returns.
 
   CMDICON         followed by ICON_BYTES raw bytes - 86x64 4bpp console icon
+  CMDDESC,<n>     followed by n raw bytes - the description page's text
+  CMDSCROLL,<h>,<v>  marquee and description speeds, pixels per second
   CMDWRBOOT       followed by 6912 raw bytes - boot image, persisted to flash
   CMDCLRBOOT      forget the stored boot image, revert to the built-in logo
   CMDMETAOFF      leave metadata mode, back to plain picture display
@@ -173,10 +175,37 @@
 #define MKIND_COMPUTER  3
 
 // Scrolling behaviour.
-#define SCROLL_STEP_MS    40    // horizontal marquee tick
+#define SCROLL_STEP_MS    40    // horizontal marquee tick, until CMDSCROLL says
 #define SCROLL_PAUSE_MS   1200  // pause at each end of a marquee run
 #define VSCROLL_MS        2500  // dwell per page when fields overflow
 #define SCROLL_GAP        24    // px of blank between marquee wraps
+
+// ---------------------------------------------------------------------------
+// The description page
+// ---------------------------------------------------------------------------
+// A console game with a description - imported on the MiSTer from the
+// gamelist.xml a scraper left in its games folder - gets one more page after
+// its fields. The header, the title and the icon
+// stay; everything below the title is the description, word-wrapped to the
+// text column in the field font and scrolling upwards a pixel at a time. The
+// pager moves on when the last line has scrolled out of sight, so however long
+// the text is, all of it goes past.
+//
+// It arrives as its own transfer, CMDDESC,<bytes> and then the bytes, because
+// a description is longer than the rest of a CMDMETA line put together and
+// the serial port's buffer is 256 bytes: a length-prefixed payload read with
+// serial_readTicking cannot overflow it, where a 1KB line might.
+#define DESC_MAX          1024  // bytes kept; the daemon cuts to this
+#define DESC_MAX_LINES    160   // one-character words at the narrowest column
+#define DESC_TOP          (CON_FIELD_Y0 - CON_FIELD_ASCENT)  // the field area's top row
+#define DESC_STEP_MS      200   // 5 pixels a second, until CMDSCROLL says
+#define DESC_HOLD_MS      VSCROLL_MS  // read the first lines before they move
+
+// The two scroll speeds, as periods: CMDSCROLL gives them in pixels per
+// second, which is what the ini says, and they are kept as the time a pixel
+// takes because that is what a tick compares against.
+#define HSCROLL_SPEED_MAX 200   // px/s - past this a marquee is a blur
+#define VSCROLL_SPEED_MAX 100
 
 // ---------------------------------------------------------------------------
 // State
@@ -233,6 +262,9 @@ bool      metaNeedsDraw    = false;
 // already on its way in - or already up - so it must not be drawn now, but it
 // does have to be drawn eventually or the panel beside the text stays black.
 bool          metaIconRedraw  = false;
+
+// Also set by a description arriving for a layout already on the panel: its
+// page adds a pip, so the same picture has to be drawn again.
 
 bool          coreBootHolding = false;  // a core picture is owed its moment
 unsigned long coreBootMs      = 0;      // how long to hold it for
@@ -293,6 +325,22 @@ unsigned long scrollHoldUntil = 0;
 long          valueScrollX    = 0;
 unsigned long valueHoldUntil  = 0;
 bool          cardScrollArmed = false;
+
+unsigned long metaHStepMs     = SCROLL_STEP_MS;   // CMDSCROLL: ms per pixel
+unsigned long metaVStepMs     = DESC_STEP_MS;
+
+// The description, and the lines it wraps to. The wrap depends on the column
+// width, which the side swap changes, so it is redone whenever the width it
+// was made for is not the one being drawn.
+char          metaDesc[DESC_MAX + 1] = "";
+int           metaDescLen     = 0;
+uint16_t      descLineStart[DESC_MAX_LINES];
+uint8_t       descLineLen[DESC_MAX_LINES];
+int           descLineCount   = 0;
+int           descWrapW       = -1;     // -1: not wrapped for any width yet
+long          descScrollY     = 0;      // pixels scrolled up
+unsigned long descHoldUntil   = 0;
+unsigned long lastDescTick    = 0;
 int           fieldPage      = 0;
 unsigned long lastPageTick   = 0;
 
@@ -347,6 +395,10 @@ void meta_reset(void) {
   cardScrollArmed = false;
   fieldPage = 0;
   cardPage = 0;
+  metaDesc[0] = 0;
+  metaDescLen = 0;
+  descWrapW = -1;
+  descScrollY = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -463,6 +515,12 @@ bool meta_parse(const char *cmd) {
   valueScrollX    = 0;
   cardScrollArmed = false;
   fieldPage       = 0;
+  // A new game's description follows its CMDMETA, if it has one; the last
+  // game's must not stand in for it meanwhile.
+  metaDesc[0]     = 0;
+  metaDescLen     = 0;
+  descWrapW       = -1;
+  descScrollY     = 0;
   lastPageTick    = millis();
   scrollHoldUntil = millis() + SCROLL_PAUSE_MS;
   return true;
@@ -507,12 +565,27 @@ static int meta_pageSlots(void) {
   return slots < 1 ? 1 : slots;
 }
 
-static int meta_pageCount(void) {
+// The pages the fields take. The description, when there is one, is a page
+// after them - see meta_pageCount.
+static int meta_fieldPageCount(void) {
   int paged = metaFieldCount - meta_pinnedRows();
   if (paged <= 0) return 1;
   int slots = meta_pageSlots();
   return (paged + slots - 1) / slots;
 }
+
+static bool meta_hasDesc(void) { return metaDescLen > 0; }
+
+static int meta_pageCount(void) {
+  return meta_fieldPageCount() + (meta_hasDesc() ? 1 : 0);
+}
+
+// The description page is always the last one, so page 0 is always fields:
+// the first thing drawn for a game is what it was before descriptions.
+static bool meta_isDescPage(int page) {
+  return meta_hasDesc() && page >= meta_fieldPageCount();
+}
+static bool meta_onDescPage(void) { return meta_isDescPage(fieldPage); }
 
 static int meta_textX(void) { return metaFlipped ? (ICON_W + 4) : 2; }
 
@@ -572,6 +645,68 @@ static void meta_drawMarquee(const char *s, int x, int y, int win, long scroll) 
   int off = (int)(scroll % wrapAt);
   meta_drawClipped(s, x, y, win, off);
   if (off > wrapAt - win) meta_drawClipped(s, x, y, win, off - (int)wrapAt);
+}
+
+// ---------------------------------------------------------------------------
+// The description's lines.
+//
+// Greedy word wrap into the text column, in the field font, which must be
+// selected. A word too long for a line on its own is broken where it has to
+// be. The daemon sends printable ASCII only, so a byte is a character.
+// ---------------------------------------------------------------------------
+static int meta_spanWidth(int from, int to) {
+  char buf[96];
+  int n = to - from;
+  if (n <= 0) return 0;
+  if (n >= (int)sizeof(buf)) return 0x7fff;         // wider than any column
+  memcpy(buf, metaDesc + from, (size_t)n);
+  buf[n] = 0;
+  return meta_textWidth(buf);
+}
+
+static void meta_descWrap(int width) {
+  const int len = metaDescLen;
+  int n = 0, i = 0;
+  while (i < len && n < DESC_MAX_LINES) {
+    while (i < len && metaDesc[i] == ' ') i++;       // no line starts with a space
+    if (i >= len) break;
+    int end = i;
+    for (;;) {                                       // whole words while they fit
+      int k = end;
+      while (k < len && metaDesc[k] == ' ') k++;
+      while (k < len && metaDesc[k] != ' ') k++;
+      if (meta_spanWidth(i, k) > width) break;
+      end = k;
+      if (k >= len) break;
+    }
+    if (end == i) {                                  // one word wider than the line
+      end = i + 1;
+      while (end < len && metaDesc[end] != ' ' && meta_spanWidth(i, end + 1) <= width) end++;
+    }
+    int l = end - i;
+    descLineStart[n] = (uint16_t)i;
+    descLineLen[n]   = (uint8_t)(l > 255 ? 255 : l);
+    n++;
+    i = end;
+  }
+  descLineCount = n;
+  descWrapW     = width;
+}
+
+// Wrapped for this width, in the field font - which it leaves selected.
+static void meta_descEnsureWrapped(void) {
+  oled_setfont(CON_FIELD_FONT);
+  if (descWrapW != meta_textW()) meta_descWrap(meta_textW());
+}
+
+// How far the text scrolls before its last line has left the top of the
+// area: the last baseline starts (lines - 1) pitches below the first, and a
+// line is gone once its bottom row - the baseline's own, where the 5x7 font's
+// descenders sit - is above DESC_TOP.
+static long meta_descTravel(void) {
+  meta_descEnsureWrapped();
+  if (descLineCount <= 0) return 0;
+  return (long)(descLineCount - 1) * CON_FIELD_PITCH + CON_FIELD_ASCENT + 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -886,13 +1021,6 @@ static void meta_renderConsole(void) {
   const int tx = meta_textX();
   const int tw = meta_textW();
 
-  // --- Header --------------------------------------------------------------
-  // Fixed caption rather than the game title: the title has moved below the
-  // rule where it gets a larger font and the full width of the column.
-  oled_setfont(CON_HEADER_FONT);
-  u8g2.setForegroundColor(SSD1322_WHITE);
-  u8g2.setBackgroundColor(SSD1322_BLACK);
-
   // How many pages the field list needs, worked out before the header is
   // drawn so the caption can be clipped short of the pips rather than run
   // under them.
@@ -900,6 +1028,34 @@ static void meta_renderConsole(void) {
   const int slots  = meta_pageSlots();
   int pages = meta_pageCount();
   if (fieldPage >= pages) fieldPage = 0;
+  const bool descPage = meta_onDescPage();
+
+  // --- Description ---------------------------------------------------------
+  // First, so that what has scrolled up past the area's top can be blacked
+  // out before the header and title go on: u8g2 has no clipping, and a line
+  // half way out would otherwise be drawn across the title.
+  if (descPage) {
+    meta_descEnsureWrapped();
+    u8g2.setForegroundColor(SSD1322_WHITE);
+    u8g2.setBackgroundColor(SSD1322_BLACK);
+    char line[256];
+    for (int l = 0; l < descLineCount; l++) {
+      int y = CON_FIELD_Y0 + l * CON_FIELD_PITCH - (int)descScrollY;
+      if (y < DESC_TOP) continue;                          // gone past the top
+      if (y - CON_FIELD_ASCENT > (int)DispHeight - 1) break; // not up yet
+      memcpy(line, metaDesc + descLineStart[l], descLineLen[l]);
+      line[descLineLen[l]] = 0;
+      meta_drawClipped(line, tx, y, tw, 0);
+    }
+    oled.fillRect(0, 0, DispWidth, DESC_TOP, SSD1322_BLACK);
+  }
+
+  // --- Header --------------------------------------------------------------
+  // Fixed caption rather than the game title: the title has moved below the
+  // rule where it gets a larger font and the full width of the column.
+  oled_setfont(CON_HEADER_FONT);
+  u8g2.setForegroundColor(SSD1322_WHITE);
+  u8g2.setBackgroundColor(SSD1322_BLACK);
 
   int pipCount = (pages > 1) ? (pages < CON_PIP_MAX ? pages : CON_PIP_MAX) : 0;
   int pipBlock = pipCount ? (pipCount * CON_PIP_STRIDE + 2) : 0;
@@ -927,21 +1083,25 @@ static void meta_renderConsole(void) {
   meta_drawMarquee(metaTitle, titleX, CON_TITLE_Y, titleWin, titleScrollX);
 
   // --- Field list ----------------------------------------------------------
-  oled_setfont(CON_FIELD_FONT);
-  const int valueOff = meta_valueOffset();
-  int y = CON_FIELD_Y0;
+  // Not on the description page, which has the whole area - pinned rows
+  // included - to itself.
+  if (!descPage) {
+    oled_setfont(CON_FIELD_FONT);
+    const int valueOff = meta_valueOffset();
+    int y = CON_FIELD_Y0;
 
-  // Pinned rows first, identical on every page...
-  for (int i = 0; i < pinned; i++) {
-    meta_drawField(i, tx, y, tw, valueOff);
-    y += CON_FIELD_PITCH;
-  }
+    // Pinned rows first, identical on every page...
+    for (int i = 0; i < pinned; i++) {
+      meta_drawField(i, tx, y, tw, valueOff);
+      y += CON_FIELD_PITCH;
+    }
 
-  // ...then this page's share of the rest.
-  int start = pinned + fieldPage * slots;
-  for (int i = start; i < metaFieldCount && i < start + slots; i++) {
-    meta_drawField(i, tx, y, tw, valueOff);
-    y += CON_FIELD_PITCH;
+    // ...then this page's share of the rest.
+    int start = pinned + fieldPage * slots;
+    for (int i = start; i < metaFieldCount && i < start + slots; i++) {
+      meta_drawField(i, tx, y, tw, valueOff);
+      y += CON_FIELD_PITCH;
+    }
   }
 
   u8g2.setForegroundColor(SSD1322_WHITE);
@@ -963,9 +1123,11 @@ static void meta_renderConsole(void) {
 // ---------------------------------------------------------------------------
 
 // Console: the paged field rows, in the text column only - the icon panel
-// beside them belongs to neither page.
-static void meta_consolePagedRect(int *x, int *w, int *y0, int *y1) {
-  const int firstPaged = meta_pinnedRows();          // row index of the first
+// beside them belongs to neither page. A turn to or from the description page
+// is the whole field area, pinned rows too, since that page has none.
+static void meta_consolePagedRect(int *x, int *w, int *y0, int *y1,
+                                  bool whole = false) {
+  const int firstPaged = whole ? 0 : meta_pinnedRows();   // row index of the first
   *x  = meta_textX();
   *w  = meta_textW();
   // The top row of that field: its baseline less the glyph height above it.
@@ -1262,6 +1424,66 @@ bool meta_parseCoreBoot(const char *cmd) {
 }
 
 // ---------------------------------------------------------------------------
+// meta_parseScroll - CMDSCROLL,<horizontal px/s>,<vertical px/s>
+//
+// The marquee's speed, and the description's. Pixels per second on the wire
+// because that is what the ini says - a bigger number is faster, which a
+// period is not - and kept as the period a pixel takes, which is what the
+// ticks compare against. The vertical is optional so a daemon could send the
+// first alone.
+// ---------------------------------------------------------------------------
+bool meta_parseScroll(const char *cmd) {
+  int h = 1000 / SCROLL_STEP_MS, v = 1000 / DESC_STEP_MS;
+  if (sscanf(cmd, "CMDSCROLL,%d,%d", &h, &v) < 1) return false;
+  if (h < 1) h = 1;
+  if (h > HSCROLL_SPEED_MAX) h = HSCROLL_SPEED_MAX;
+  if (v < 1) v = 1;
+  if (v > VSCROLL_SPEED_MAX) v = VSCROLL_SPEED_MAX;
+  metaHStepMs = 1000UL / (unsigned long)h;
+  metaVStepMs = 1000UL / (unsigned long)v;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// meta_parseDescLength - the byte count out of CMDDESC,<bytes>, or -1.
+// meta_setDesc - take the bytes that followed it.
+//
+// The read itself is the sketch's, like the icon's, since it has to keep the
+// transition ticking while the bytes arrive. What to do with them is here,
+// where the tests can reach it.
+// ---------------------------------------------------------------------------
+long meta_parseDescLength(const char *cmd) {
+  long n = -1;
+  if (sscanf(cmd, "CMDDESC,%ld", &n) < 1 || n < 0) return -1;
+  return n;
+}
+
+void meta_setDesc(const char *text, size_t n) {
+  if (n > DESC_MAX) n = DESC_MAX;
+  // Printable ASCII only, whatever arrives: the wrap counts a byte as a
+  // character, and anything else would be drawn as nonsense or not at all.
+  size_t o = 0;
+  for (size_t i = 0; i < n; i++) {
+    char c = text[i];
+    metaDesc[o++] = (c >= 32 && c < 127) ? c : ' ';
+  }
+  metaDesc[o]  = 0;
+  metaDescLen  = (int)o;
+  descWrapW    = -1;
+  descScrollY  = 0;
+
+  // A layout already on the panel has just gained a page, and its pips have
+  // to say so. The same rules as an icon arriving: not over the core's
+  // artwork, not before the layout's own first draw, and not in the middle of
+  // a transition - which is on its way to this very layout and composes it
+  // again at its black step anyway.
+  if (metaDescLen > 0 && metaKind == MKIND_CONSOLE && !coreBootHolding && !metaNeedsDraw) {
+    if (tfState == TF_IDLE && !pf_active()) meta_showConsole();
+    else                                    metaIconRedraw = true;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // meta_tick - non-blocking periodic work, called from the sketch's main loop.
 //
 // Arcade : artwork, then each page of the card in turn, then the artwork
@@ -1282,6 +1504,13 @@ extern int tEffect;
 static int  pfNextPage = 0;
 static void meta_redrawConsolePage(void) {
   fieldPage = pfNextPage;
+  // The description starts from its first line every time round, and holds
+  // there long enough to be read before it moves.
+  if (meta_onDescPage()) {
+    descScrollY   = 0;
+    descHoldUntil = millis() + DESC_HOLD_MS;
+    lastDescTick  = millis();
+  }
   meta_renderConsole();
   metaNeedsDraw = false;            // as meta_showConsole would have done
 }
@@ -1309,7 +1538,7 @@ static bool meta_cardScrollTick(unsigned long now) {
     lastScrollTick  = now;
     return false;
   }
-  if (now - lastScrollTick < SCROLL_STEP_MS) return false;
+  if (now - lastScrollTick < metaHStepMs) return false;
 
   bool moved = false;
 
@@ -1442,12 +1671,28 @@ bool meta_tick(void) {
     }
 
     // Field pager. Same page count the renderer uses. The pinned rows above
-    // it do not change, so the fade is given the paged rows only.
+    // it do not change, so the fade is given the paged rows only - unless the
+    // description page is on either side of the turn, which has none.
     int pages = meta_pageCount();
-    if (pages > 1 && now - lastPageTick >= VSCROLL_MS) {
+    if (meta_onDescPage()) {
+      // The description page does not dwell: it is on screen for exactly as
+      // long as its text takes to scroll through, and then turns.
+      if (now >= descHoldUntil && now - lastDescTick >= metaVStepMs) {
+        lastDescTick = now;
+        if (++descScrollY >= meta_descTravel()) {
+          int x, w, y0, y1;
+          meta_consolePagedRect(&x, &w, &y0, &y1, true);
+          pfNextPage   = (fieldPage + 1) % pages;
+          lastPageTick = now;
+          pf_start(x, w, y0, y1, meta_redrawConsolePage);
+          return true;
+        }
+        dirty = true;
+      }
+    } else if (pages > 1 && now - lastPageTick >= VSCROLL_MS) {
       int x, w, y0, y1;
-      meta_consolePagedRect(&x, &w, &y0, &y1);
       pfNextPage   = (fieldPage + 1) % pages;
+      meta_consolePagedRect(&x, &w, &y0, &y1, meta_isDescPage(pfNextPage));
       lastPageTick = now;
       pf_start(x, w, y0, y1, meta_redrawConsolePage);
       return true;
@@ -1459,7 +1704,7 @@ bool meta_tick(void) {
     oled_setfont(CON_TITLE_FONT);
     const int titleWin = TEXT_W - CON_TITLE_X;
     int tw = meta_textWidth(metaTitle);
-    if (tw > titleWin && now >= scrollHoldUntil && now - lastScrollTick >= SCROLL_STEP_MS) {
+    if (tw > titleWin && now >= scrollHoldUntil && now - lastScrollTick >= metaHStepMs) {
       lastScrollTick = now;
       titleScrollX++;
       int wrapAt = tw + SCROLL_GAP;
