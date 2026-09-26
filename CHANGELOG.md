@@ -4,6 +4,20 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.6.4b — 2026-09-26
+
+- **The arcade info card matches the console layout.** It has the same
+  "Now playing" header, the same rule under it and the same title font. The
+  top-right corner, where a console shows its icon, is a small cell that says
+  "Arcade", and the page dots sit beside the header. The details from the
+  core's `.mra` are below, as before: two to a row, and the long ones on a
+  row each.
+- **Long arcade titles scroll** across the whole width instead of dropping to
+  a smaller font, and so does a detail too long for its own row - usually
+  the button names. Scrolling starts once the card is actually on screen, so
+  a slow fade into it no longer uses up the pause before the title moves.
+  This needs the new firmware, which the update flashes.
+
 ## 0.6.3b — 2026-09-26
 
 - **One entry in the Scripts menu.** tty2oled+ used to put three entries in

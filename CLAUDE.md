@@ -400,19 +400,27 @@ labels were always fine; it was only ever the values.
 
 ## Arcade card, row by row
 
-Same convention as the console layout: each `CARD_GAP_*` is a count of blank
-rows and the next element's top row is one past the last of them.
+The console layout's top half, stretched across the whole panel: the same
+`Now playing` header, rule and title, in the same fonts and on the same rows,
+and the field rows on the console's pitch - `CARD_FIELD_*` are the `CON_FIELD_*`
+constants by another name. There is no icon, so the corner it would take above
+the rule is closed off by a vertical rule at `CARD_CELL_X` (188), running from
+the top edge down to the one under the header, and the cell it makes says
+`Arcade` in the 5x7 font, centred. The pips sit hard against that rule,
+`CARD_PIP_GAP` columns short of it, and the header is clipped short of them.
 
 ```
-row  0..12  title                baseline CARD_TITLE_Y   pips at the right
-row 13..15  blank                         CARD_GAP_TITLE
-row 16      rule                          CARD_RULE_Y
-row 17..19  blank                         CARD_GAP_RULE
-row 20..26  row 0                baseline CARD_FIELD_Y0
-row 31..37  row 1                         + CARD_FIELD_PITCH is 11
-row 42..48  row 2
-row 53..59  row 3
+row  0..11  "Now playing"   pips  |  Arcade   CON_HEADER_Y, CARD_CELL_Y
+row 13      rule, full width, met by the cell's   CON_RULE_Y
+row 16..30  title, full width                     CON_TITLE_Y
+row 32..38  row 0                        baseline CARD_FIELD_Y0
+row 40..46  row 1                                 + CARD_FIELD_PITCH is 8
+row 48..54  row 2
+row 56..62  row 3
 ```
+
+Everything down to the title is on every page, and outside the page fade's
+rectangle.
 
 Four rows, and a row carries either two fields or one - which it is depends on
 the page, not the row:
@@ -447,11 +455,29 @@ The alternation runs **artwork, page 0, page 1, artwork**: `meta_tick` moves to
 the next page while the card is up and only returns to the artwork after the
 last one. Each step is a transition effect like any other.
 
-Arcade names run long - `Teenage Mutant Ninja Turtles (World 4 Players)` is
-wider than the panel at 12px - so a title that will not fit drops to
-`CARD_TITLE_ALT` before it is allowed to be truncated. There is no marquee
-here: the card is snapshotted into `metaBin` and handed to the transition
-effects, so it is a still image by construction.
+**The card marquees, like the console layout.** A title wider than the panel
+scrolls, and so does a wide row's value that will not fit its row - a
+cabinet's button names, typically. It used to be a still image by
+construction, dropping the title a font size rather than scrolling it; the
+title now shares the console's font, and the card is snapshotted into
+`metaBin` only for the transition *to* it. Once it is up, `meta_tick`
+redraws it the way the console's marquee does - compose, push - and goes
+quiet while a page fade or a transition owns the panel.
+
+`meta_drawMarquee` is the one marquee, for both layouts and the values. It
+takes the offset modulo the string's own wrap, which is seamless - at the wrap
+the trailing copy sits exactly where the first began - so every overflowing
+value on a page shares one counter, `valueScrollX`, and `meta_cardValueWrap`
+(the longest wrap on the page) decides when it pauses. A page turn starts it
+over. `meta_drawClipped` trims only on the right, so a value scrolling left
+would run on under its own label: `meta_drawField` blacks out the row left of
+the value column and draws the label again on top.
+
+The pause before either marquee starts is timed from when the card **lands**,
+not from `meta_showCard`: a Fade to it takes longer than `SCROLL_PAUSE_MS`, so
+a hold started at the request had run out before the title was visible.
+`cardScrollArmed` is cleared by `meta_showCard`, and the first tick that finds
+the card up and the panel idle starts both holds.
 
 ## Turning a page fades only the page
 

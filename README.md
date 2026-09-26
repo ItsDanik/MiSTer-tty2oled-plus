@@ -28,7 +28,10 @@ the same lit pixels all day.
 
 **Arcade cores** alternate the artwork with an info card, one step every
 `METADATA_INTERVAL` seconds — artwork, each page of the card in turn, then the
-artwork again.
+artwork again. The card's top half is the console layout's, across the whole
+width: "Now playing", the title — scrolling when it is too long — and a corner
+that says Arcade. Below it, the details from the core's `.mra`, two to a row,
+and the long ones, like the button names, on a row each.
 
 ![NBA Jam's marquee artwork](docs/img/arcade-art.png)
 

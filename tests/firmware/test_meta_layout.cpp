@@ -72,13 +72,12 @@ void oled_drawlogo(uint8_t e) {
     if (e == 0) { oled_renderlogo(); oled.display(); }
 }
 
-// Three widths, so a test can tell the fonts apart by what they measure: the
-// 5x7 field font, the smaller face the arcade title drops to when it will not
-// fit, and everything else.
+// Two widths, so a test can tell the fonts apart by what they measure: the
+// 5x7 field font, and everything else.
 void oled_setfont(int font)   {
     lastFontSet = font;
-    u8g2.charW = (font == 0) ? 5 : (font == CARD_TITLE_ALT ? 6 : 8);
-    u8g2.fontAscent = (font == 0) ? 7 : (font == CARD_TITLE_ALT ? 9 : 11);
+    u8g2.charW = (font == 0) ? 5 : 8;
+    u8g2.fontAscent = (font == 0) ? 7 : 11;
 }
 
 // --- Harness ----------------------------------------------------------------
@@ -268,7 +267,7 @@ int main() {
         okBool("a title that overflows scrolls", titleScrollX > 0, true);
     }
 
-    section("arcade card centres a short title and clips a long one");
+    section("arcade card keeps a short title whole and clips a long one");
     {
         meta_parse("CMDMETA,1,12,Pong|Year=1972");
         u8g2.resetProbe();
@@ -285,27 +284,67 @@ int main() {
         okBool("long title starts at x=0",    u8g2.minLeft >= 0, true);
     }
 
-    section("arcade card layout spacing");
+    section("arcade card: the console's header, rule and title, and the Arcade cell");
     {
-        // Same convention as the console block below: every gap is derived
-        // back out of the constants, so a change to one number cannot quietly
-        // close a gap or overlap two elements.
-        okInt("blank rows between title and rule",
-              CARD_RULE_Y - CARD_TITLE_Y - 1, CARD_GAP_TITLE);
-        okInt("blank rows between rule and first field",
-              (CARD_FIELD_Y0 - CARD_FIELD_ASCENT) - CARD_RULE_Y - 1, CARD_GAP_RULE);
+        // The card is the console layout's top half across the whole width,
+        // so its rows are the console's rather than numbers of its own.
+        okInt ("fields start where the console's do", CARD_FIELD_Y0, CON_FIELD_Y0);
+        okInt ("on the console's pitch",             CARD_FIELD_PITCH, CON_FIELD_PITCH);
+        okInt ("four field rows",                    CARD_FIELD_ROWS, 4);
         okBool("every field row is on the panel",
                CARD_FIELD_Y0 + (CARD_FIELD_ROWS - 1) * CARD_FIELD_PITCH
                    <= (int)DispHeight - 1, true);
-        okBool("field rows do not overlap", CARD_FIELD_PITCH > CARD_FIELD_ASCENT, true);
-        okBool("pips clear the rule",       CARD_PIP_Y + CON_PIP_H <= CARD_RULE_Y, true);
-        okInt ("four field rows",           CARD_FIELD_ROWS, 4);
+        // The cell encloses the rows above the rule: its text's top row is on
+        // the panel and its descender row is above the rule.
+        okBool("the cell's text is below the top edge",
+               CARD_CELL_Y - CARD_CELL_ASCENT >= 0, true);
+        okBool("and above the rule", CARD_CELL_Y < CON_RULE_Y, true);
 
         // Two columns and a gutter, filling the width between the margins.
         okInt("columns fill the width",
               meta_cardColX(1) + CARD_COL_W, (int)DispWidth - CARD_MARGIN_X);
         okInt("gutter between the columns",
               meta_cardColX(1) - (meta_cardColX(0) + CARD_COL_W), CARD_COL_GAP);
+
+        meta_parse("CMDMETA,1,12,2,8,NBA Jam"
+                   "|Year=1993|Manufctr=Midway|Region=World|Orient=Horizontal"
+                   "|Core=tunit|Author=someone|Set=nbajam|MAME=0289|Buttons=Shoot");
+        for (int page = 0; page < 2; page++) {
+            cardPage = page;
+            u8g2.resetProbe();
+            oled.resetProbe();
+            meta_renderCard();
+
+            const FakeU8g2::Draw *head  = u8g2.find(CON_HEADER_TEXT);
+            const FakeU8g2::Draw *title = u8g2.find("NBA Jam");
+            const FakeU8g2::Draw *cell  = u8g2.find(CARD_CELL_TEXT);
+            okBool("the header is drawn", head != nullptr, true);
+            okBool("the title is drawn",  title != nullptr, true);
+            okBool("the cell is drawn",   cell != nullptr, true);
+            if (!head || !title || !cell) break;
+
+            okInt("header at the console's baseline", head->y, CON_HEADER_Y);
+            okInt("at the left margin",               head->x, CARD_MARGIN_X);
+            okInt("title at the console's baseline",  title->y, CON_TITLE_Y);
+            okInt("at the left margin",               title->x, CARD_MARGIN_X);
+            okInt("the cell's text on its baseline",  cell->y, CARD_CELL_Y);
+            // Centred between the cell's rule and the right edge, to a pixel.
+            const int left  = cell->x - (CARD_CELL_X + 1);
+            const int right = (int)DispWidth - (cell->x + (int)cell->text.size() * cell->charW);
+            okBool("centred in the cell", left >= 0 && right >= 0
+                                          && left - right <= 1 && right - left <= 1, true);
+
+            okInt("one rule across the panel",   (int)oled.hlines.size(), 1);
+            okInt("at the console's rule row",   oled.hlines[0].y, CON_RULE_Y);
+            okInt("from the left edge",          oled.hlines[0].x, 0);
+            okInt("to the right edge",           oled.hlines[0].w, DispWidth);
+            okInt("one rule closing the cell",   (int)oled.vlines.size(), 1);
+            okInt("at the cell's column",        oled.vlines[0].x, CARD_CELL_X);
+            okInt("from the top edge",           oled.vlines[0].y, 0);
+            okInt("down to the rule it meets",   oled.vlines[0].y + oled.vlines[0].h,
+                                                 CON_RULE_Y);
+        }
+        cardPage = 0;
     }
 
     section("the arcade card: a grid page, then a wide page under the pinned row");
@@ -330,7 +369,8 @@ int main() {
         u8g2.resetProbe();
         meta_renderCard();
 
-        okInt("eight labels and eight values", u8g2.printCalls, 1 + 16);
+        okInt("header, cell and title, then eight labels and eight values",
+              u8g2.printCalls, 3 + 16);
 
         okInt("Year is row 0, left",      u8g2.xOf("Year"),     meta_cardColX(0));
         okInt("Manufctr is row 0, right", u8g2.xOf("Manufctr"), meta_cardColX(1));
@@ -503,43 +543,153 @@ int main() {
         }
         okInt ("the current page is the lit pip", lit, 1);
         okBool("pips are on the panel",           onPanel, true);
-        okBool("pips are right aligned",
-               right <= (int)DispWidth - CARD_MARGIN_X
-               && right >= (int)DispWidth - CARD_MARGIN_X - CON_PIP_STRIDE, true);
+        okInt ("pips end short of the cell",      right, CARD_CELL_X - CARD_PIP_GAP);
+        okBool("on the header's row",             oled.rects[0].y == CON_PIP_Y, true);
 
-        // The title is drawn first, and must be clipped short of the pips
+        // The header is drawn first, and must be clipped short of the pips
         // rather than run underneath them. Its width is what the stub font
         // measured at the time, which is recorded with the draw.
-        const FakeU8g2::Draw &title = u8g2.draws[0];
-        okBool("title stops short of the pips",
-               title.x + (int)title.text.size() * title.charW <= leftmost, true);
+        const FakeU8g2::Draw &head = u8g2.draws[0];
+        ok    ("the header comes first", head.text, CON_HEADER_TEXT);
+        okBool("header stops short of the pips",
+               head.x + (int)head.text.size() * head.charW <= leftmost, true);
+
+        // The most pages a card can have - every field wide, none pinned -
+        // still leaves the header whole beside their pips.
+        std::string cmd = "CMDMETA,1,12,Game";
+        for (int i = 0; i < META_MAX_FIELDS; i++) {
+            char seg[32];
+            snprintf(seg, sizeof(seg), "|L%02d=V%02d", i, i);
+            cmd += seg;
+        }
+        meta_parse(cmd.c_str());
+        u8g2.resetProbe();
+        oled.resetProbe();
+        meta_renderCard();
+        okInt ("a pip per page", (int)oled.rects.size(), meta_cardPageCount());
+        okBool("of which there are several", meta_cardPageCount() >= 4, true);
+        ok    ("header whole beside them", u8g2.draws[0].text, CON_HEADER_TEXT);
+        okBool("and clear of them",
+               u8g2.draws[0].x + (int)strlen(CON_HEADER_TEXT) * u8g2.draws[0].charW
+                   <= oled.rects[0].x, true);
 
         cardPage = 0;
     }
 
-    section("a long arcade title drops a font size before it is truncated");
+    section("a long arcade title scrolls, once the card is up");
     {
-        // 34 characters is 272px at the 12px face - wider than the 248px the
-        // margins leave - and 204px at the smaller one, so dropping a size
-        // keeps the end of a name the larger face would have cut off.
-        std::string title(34, 'W');
+        // 40 characters is 320px in the title face, wider than the panel.
+        std::string title(40, 'W');
         std::string cmd = "CMDMETA,1,12," + title + "|Year=1989";
+        g_fakeMillis = 800000;
         meta_parse(cmd.c_str());
 
+        uint16_t keepFade = tfFadeMs;
+        tfFadeMs = 0;
+        actPicType = GSC;
+        metaShowingCard = false;
+        okBool("nothing scrolls behind the artwork",
+               !meta_tick() && titleScrollX == 0, true);
+
+        meta_showCard(0);
+        okInt ("the card starts at the beginning", titleScrollX, 0);
+        // The pause is timed from the card landing, not from the request:
+        // however long the transition took, the first tick only starts it.
+        g_fakeMillis += 5000;
+        okBool("the first tick on the card starts the hold", meta_tick(), false);
+        okInt ("so nothing moved",                           titleScrollX, 0);
+        g_fakeMillis += SCROLL_STEP_MS + 1;
+        meta_tick();
+        okInt ("still holding",                              titleScrollX, 0);
+        g_fakeMillis += SCROLL_PAUSE_MS;
+        oled.resetProbe();
+        okBool("then it scrolls", meta_tick(), true);
+        okInt ("a pixel",         titleScrollX, 1);
+        okBool("and is pushed to the panel", oled.displayCalls > 0, true);
+
         u8g2.resetProbe();
         meta_renderCard();
+        const FakeU8g2::Draw *t = u8g2.find("W");
+        okBool("drawn a pixel to the left",
+               t && t->x == CARD_MARGIN_X - 1 && t->y == CON_TITLE_Y, true);
+        okBool("clipped to the panel", u8g2.maxRight <= (int)DispWidth, true);
 
-        const FakeU8g2::Draw &drawn = u8g2.draws[0];
-        okInt ("dropped to the smaller face", drawn.charW, 6);
-        ok    ("whole title survived",        drawn.text, title);
-        okBool("still inside the panel",
-               drawn.x + (int)drawn.text.size() * drawn.charW <= (int)DispWidth, true);
-
-        // A title that fits keeps the larger face.
+        // A title that fits never moves.
         meta_parse("CMDMETA,1,12,Pong|Year=1972");
+        meta_showCard(0);
+        g_fakeMillis += 1;
+        meta_tick();
+        g_fakeMillis += SCROLL_PAUSE_MS + SCROLL_STEP_MS + 1;
+        okBool("a short title stays put", !meta_tick() && titleScrollX == 0, true);
+        tfFadeMs = keepFade;
+    }
+
+    section("a Buttons value too long for its row scrolls under its label");
+    {
+        std::string buttons = "Turbo/Shoot / Block/Pass / Steal / Start / Coin"
+                              " / Service / Test / Tilt";
+        std::string cmd = "CMDMETA,1,12,2,2,Game|Year=1993|Manufctr=Midway"
+                          "|Buttons=" + buttons;
+        meta_parse(cmd.c_str());
+        okInt("a grid page and a wide page", meta_cardPageCount(), 2);
+
+        cardPage = 0;
+        okInt("nothing to scroll on the grid page", meta_cardValueWrap(), 0);
+        cardPage = 1;
+        okBool("the wide page has", meta_cardValueWrap() > 0, true);
+
+        g_fakeMillis = 900000;
+        uint16_t keepFade = tfFadeMs;
+        tfFadeMs = 0;
+        meta_showCard(0);
+        okInt("on the wide page", cardPage, 1);
+        g_fakeMillis += 1;
+        meta_tick();                                  // lands: starts the hold
+        g_fakeMillis += SCROLL_PAUSE_MS + SCROLL_STEP_MS + 1;
+        okBool("it scrolls", meta_tick(), true);
+        okInt ("a pixel",    valueScrollX, 1);
+        okInt ("the title does not", titleScrollX, 0);
+
+        oled_setfont(CARD_FIELD_FONT);
+        const int col = CARD_MARGIN_X + meta_fieldValueX(2, meta_cardValueOffset());
         u8g2.resetProbe();
+        oled.resetProbe();
         meta_renderCard();
-        okInt("short title keeps the big face", u8g2.draws[0].charW, 8);
+        const FakeU8g2::Draw *v = u8g2.find("Turbo");
+        okBool("the value moved left of its column", v && v->x == col - 1, true);
+        const FakeU8g2::Draw *label = nullptr;
+        for (size_t i = 0; i < u8g2.draws.size(); i++)
+            if (u8g2.draws[i].text == "Buttons") label = &u8g2.draws[i];
+        okBool("the label is drawn last, over it",
+               label && label == &u8g2.draws.back(), true);
+        bool masked = false;
+        for (size_t i = 0; i < oled.rects.size(); i++) {
+            const FakeOled::Rect &r = oled.rects[i];
+            if (r.color == SSD1322_BLACK && r.x == 0 && r.x + r.w == col
+                && r.y == label->y - CARD_FIELD_ASCENT) masked = true;
+        }
+        okBool("with the label's side of the row blacked first", masked, true);
+        okBool("nothing past the right edge", u8g2.maxRight <= (int)DispWidth, true);
+
+        // A page turn starts the values over.
+        valueScrollX = 25;
+        pfNextPage = 1;
+        meta_redrawCardPage();
+        okInt("a new page starts from the start", valueScrollX, 0);
+
+        // Round the whole wrap: back to 0, and held there again.
+        const int wrap = meta_cardValueWrap();
+        valueScrollX   = wrap - 1;
+        valueHoldUntil = 0;
+        g_fakeMillis  += SCROLL_STEP_MS + 1;
+        meta_tick();
+        okInt ("wraps to the start",   valueScrollX, 0);
+        g_fakeMillis  += SCROLL_STEP_MS + 1;
+        meta_tick();
+        okInt ("and pauses there",     valueScrollX, 0);
+
+        cardPage = 0;
+        tfFadeMs = keepFade;
     }
 
     section("meta_showCard animates from metaBin then restores srcBin");

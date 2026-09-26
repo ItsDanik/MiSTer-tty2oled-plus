@@ -14,6 +14,7 @@
         void     drawPixel(int16_t x, int16_t y, uint16_t color);
         uint8_t *getBuffer(void);
         virtual void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color);
+        virtual void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color);
         virtual void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
 
     SSD1322_for_Adafruit_GFX.h            - venice1200/SSD1322_for_Adafruit_GFX
@@ -88,16 +89,21 @@ public:
     // lit, not which pixels changed.
     struct Rect { int16_t x, y, w, h; uint16_t color; };
     struct HLine { int16_t x, y, w; uint16_t color; };
+    struct VLine { int16_t x, y, h; uint16_t color; };
     std::vector<Rect>  rects;
     std::vector<HLine> hlines;
+    std::vector<VLine> vlines;
 
     void     drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
         hlines.push_back({x, y, w, color});
     }
+    void     drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) {
+        vlines.push_back({x, y, h, color});
+    }
     void     fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
         rects.push_back({x, y, w, h, color});
     }
-    void     resetProbe(void) { rects.clear(); hlines.clear(); displayCalls = 0; }
+    void     resetProbe(void) { rects.clear(); hlines.clear(); vlines.clear(); displayCalls = 0; }
     int16_t  width(void)  { return W; }
     int16_t  height(void) { return H; }
 
@@ -156,6 +162,13 @@ public:
             if (d.text.rfind(prefix, 0) == 0) return d.x;
         }
         return -1;
+    }
+    // The whole first draw whose text starts with `prefix`, or null.
+    const Draw *find(const char *prefix) const {
+        for (const auto &d : draws) {
+            if (d.text.rfind(prefix, 0) == 0) return &d;
+        }
+        return nullptr;
     }
 
     void resetProbe() {

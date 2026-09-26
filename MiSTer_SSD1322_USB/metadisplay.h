@@ -127,41 +127,39 @@
 // ---------------------------------------------------------------------------
 // Arcade card layout rows
 // ---------------------------------------------------------------------------
-// A title, a rule and four rows. Same convention as the console layout above:
-// each CARD_GAP_* is a count of blank rows and the next element's TOP row is
-// one past the last of them, which is where the +1 in each derived row comes
-// from.
+// The console layout's top half, across the whole width: the same "Now
+// playing" header and rule, the same title under them - marqueeing when it
+// overflows - and the field rows on the console's pitch. There is no icon, so
+// the corner the icon would take above the rule is closed off by a short
+// vertical rule into a cell of its own, which names the kind.
 //
-//   row  0..12  title            baseline CARD_TITLE_Y   pips at the right
-//   row 13..15  blank                     CARD_GAP_TITLE
-//   row 16      rule                      CARD_RULE_Y
-//   row 17..19  blank                     CARD_GAP_RULE
-//   row 20..26  row 0            baseline CARD_FIELD_Y0
-//   row 31..37  row 1                     + CARD_FIELD_PITCH
-//   row 42..48  row 2
-//   row 53..59  row 3
+//   row  0..11  "Now playing"   pips   |  Arcade      CON_HEADER_Y, CARD_CELL_Y
+//   row 13      rule, full width, met by the cell's   CON_RULE_Y
+//   row 16..30  title, full width                     CON_TITLE_Y
+//   row 32..38  row 0                        baseline CARD_FIELD_Y0
+//   row 40..46  row 1                                 + CARD_FIELD_PITCH
+//   row 48..54  row 2
+//   row 56..62  row 3
 //
-// A row carries either two fields side by side or one across the full width;
-// which it is depends on the page, not on the row. See meta_renderCard.
-#define CARD_MARGIN_X     4
-#define CARD_TITLE_FONT   6             // lucasarts scumm subtitle, 12px
-// Arcade names run long - "Teenage Mutant Ninja Turtles (World 4 Players)" is
-// wider than the panel at 12px - so a title that will not fit drops a font
-// size before it is allowed to be truncated.
-#define CARD_TITLE_ALT    1             // luBS08, 8px
-#define CARD_TITLE_Y      12
-#define CARD_GAP_TITLE    3
-#define CARD_RULE_Y       (CARD_TITLE_Y + CARD_GAP_TITLE + 1)          // 16
-#define CARD_GAP_RULE     3
-#define CARD_FIELD_FONT   0             // 5x7
-#define CARD_FIELD_ASCENT 6             // 5x7 glyph height above the baseline
-#define CARD_FIELD_Y0     (CARD_RULE_Y + CARD_GAP_RULE + 1 + CARD_FIELD_ASCENT) // 26
-// 11 rather than the console list's 8: the card carries half as many rows as
-// it has room for glyphs, so the spare height goes into the gaps. Four rows
-// falls out of it rather than being stated.
-#define CARD_FIELD_PITCH  11
-#define CARD_FIELD_ROWS   ((DispHeight - 1 - CARD_FIELD_Y0) / CARD_FIELD_PITCH + 1)
-#define CARD_PIP_Y        4             // pips sit centred on the title row
+// Everything above the fields is on every page. A row carries either two
+// fields side by side or one across the full width; which it is depends on
+// the page, not on the row. See meta_renderCard.
+#define CARD_MARGIN_X     CON_TITLE_X   // the header's and title's left edge
+#define CARD_FULL_W       (DispWidth - 2 * CARD_MARGIN_X)
+// Where the console's icon panel starts, near enough: the cell is the corner
+// the icon would have occupied above the rule.
+#define CARD_CELL_X       188           // the cell's vertical rule
+#define CARD_CELL_TEXT    "Arcade"
+#define CARD_CELL_FONT    0             // 5x7
+#define CARD_CELL_ASCENT  6
+// Centred on the rows above the rule, which is what the cell encloses.
+#define CARD_CELL_Y       ((CON_RULE_Y + CARD_CELL_ASCENT) / 2)       // 9
+#define CARD_PIP_GAP      3             // blank columns between the pips and the cell
+#define CARD_FIELD_FONT   CON_FIELD_FONT
+#define CARD_FIELD_ASCENT CON_FIELD_ASCENT
+#define CARD_FIELD_Y0     CON_FIELD_Y0
+#define CARD_FIELD_PITCH  CON_FIELD_PITCH
+#define CARD_FIELD_ROWS   CON_FIELD_ROWS
 
 // Two columns, with a gutter between them. The right column starts at
 // CARD_MARGIN_X + CARD_COL_W + CARD_COL_GAP and ends on the right margin.
@@ -284,10 +282,17 @@ unsigned long metaLastSwap    = 0;
 // page: artwork, page 1, artwork, page 2, ... all at metaInterval.
 int           cardPage        = 0;
 
-// Console scrolling.
+// Title marquee, shared by the console layout and the card.
 long          titleScrollX   = 0;
 unsigned long lastScrollTick = 0;
 unsigned long scrollHoldUntil = 0;
+// The card's own: the long values on a wide page scroll too, one counter for
+// all of them. Its hold is started when the card actually reaches the panel -
+// the transition to it takes longer than the pause - which is what
+// cardScrollArmed waits for.
+long          valueScrollX    = 0;
+unsigned long valueHoldUntil  = 0;
+bool          cardScrollArmed = false;
 int           fieldPage      = 0;
 unsigned long lastPageTick   = 0;
 
@@ -338,6 +343,8 @@ void meta_reset(void) {
   coreBootSince = 0;
   metaShowingCard = false;
   titleScrollX = 0;
+  valueScrollX = 0;
+  cardScrollArmed = false;
   fieldPage = 0;
   cardPage = 0;
 }
@@ -453,6 +460,8 @@ bool meta_parse(const char *cmd) {
   metaLastFlip    = millis();
   metaLastSwap    = millis();
   titleScrollX    = 0;
+  valueScrollX    = 0;
+  cardScrollArmed = false;
   fieldPage       = 0;
   lastPageTick    = millis();
   scrollHoldUntil = millis() + SCROLL_PAUSE_MS;
@@ -547,6 +556,25 @@ static void meta_drawClipped(const char *s, int x, int y, int maxw, int offset) 
 }
 
 // ---------------------------------------------------------------------------
+// meta_drawMarquee - text in a window, scrolled by `scroll` pixels when it is
+// wider than the window, with a second copy trailing SCROLL_GAP behind the
+// first so the wrap reads continuously.
+//
+// The offset is taken modulo the text's own wrap, which is seamless: at the
+// wrap the trailing copy sits exactly where the first one started. So several
+// strings of different lengths can share one counter, which is what the
+// card's wide values do.
+// ---------------------------------------------------------------------------
+static void meta_drawMarquee(const char *s, int x, int y, int win, long scroll) {
+  int w = meta_textWidth(s);
+  if (w <= win || scroll <= 0) { meta_drawClipped(s, x, y, win, 0); return; }
+  long wrapAt = w + SCROLL_GAP;
+  int off = (int)(scroll % wrapAt);
+  meta_drawClipped(s, x, y, win, off);
+  if (off > wrapAt - win) meta_drawClipped(s, x, y, win, off - (int)wrapAt);
+}
+
+// ---------------------------------------------------------------------------
 // meta_valueOffsetFor - where the value column starts, relative to the text
 // column's left edge, for a column colW pixels wide.
 //
@@ -576,23 +604,44 @@ static int meta_valueOffsetFor(int colW) {
 static int meta_valueOffset(void) { return meta_valueOffsetFor(meta_textW()); }
 
 // ---------------------------------------------------------------------------
-// meta_drawField - one "Label  value" row, label dimmed, value clipped.
+// meta_fieldValueX - where field i's value starts, relative to its row's x:
+// the shared column, unless the label is wide enough to reach past it - then
+// the value follows its own label rather than being drawn over it. Measured
+// in the field font, which must be selected.
 // ---------------------------------------------------------------------------
-static void meta_drawField(int i, int x, int y, int w, int valueOff) {
-  char line[META_MAX_LABEL + META_MAX_VALUE + 4];
+static int meta_fieldValueX(int i, int valueOff) {
+  int lw = meta_textWidth(metaFields[i].label) + 5;
+  return (valueOff > lw) ? valueOff : lw;
+}
+
+// ---------------------------------------------------------------------------
+// meta_drawField - one "Label  value" row, label dimmed, value clipped - or,
+// given a scroll, marqueed when it overflows.
+// ---------------------------------------------------------------------------
+static void meta_drawField(int i, int x, int y, int w, int valueOff,
+                           long scroll = 0) {
+  const int vx = meta_fieldValueX(i, valueOff);
 
   u8g2.setForegroundColor(8);
-  snprintf(line, sizeof(line), "%s", metaFields[i].label);
   u8g2.setCursor(x, y);
-  u8g2.print(line);
-
-  // The shared column, unless this label is wide enough to reach past it -
-  // then the value follows its own label rather than being drawn over it.
-  int lw = meta_textWidth(line) + 5;
-  int vx = (valueOff > lw) ? valueOff : lw;
+  u8g2.print(metaFields[i].label);
 
   u8g2.setForegroundColor(SSD1322_WHITE);
-  meta_drawClipped(metaFields[i].value, x + vx, y, w - vx, 0);
+  if (scroll > 0 && meta_textWidth(metaFields[i].value) > w - vx) {
+    meta_drawMarquee(metaFields[i].value, x + vx, y, w - vx, scroll);
+    // meta_drawClipped trims only on the right, so a value scrolling left
+    // runs on under its own label. Black out everything left of the value
+    // column on this row and put the label back on top: the text then leaves
+    // the column a pixel at a time rather than a character at a time.
+    oled.fillRect(0, y - CON_FIELD_ASCENT, x + vx, CON_FIELD_ASCENT + 1,
+                  SSD1322_BLACK);
+    u8g2.setForegroundColor(8);
+    u8g2.setCursor(x, y);
+    u8g2.print(metaFields[i].label);
+    u8g2.setForegroundColor(SSD1322_WHITE);
+  } else {
+    meta_drawClipped(metaFields[i].value, x + vx, y, w - vx, 0);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -668,13 +717,50 @@ static int meta_cardPageCount(void) {
   return pages < 1 ? 1 : pages;
 }
 
+// The first wide field on the current page, or -1 on a grid page.
+static int meta_cardWideFirst(void) {
+  const int gridPages = meta_cardGridPages();
+  if (cardPage < gridPages) return -1;
+  return meta_cardGridCount() + (cardPage - gridPages) * meta_cardWideSlots();
+}
+
+// ---------------------------------------------------------------------------
+// The card's shared value column, measured against the narrow column, so one
+// offset serves the paired rows and the full-width ones alike and every value
+// on the card starts at the same x. Wants the field font selected.
+// ---------------------------------------------------------------------------
+static int meta_cardValueOffset(void) { return meta_valueOffsetFor(CARD_COL_W); }
+
+// ---------------------------------------------------------------------------
+// meta_cardValueWrap - how far the value marquee runs on this page before it
+// starts over: the wrap of the longest wide value that overflows its row, or
+// 0 when none does and there is nothing to scroll. Measured exactly as
+// meta_renderCard draws, so the two agree on what overflows.
+// ---------------------------------------------------------------------------
+static int meta_cardValueWrap(void) {
+  const int first = meta_cardWideFirst();
+  if (first < 0) return 0;
+  oled_setfont(CARD_FIELD_FONT);
+  const int valueOff = meta_cardValueOffset();
+  int wrap = 0;
+  for (int i = first; i < metaFieldCount && i < first + meta_cardWideSlots(); i++) {
+    int win = CARD_FULL_W - meta_fieldValueX(i, valueOff);
+    int w   = meta_textWidth(metaFields[i].value);
+    if (w > win && w + SCROLL_GAP > wrap) wrap = w + SCROLL_GAP;
+  }
+  return wrap;
+}
+
 // ---------------------------------------------------------------------------
 // meta_renderCard - compose one page of the arcade metadata card.
 //
-// Layout (256x64), row by row in the CARD_* constants above: the title with
-// page pips at the right, a hairline rule, then CARD_FIELD_ROWS rows of the
-// page described above. Labels are dimmed and values share a column, which is
-// measured across every field so the columns do not move when the page turns.
+// Layout (256x64), row by row in the CARD_* constants above: the console's
+// "Now playing" header with the page pips after it and the "Arcade" cell in
+// the corner, the rule, the title across the whole width, then
+// CARD_FIELD_ROWS rows of the page described above. Everything down to the
+// title is the same on every page. Labels are dimmed and values share a
+// column, which is measured across every field so the columns do not move
+// when the page turns.
 // ---------------------------------------------------------------------------
 static void meta_renderCard(void) {
   oled.clearDisplay();
@@ -682,43 +768,48 @@ static void meta_renderCard(void) {
   const int pages = meta_cardPageCount();
   if (cardPage >= pages) cardPage = 0;
 
-  // Worked out before the title is drawn so the title is centred in - and
-  // clipped to - what the pips leave, rather than running under them.
+  // --- Header --------------------------------------------------------------
+  // Worked out before the caption is drawn so it can be clipped short of the
+  // pips, which sit hard against the cell's rule.
   const int pipCount = (pages > 1) ? (pages < CON_PIP_MAX ? pages : CON_PIP_MAX) : 0;
-  const int pipBlock = pipCount ? (pipCount * CON_PIP_STRIDE + 4) : 0;
-  const int titleWin = DispWidth - 2 * CARD_MARGIN_X - pipBlock;
+  const int pipRight = CARD_CELL_X - CARD_PIP_GAP;     // one past the last pip
+  const int pipLeft  = pipRight - pipCount * CON_PIP_STRIDE + (CON_PIP_STRIDE - CON_PIP_W);
+  const int headWin  = (pipCount ? pipLeft - 2 : CARD_CELL_X - CARD_PIP_GAP)
+                       - CARD_MARGIN_X;
 
-  // --- Title ---------------------------------------------------------------
   u8g2.setForegroundColor(SSD1322_WHITE);
   u8g2.setBackgroundColor(SSD1322_BLACK);
+  oled_setfont(CON_HEADER_FONT);
+  meta_drawClipped(CON_HEADER_TEXT, CARD_MARGIN_X, CON_HEADER_Y, headWin, 0);
 
-  oled_setfont(CARD_TITLE_FONT);
-  int tw = meta_textWidth(metaTitle);
-  if (tw > titleWin) {                 // a size down beats losing the end of it
-    oled_setfont(CARD_TITLE_ALT);
-    tw = meta_textWidth(metaTitle);
-  }
-  int tx = CARD_MARGIN_X + ((tw < titleWin) ? (titleWin - tw) / 2 : 0);
-  meta_drawClipped(metaTitle, tx, CARD_TITLE_Y,
-                   CARD_MARGIN_X + titleWin - tx, 0);
-
-  // Page indicator, hard against the right edge on the title row.
   for (int p = 0; p < pipCount; p++) {
-    oled.fillRect(DispWidth - CARD_MARGIN_X - pipCount * CON_PIP_STRIDE
-                    + p * CON_PIP_STRIDE,
-                  CARD_PIP_Y, CON_PIP_W, CON_PIP_H,
+    oled.fillRect(pipLeft + p * CON_PIP_STRIDE, CON_PIP_Y, CON_PIP_W, CON_PIP_H,
                   (p == cardPage) ? SSD1322_WHITE : 4);
   }
 
-  // Separator. Drawn mid-grey so it reads as a rule rather than a bright line.
-  oled.drawFastHLine(0, CARD_RULE_Y, DispWidth, 6);
+  // The rule under the header, and the cell's, mid-grey so they read as
+  // rules rather than bright lines. The cell's runs from the top edge down
+  // to the one under the header and meets it.
+  oled.drawFastHLine(0, CON_RULE_Y, DispWidth, 6);
+  oled.drawFastVLine(CARD_CELL_X, 0, CON_RULE_Y, 6);
+
+  // The kind, centred in the cell.
+  oled_setfont(CARD_CELL_FONT);
+  {
+    const int cellL = CARD_CELL_X + 1;
+    const int cellW = DispWidth - cellL;
+    int w = meta_textWidth(CARD_CELL_TEXT);
+    int x = cellL + ((w < cellW) ? (cellW - w) / 2 : 0);
+    meta_drawClipped(CARD_CELL_TEXT, x, CARD_CELL_Y, DispWidth - x, 0);
+  }
+
+  // --- Title, with marquee when it overflows -------------------------------
+  oled_setfont(CON_TITLE_FONT);
+  meta_drawMarquee(metaTitle, CARD_MARGIN_X, CON_TITLE_Y, CARD_FULL_W, titleScrollX);
 
   // --- This page's rows ----------------------------------------------------
   oled_setfont(CARD_FIELD_FONT);
-  // Measured against the narrow column, so one shared offset serves the
-  // paired rows and the full-width ones alike and every value on the card
-  // starts at the same x.
-  const int valueOff = meta_valueOffsetFor(CARD_COL_W);
+  const int valueOff  = meta_cardValueOffset();
   const int gridPages = meta_cardGridPages();
   const int grid      = meta_cardGridCount();
 
@@ -747,11 +838,12 @@ static void meta_renderCard(void) {
       y += CARD_FIELD_PITCH;
     }
 
+    // A value too long even for a whole row - a cabinet's button names -
+    // scrolls rather than losing its end.
     const int slots = meta_cardWideSlots();
-    const int first = grid + (cardPage - gridPages) * slots;
-    const int fullW = DispWidth - 2 * CARD_MARGIN_X;
+    const int first = meta_cardWideFirst();
     for (int i = first; i < metaFieldCount && i < first + slots; i++) {
-      meta_drawField(i, CARD_MARGIN_X, y, fullW, valueOff);
+      meta_drawField(i, CARD_MARGIN_X, y, CARD_FULL_W, valueOff, valueScrollX);
       y += CARD_FIELD_PITCH;
     }
   }
@@ -831,19 +923,8 @@ static void meta_renderConsole(void) {
 
   u8g2.setForegroundColor(SSD1322_WHITE);
 
-  int titw = meta_textWidth(metaTitle);
-  if (titw <= titleWin) {
-    titleScrollX = 0;
-    meta_drawClipped(metaTitle, titleX, CON_TITLE_Y, titleWin, 0);
-  } else {
-    meta_drawClipped(metaTitle, titleX, CON_TITLE_Y, titleWin, (int)titleScrollX);
-    // Second copy trailing the first so the wrap reads continuously.
-    int wrapAt = titw + SCROLL_GAP;
-    if (titleScrollX > wrapAt - titleWin) {
-      meta_drawClipped(metaTitle, titleX, CON_TITLE_Y, titleWin,
-                       (int)titleScrollX - wrapAt);
-    }
-  }
+  if (meta_textWidth(metaTitle) <= titleWin) titleScrollX = 0;
+  meta_drawMarquee(metaTitle, titleX, CON_TITLE_Y, titleWin, titleScrollX);
 
   // --- Field list ----------------------------------------------------------
   oled_setfont(CON_FIELD_FONT);
@@ -1003,6 +1084,11 @@ void meta_showCard(int effect) {
   // A Fade darkens the picture on the panel step by step, so it has to take
   // that picture before the card is rendered over it in the framebuffer.
   if (effect_is_fade(effect)) transition_prepare();
+  // Each time round the card starts with its marquees at the beginning, and
+  // holds them there once it is actually up - see meta_cardScrollTick.
+  titleScrollX    = 0;
+  valueScrollX    = 0;
+  cardScrollArmed = false;
   meta_renderCard();
   meta_snapshot();
 
@@ -1199,7 +1285,56 @@ static void meta_redrawConsolePage(void) {
   meta_renderConsole();
   metaNeedsDraw = false;            // as meta_showConsole would have done
 }
-static void meta_redrawCardPage(void)    { cardPage  = pfNextPage; meta_renderCard(); }
+static void meta_redrawCardPage(void) {
+  cardPage       = pfNextPage;
+  valueScrollX   = 0;               // a new page's values start from their start
+  valueHoldUntil = millis() + SCROLL_PAUSE_MS;
+  meta_renderCard();
+}
+
+// ---------------------------------------------------------------------------
+// meta_cardScrollTick - move the card's marquees on: the title, and the long
+// values on a wide page. Returns true when either moved and the card needs
+// redrawing. Only called while the card is up and nothing is animating it.
+//
+// The first call after the card lands starts both holds, rather than
+// meta_showCard: a Fade to the card takes longer than the pause, so a hold
+// started when it was asked for has run out before anyone can see the title.
+// ---------------------------------------------------------------------------
+static bool meta_cardScrollTick(unsigned long now) {
+  if (!cardScrollArmed) {
+    cardScrollArmed = true;
+    scrollHoldUntil = now + SCROLL_PAUSE_MS;
+    valueHoldUntil  = now + SCROLL_PAUSE_MS;
+    lastScrollTick  = now;
+    return false;
+  }
+  if (now - lastScrollTick < SCROLL_STEP_MS) return false;
+
+  bool moved = false;
+
+  oled_setfont(CON_TITLE_FONT);
+  const int tw = meta_textWidth(metaTitle);
+  if (tw > CARD_FULL_W && now >= scrollHoldUntil) {
+    if (++titleScrollX >= tw + SCROLL_GAP) {
+      titleScrollX    = 0;
+      scrollHoldUntil = now + SCROLL_PAUSE_MS;   // pause before starting over
+    }
+    moved = true;
+  }
+
+  const int wrap = meta_cardValueWrap();
+  if (wrap > 0 && now >= valueHoldUntil) {
+    if (++valueScrollX >= wrap) {
+      valueScrollX   = 0;
+      valueHoldUntil = now + SCROLL_PAUSE_MS;
+    }
+    moved = true;
+  }
+
+  if (moved) lastScrollTick = now;
+  return moved;
+}
 
 bool meta_tick(void) {
   unsigned long now = millis();
@@ -1261,6 +1396,13 @@ bool meta_tick(void) {
         cardPage = 0;                   // last page -> back to the artwork
         meta_showPicture(tEffect);
       }
+      return true;
+    }
+    // The card's marquees, while it is the picture on the panel. The same
+    // compose-and-push the console's marquee does.
+    if (metaShowingCard && meta_cardScrollTick(now)) {
+      meta_renderCard();
+      oled.display();
       return true;
     }
     return false;

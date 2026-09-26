@@ -241,7 +241,7 @@ static void scene_boot(const char *name, const char *gsc, int head) {
 // CMDBUSY with a label: the message takes the panel, the comet runs in the band.
 static void scene_busy(const char *name, const char *label, int head) {
   oled.clearDisplay();
-  busy_showLabel(label);
+  busy_showLabel(label, BUSY_NO_EFFECT);
   boot_barDraw(head, 0);
   save(name);
 }
