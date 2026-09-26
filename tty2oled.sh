@@ -463,8 +463,8 @@ senddim() {
 
 # How fast the title marquee and the description move, in pixels a second.
 sendscroll() {
-  dbug "Sending: CMDSCROLL,${HSCROLL_SPEED:-25},${VSCROLL_SPEED:-5}"
-  echo "CMDSCROLL,${HSCROLL_SPEED:-25},${VSCROLL_SPEED:-5}" >${TTYDEV}
+  dbug "Sending: CMDSCROLL,${HSCROLL_SPEED:-25},${VSCROLL_SPEED:-6}"
+  echo "CMDSCROLL,${HSCROLL_SPEED:-25},${VSCROLL_SPEED:-6}" >${TTYDEV}
   cmdwait
 }
 

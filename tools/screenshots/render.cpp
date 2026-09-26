@@ -277,13 +277,13 @@ int main(int argc, char **argv) {
   // Console split layout. Four field rows, the first two pinned; the icon is
   // the one the daemon would send for this core.
   scene_console("console-nes",
-                "CMDMETA,2,0,2,The Legend of Zelda"
+                "CMDMETA,2,0,1,The Legend of Zelda"
                 "|System=Nintendo NES|Year=1987|Company=Nintendo|Region=USA",
                 "pics/icon/NES.gsc");
 
   // The same layout on the other side - what FLIP_MINUTES swaps to.
   scene_console("console-flipped",
-                "CMDMETA,2,0,2,Sonic The Hedgehog"
+                "CMDMETA,2,0,1,Sonic The Hedgehog"
                 "|System=Mega Drive|Year=1992|Company=Sega|Genre=Action",
                 "pics/icon/MegaDrive.gsc", true);
 
@@ -291,13 +291,13 @@ int main(int argc, char **argv) {
   // and the pips by the header count the pages. Caught mid-marquee, since the
   // title is wider than the column.
   scene_console("console-paging",
-                "CMDMETA,2,0,2,Castlevania Aria of Sorrow"
+                "CMDMETA,2,0,1,Castlevania Aria of Sorrow"
                 "|System=Game Boy Advance|Year=2003|Company=Konami|Region=USA|Format=gba",
                 "pics/icon/GBA.gsc");
 
   // The description page, three pixels into its scroll.
   scene_description("console-description",
-                    "CMDMETA,2,0,2,Sonic The Hedgehog"
+                    "CMDMETA,2,0,1,Sonic The Hedgehog"
                     "|System=Mega Drive|Year=1991|Players=1|Rating=8/10",
                     "pics/icon/MegaDrive.gsc",
                     "Sonic the Hedgehog is a platform game in which the player "

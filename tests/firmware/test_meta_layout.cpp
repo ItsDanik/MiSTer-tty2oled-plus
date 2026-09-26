@@ -212,7 +212,7 @@ int main() {
 
         // ...and exactly once. A short title has nothing to animate, so the
         // ticks after it must go back to doing nothing.
-        g_fakeMillis += SCROLL_PAUSE_MS + VSCROLL_MS + 1;
+        g_fakeMillis += SCROLL_PAUSE_MS + meta_pageDwellMs() + 1;
         okBool("the next tick is idle", meta_tick(), false);
     }
 
@@ -1001,7 +1001,7 @@ int main() {
     {
         // Two pinned fields and four paged ones: the header, rule, title and
         // the two pinned rows are identical on both pages.
-        meta_parse("CMDMETA,2,0,2,Game|System=NES|Year=1987|Genre=Action|Region=USA|Company=N|Format=nes");
+        meta_parse("CMDMETA,2,12,2,Game|System=NES|Year=1987|Genre=Action|Region=USA|Company=N|Format=nes");
         metaFlipped = false;
         meta_tick();                            // first draw
         settlePageFade();
@@ -1017,7 +1017,7 @@ int main() {
         okBool("so the icon panel is outside it", x + w <= meta_iconX(), true);
 
         lastPageTick = g_fakeMillis;
-        g_fakeMillis += VSCROLL_MS + 1;
+        g_fakeMillis += meta_pageDwellMs() + 1;
         okBool("the pager starts a fade", meta_tick() && pf_active(), true);
         okInt ("with the page it is turning to held back", fieldPage, 0);
         okBool("and the marquee held while it runs", pf_active(), true);
@@ -1027,7 +1027,7 @@ int main() {
         // Something else taking the panel must not leave it half dark, nor
         // swallow the page it was turning to.
         lastPageTick = g_fakeMillis;
-        g_fakeMillis += VSCROLL_MS + 1;
+        g_fakeMillis += meta_pageDwellMs() + 1;
         meta_tick();
         g_fakeMillis += PF_FADE_MAX_MS / 2; meta_tick();
         okBool("a fade is under way", pf_active(), true);
@@ -1039,7 +1039,7 @@ int main() {
         uint16_t keepFade = tfFadeMs;
         tfFadeMs = 0;
         lastPageTick = g_fakeMillis;
-        g_fakeMillis += VSCROLL_MS + 1;
+        g_fakeMillis += meta_pageDwellMs() + 1;
         meta_tick();
         okBool("with fading off the page just turns", pf_active(), false);
         okInt ("straight away", fieldPage, 1);
@@ -1127,20 +1127,60 @@ int main() {
         pf_cancel();
     }
 
+    section("console pages turn every METADATA_INTERVAL, as the arcade card's do");
+    {
+        uint16_t keepFade = tfFadeMs;
+        unsigned long keepFlip = metaFlipMs;
+        tfFadeMs   = 0;                           // page turns land at once
+        metaFlipMs = 0;                           // and no side swap in ten minutes
+        meta_parse("CMDMETA,2,12,1,Game|System=NES|A=1|B=2|C=3|D=4|E=5");
+        meta_tick();                              // absorb the first draw
+        okInt ("12 seconds a page", (long)meta_pageDwellMs(), 12000);
+        fieldPage    = 0;
+        lastPageTick = g_fakeMillis;
+        g_fakeMillis += 2600;                     // the old fixed dwell, and then some
+        meta_tick();
+        okInt ("not after the old 2.5s", fieldPage, 0);
+        g_fakeMillis += 12000 - 2600 - 1;
+        meta_tick();
+        okInt ("not a millisecond early", fieldPage, 0);
+        g_fakeMillis += 1;
+        meta_tick();
+        okInt ("but at 12s", fieldPage, 1);
+
+        meta_parse("CMDMETA,2,5,1,Game|System=NES|A=1|B=2|C=3|D=4|E=5");
+        meta_tick();
+        fieldPage    = 0;
+        lastPageTick = g_fakeMillis;
+        g_fakeMillis += 5000;
+        meta_tick();
+        okInt ("another interval, another dwell", fieldPage, 1);
+
+        meta_parse("CMDMETA,2,0,1,Game|System=NES|A=1|B=2|C=3|D=4|E=5");
+        meta_tick();
+        fieldPage    = 0;
+        lastPageTick = g_fakeMillis;
+        g_fakeMillis += 600000;
+        meta_tick();
+        okInt ("0 never turns a page", fieldPage, 0);
+        tfFadeMs   = keepFade;
+        metaFlipMs = keepFlip;
+    }
+
     section("field pager cycles when fields overflow the rows");    section("field pager cycles when fields overflow the rows");
     {
-        meta_parse("CMDMETA,2,0,Game|A=1|B=2|C=3|D=4|E=5|F=6");
+        meta_parse("CMDMETA,2,12,Game|A=1|B=2|C=3|D=4|E=5|F=6");
         meta_tick();                             // absorb the first draw
         fieldPage = 0;
         lastPageTick = g_fakeMillis;
 
-        g_fakeMillis += VSCROLL_MS + 1;
+        g_fakeMillis += meta_pageDwellMs() + 1;
         meta_tick();
         settlePageFade();
         // 6 fields at 5 rows per page = 2 pages, so it must have moved.
         okInt("advanced to page 1", fieldPage, 1);
 
-        g_fakeMillis += VSCROLL_MS + 1;
+        g_fakeMillis += meta_pageDwellMs() + 1;
         meta_tick();
         settlePageFade();
         okInt("wrapped back to page 0", fieldPage, 0);
@@ -2790,9 +2830,10 @@ int main() {
         g_fakeMillis   += 41;
         meta_tick();
         okInt("one when they are",                   titleScrollX, 1);
-        meta_parseScroll("CMDSCROLL,25,5");
-        okInt("and the defaults are the old constants", (long)metaHStepMs, SCROLL_STEP_MS);
-        okInt("and 1px every 200ms",                    (long)metaVStepMs, DESC_STEP_MS);
+        meta_parseScroll("CMDSCROLL,25,6");
+        okInt("the default marquee is the old 40ms",    (long)metaHStepMs, SCROLL_STEP_MS);
+        okInt("and the description 6 pixels a second",  (long)metaVStepMs, DESC_STEP_MS);
+        okInt("which is a pixel every 166ms",           (long)DESC_STEP_MS, 166);
     }
 
     section("CMDDESC: the length, and what is kept of the bytes");
@@ -2925,8 +2966,8 @@ int main() {
     {
         uint16_t keepFade = tfFadeMs;
         tfFadeMs = 0;                             // page turns land at once
-        meta_parseScroll("CMDSCROLL,25,5");
-        meta_parse("CMDMETA,2,0,2,Sonic|System=Mega Drive|Year=1991");
+        meta_parseScroll("CMDSCROLL,25,6");
+        meta_parse("CMDMETA,2,12,2,Sonic|System=Mega Drive|Year=1991");
         metaNeedsDraw = false;
         std::string text = "One two three four five six seven eight nine ten eleven twelve "
                            "thirteen fourteen fifteen sixteen seventeen eighteen nineteen.";
@@ -2936,7 +2977,7 @@ int main() {
         g_fakeMillis += 100000;
         lastPageTick  = g_fakeMillis;
         fieldPage     = 0;
-        g_fakeMillis += VSCROLL_MS + 1;
+        g_fakeMillis += meta_pageDwellMs() + 1;
         meta_tick();
         okInt ("the fields dwell, then the description", fieldPage, 1);
         okInt ("from its first line",                   descScrollY, 0);

@@ -172,7 +172,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1983 checks, no hardware needed. |
+| `tests/` | 1993 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation **and MiSTer**: three backends, the third being a PNG reader built on the standard library, which is what the MiSTer has. |
@@ -210,7 +210,7 @@ composes it.
 | kind | layout |
 |---|---|
 | `arcade` | full-screen artwork, then each page of the info card in turn, then the artwork again - one step every `METADATA_INTERVAL`s |
-| `console` | split: "Now playing", a rule, the title, paged fields on the left; an 86x64 icon on the right |
+| `console` | split: "Now playing", a rule, the title, paged fields on the left - a page every `METADATA_INTERVAL`s, then the description page if there is one; an 86x64 icon on the right |
 | `computer` | untouched - full-screen artwork, as upstream |
 | `unknown` | as `computer`; metadata off |
 
@@ -301,7 +301,11 @@ at full width ticked from `loop()`; it waits out a Fade and stops dead on any
 command `boot_quietCommand` does not list.
 
 The console title marquees when it overflows the column, and the field list
-pages every 2.5s when there are more than three. Both only redraw when
+pages every `METADATA_INTERVAL` seconds when there is more than a page - the
+same setting the arcade card alternates by. Up to 0.6.5b it was a fixed 2.5s,
+which turned pages faster than they could be read; `meta_pageDwellMs` is the
+one place that says how long, and `0` never turns a page (so never reaches the
+description either). Both only redraw when
 something actually moves.
 
 Where a field comes from:
@@ -506,14 +510,16 @@ them. Anything that takes the panel - a new picture through
 `oled_transition`, `meta_reset` - cancels it, and a cancel
 mid-fade-out still performs the redraw it was asked for, so the page it was
 turning to is not lost. Half its length, capped at 400ms, because the console
-pager turns every 2.5s and a fade still running when the next page is due
+pager turns every `METADATA_INTERVAL` - a second, if someone sets it so - and a
+fade still running when the next page is due
 would be a fade nobody asked for.
 
 ## Pinned fields
 
 The first `metaPinned` fields are drawn on every page; the rest cycle through
-the rows left over. With four rows and two pinned, System and Year stay put
-while Genre/Region and Format take turns below them. On the arcade card the
+the rows left over. The default pins System alone, so the three rows under it
+page: Year, Genre and Region on the first page, Format and what follows after
+- Year is seen once, on the first page, rather than on every one. On the arcade card the
 same count means the grid's top row, which is already on the grid page and is
 repeated above each wide page.
 
@@ -686,7 +692,7 @@ dispatcher - a command arriving is new content, and that is what "screen
 update" means here.
 
 It is deliberately *not* called from the draw helpers, which is where it
-started. The marquee redraws every 40ms and the field pager every 2.5s, both
+started. The marquee redraws every 40ms and the field pager every few seconds, both
 through `meta_showConsole`, so counting any draw as activity meant a console
 game with a long title or a second page never went idle and the panel never
 dimmed at all. The animation carries on quite happily at reduced brightness.
@@ -974,8 +980,8 @@ layout already on the panel, by the icon's rules, because its page adds a pip.
 
 **Speeds are pixels per second** in the ini and on the wire - bigger is
 faster, which a period is not - and periods in the firmware, because that is
-what a tick compares. 25 and 5 are the old 40ms marquee and one pixel every
-200ms.
+what a tick compares. 25 is the old 40ms marquee; 6 is a pixel every 166ms,
+which replaced 5 (one every 200ms) as the default as being a shade too slow.
 
 ## Running the tests
 
@@ -1713,8 +1719,9 @@ instead of 1.8MB. A five-field line still parses, so the old single-file
 `TITLE_INDEX` keeps working as a fallback when there is no per-core file.
 
 `METADATA_FIELDS` in the ini picks which fields reach the screen and in what
-order. The split layout has three rows and pages the rest every 2.5s, so the
-first three listed are the ones seen at a glance. Arcade cores have their own
+order. The split layout has four rows and pages the rest every
+`METADATA_INTERVAL` seconds, so the first four listed are the ones seen at a
+glance. Arcade cores have their own
 vocabulary and ignore the setting.
 
 **The index titles must match `clean_romname`.** A CRC hit replaces the

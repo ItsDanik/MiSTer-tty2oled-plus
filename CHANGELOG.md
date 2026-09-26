@@ -4,6 +4,19 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.6.6b — 2026-09-27
+
+- **Console game details turn a page every 12 seconds**, like the arcade
+  card, instead of every 2.5 - long enough to read. It is the same setting,
+  `METADATA_INTERVAL`, now called "Seconds per page" in Settings. The
+  description page is the exception: it stays until its text has scrolled
+  through. This needs the new firmware, which the update flashes.
+- **Only System stays pinned under the title.** The year is on the first
+  page with the other details rather than on every page. If you pinned
+  fields yourself, that setting is kept.
+- **Descriptions scroll a little faster**: 6 pixels a second rather than 5.
+  `VSCROLL_SPEED` in Settings sets it.
+
 ## 0.6.5b — 2026-09-26
 
 - **Game descriptions, and more details for every console game.** A new

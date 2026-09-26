@@ -518,10 +518,10 @@ printf 'CRC32: 44AA3EEB\n' > "${TMP}/GAMEID"
 sleep 0.01
 touch "${TMP}/GAMEID"
 METADATA_FIELDS="" build_meta "NES"
-ok "pinned lead, then the default order" \
+ok "System pinned first, then the default order" \
    "$(printf '%s\n' "${META_FIELDS[@]}" | cut -f1 | paste -sd, -)" \
-   "System,Year,Region,Genre,Developer,Format"
-ok "two fields pinned" "${META_PINNED_COUNT}" "2"
+   "System,Region,Year,Genre,Developer,Format"
+ok "one field pinned - the title is always there" "${META_PINNED_COUNT}" "1"
 ok "Company folded into Year, not emitted twice" \
    "$(printf '%s\n' "${META_FIELDS[@]}" | grep -c '^Company')" "0"
 ok "index title won over the filename" "${META_TITLE}"  "10-Yard Fight"
@@ -529,7 +529,7 @@ ok "source is the index"               "${META_SOURCE}" "index"
 
 # Pinned names lead regardless of where METADATA_FIELDS puts them; the rest
 # keep the ini's order.
-METADATA_FIELDS="Genre Region Format System Year" build_meta "NES"
+METADATA_FIELDS="Genre Region Format System Year" METADATA_PINNED="System Year" build_meta "NES"
 ok "pinned lead, unpinned keep the ini order" \
    "$(printf '%s\n' "${META_FIELDS[@]}" | cut -f1 | paste -sd, -)" \
    "System,Year,Genre,Region,Format"

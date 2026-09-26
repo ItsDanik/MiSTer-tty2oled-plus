@@ -821,6 +821,11 @@ contains "the series"                "${line}" "|Series=Tater"
 contains "and what the index lacked" "${line}" "|Genre=Puzzle|"
 # COMPACT_YEAR_COMPANY's ", " comes through metasanitize as two spaces.
 contains "the year, from the date"   "${line}" "|Year=1991  Atlus|"
+# Only System is pinned by default: the title stays by itself, and Year is
+# the first field under System, on the first page and nowhere else.
+contains "one pinned field, System first" "${line}" "CMDMETA,2,12,1,0,A-Mazing Tater|System=GAMEBOY|"
+ok "the ini pins System alone" \
+   "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${METADATA_PINNED}")" "System"
 ok "the description follows the line, announced by its length" \
    "$(printf '%s' "${out}" | sed -n 2p | tr -d '\r')" "CMDDESC,${#DESC}"
 ok "and then exactly its bytes" \
@@ -879,6 +884,17 @@ ok "cut to the firmware's 1024 bytes" \
    "$(captured | sed -n 2p | tr -d '\r')" "CMDDESC,1024"
 SCRAPE_DIR="${TMP}/no-such-dir"
 
+# In the shipped field order, Year is the first field under the one pinned,
+# so it is on the first page and nowhere else.
+SCRAPE_DIR="${TMP}/scraped"
+METADATA_FIELDS="$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${METADATA_FIELDS}")"
+scraped_game "A-mazing Tater (USA).gb"
+sendmeta "GAMEBOY"
+contains "in the shipped order Year is the first field under System" \
+   "$(captured | head -n1)" "|System=GAMEBOY|Year=1991  Atlus|Genre="
+METADATA_FIELDS=""
+SCRAPE_DIR="${TMP}/no-such-dir"
+
 # An arcade game has no description to send.
 reset_capture
 printf '%s\n' "${FIX}/mra/dkong.mra" > "${TMP}/STARTPATH"
@@ -891,13 +907,13 @@ section "scroll speeds: pixels a second, sent once at startup"
 reset_capture
 unset HSCROLL_SPEED VSCROLL_SPEED
 sendscroll
-ok "the defaults: today's marquee, and 1px every 200ms" "$(captured | tr -d '\r\n')" "CMDSCROLL,25,5"
+ok "the defaults: the old marquee, and 6px a second up" "$(captured | tr -d '\r\n')" "CMDSCROLL,25,6"
 reset_capture
 HSCROLL_SPEED="40"; VSCROLL_SPEED="2"
 sendscroll
 ok "and what the ini says"  "$(captured | tr -d '\r\n')" "CMDSCROLL,40,2"
 ok "the ini's defaults are those" \
-   "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${HSCROLL_SPEED},${VSCROLL_SPEED}")" "25,5"
+   "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${HSCROLL_SPEED},${VSCROLL_SPEED}")" "25,6"
 ok "sent with the rest of the startup settings" \
    "$(grep -c '^  sendscroll' "${ROOT}/tty2oled.sh")" "1"
 

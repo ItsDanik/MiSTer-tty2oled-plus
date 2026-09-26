@@ -15,11 +15,12 @@ system's icon beside them](docs/img/console-nes.png)
 
 **Console cores** get a split layout: the title, then the fields you asked for,
 with an icon for the system beside them. A title too wide for the column
-scrolls; more fields than rows and they take turns, the pips by the header
+scrolls; more fields than rows and they take turns, a page every
+`METADATA_INTERVAL` seconds (12 unless you change it), the pips by the header
 counting the pages.
 
-![Five fields on four rows: System and Year pinned, Region and Format
-paging](docs/img/console-paging.png)
+![Five fields on four rows: System pinned, Year, Company and Region on the
+first page, Format on the next](docs/img/console-paging.png)
 
 Every few minutes the two halves swap sides, so no region of the panel holds
 the same lit pixels all day.
@@ -293,13 +294,13 @@ sent over when it restarts, so nothing needs reflashing.
 |---|---|---|
 | `SHOW_METADATA` | `yes` | Master switch. `no` shows core artwork only. |
 | `core_bootscreen_time` | `3000` | A console core launched with its game already chosen holds its own full-screen artwork this long, in ms, before the game's details replace it. `0` goes straight to the details. A game loaded into a running core is unaffected. |
-| `METADATA_INTERVAL` | `12` | Arcade: seconds per screen — artwork, each card page in turn, then the artwork again. `0` never swaps. |
-| `METADATA_FIELDS` | `System Year Genre Region Format Players Rating Released Series` | Which console fields show, and in what order. Four fit at once; the rest page every 2.5s. Available: System Region Year Company Genre Developer Format Players Rating Released Series — the last four only for games Scrape metadata imported. |
-| `METADATA_PINNED` | `System Year` | Fields that stay put while the rest page under them. |
+| `METADATA_INTERVAL` | `12` | Seconds per page, console and arcade. Arcade: artwork, each card page in turn, then the artwork again. Console: each page of fields in turn; the description page stays until its text has scrolled through. `0` never turns a page. |
+| `METADATA_FIELDS` | `System Year Genre Region Format Players Rating Released Series` | Which console fields show, and in what order. Four fit at once; the rest take turns, a page every `METADATA_INTERVAL`. Available: System Region Year Company Genre Developer Format Players Rating Released Series — the last four only for games Scrape metadata imported. |
+| `METADATA_PINNED` | `System` | Fields that stay put while the rest page under them. The title is always there. |
 | `COMPACT_YEAR_COMPANY` | `yes` | Fold the publisher into the year: `1989, Acclaim` on one row. |
 | `SHOW_DESCRIPTION` | `yes` | The description page, for games Scrape metadata imported a description for. |
 | `HSCROLL_SPEED` | `25` | How fast a title too long for the screen scrolls sideways, in pixels a second. Bigger is faster. |
-| `VSCROLL_SPEED` | `5` | How fast a description scrolls up, in pixels a second. |
+| `VSCROLL_SPEED` | `6` | How fast a description scrolls up, in pixels a second. |
 | `ARCADE_FIELDS` | `Year Manufacturer Region Orientation Core Author Set MAME` | Short arcade fields, paired two to a row. |
 | `ARCADE_FIELDS_WIDE` | `Players Controls Buttons` | Arcade fields whose values need a row of their own. |
 | `ARCADE_PINNED` | `Year Manufacturer` | The grid row repeated above each wide page. |

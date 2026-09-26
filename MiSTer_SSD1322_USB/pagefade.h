@@ -42,9 +42,10 @@ uint16_t      pfPhaseMs = 0;
 void        (*pfRedraw)(void) = nullptr; // draws the new page into the framebuffer
 
 // Half the picture fade, and never more than PF_FADE_MAX_MS. The console
-// pager turns every VSCROLL_MS - 2.5s - and a fade that does not finish well
-// inside that would still be running when the next page is due. 0 keeps the
-// setting's meaning: TRANSITION_FADE_MS=0 means do not fade.
+// pager turns every METADATA_INTERVAL, which may be set as low as a second,
+// and a fade that does not finish well inside that would still be running
+// when the next page is due. 0 keeps the setting's meaning:
+// TRANSITION_FADE_MS=0 means do not fade.
 #define PF_FADE_MAX_MS 400
 
 static uint16_t pf_fadeMs(void) {

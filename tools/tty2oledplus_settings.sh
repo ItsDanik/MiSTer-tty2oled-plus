@@ -97,16 +97,16 @@ SHOW_METADATA|bool||Game details|Off shows only the core's artwork, as a display
 USE_NAMES_TXT|bool||Core names from names.txt|Name cores the way your MiSTer menu names them rather than by their internal name.
 COMPACT_YEAR_COMPANY|bool||Year and publisher on one row|"1989, Acclaim" on a single row instead of two.
 core_bootscreen_time|int|0 10000|Core boot screen (ms)|How long a console core's own artwork is held before the game's details replace it, when the core and the game are loaded together. 0 goes straight to the details.
-METADATA_INTERVAL|int|0 600|Arcade: seconds per screen|Artwork, then each page of the info card, then the artwork again - this long on each. 0 never swaps.
+METADATA_INTERVAL|int|0 600|Seconds per page|How long each page of game details stays up, console and arcade. Arcade alternates the artwork with the info card's pages; a console game's description page stays until its text has scrolled through. 0 never turns a page.
 ROTATE|bool||Upside down|Turn the whole display 180 degrees, for a panel mounted the other way up.
 RANDOMIZE_ALT_BANNERS|bool||Vary the artwork|Where a core has alternative pictures, pick between them at random each time it loads, instead of always showing the same one.
 PRIORITIZE_USER_BANNERS|bool||Prefer your own artwork|Look in pics/user before the artwork pack, so a picture you put there replaces the shipped one. Off searches the pack first.
 HSCROLL_SPEED|int|1 200|Horizontal scroll speed (pixels/s)|How fast a title too long for the screen scrolls sideways. Bigger is faster; 25 is a pixel every 40ms.
-VSCROLL_SPEED|int|1 100|Vertical scroll speed (pixels/s)|How fast a game's description scrolls up. Bigger is faster; 5 is a pixel every 200ms.
+VSCROLL_SPEED|int|1 100|Vertical scroll speed (pixels/s)|How fast a game's description scrolls up. Bigger is faster; 6 is a pixel every 166ms.
 EOS
     ;;
     console) cat <<'EOS'
-METADATA_FIELDS|list|CONSOLE_FIELDS_ALL|Fields to show|Which details appear under a console game's title, in this order. Four fit at once; any more take turns every 2.5 seconds.
+METADATA_FIELDS|list|CONSOLE_FIELDS_ALL|Fields to show|Which details appear under a console game's title, in this order. Four fit at once; any more take turns, a page every "Seconds per page".
 METADATA_PINNED|list|SELECTED_CONSOLE|Fields that stay put|These stay on screen while the rest take turns underneath. They have to be fields you are showing.
 SHOW_DESCRIPTION|bool||Description page|After the fields, a page with the game's description scrolling up under its title. Needs Scrape metadata to have imported one.
 EOS

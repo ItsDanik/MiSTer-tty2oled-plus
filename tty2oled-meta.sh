@@ -791,9 +791,9 @@ _arcade_display_label() {
 }
 
 # Fields that stay put while the rest page. The layout has four rows, so
-# pinning two leaves two cycling underneath. A name here must also appear in
+# pinning one leaves three cycling underneath. A name here must also appear in
 # METADATA_FIELDS to be shown at all.
-: "${METADATA_PINNED:=System Year}"
+: "${METADATA_PINNED:=System}"
 
 # Fold the publisher into the year - "1990, Acclaim" on one row instead of
 # two. Worth it on four rows; "no" keeps them separate.

@@ -33,15 +33,16 @@
                 1 = arcade   - alternate picture <-> metadata card
                 2 = console  - split layout, text left, icon right
                 3 = computer - full-screen picture only
-      interval  alternation period in seconds for arcade (0 disables)
+      interval  seconds per page - the arcade card's alternation and the
+                console pager both (0 disables)
       title     primary line; the daemon strips '|' ',' and control characters
       pinned    fields drawn on every page rather than paged through
       compact   leading fields the arcade card pairs two to a row; the rest
                 get a full-width row each
       fields    up to META_MAX_FIELDS label=value pairs. Both layouts page
-                through more fields than they have rows - the console list
-                every VSCROLL_MS, the arcade card once per interval, running
-                its pages back to back before the artwork returns.
+                through more fields than they have rows, one page per
+                interval - the arcade card running its pages back to back
+                before the artwork returns.
 
   CMDICON         followed by ICON_BYTES raw bytes - 86x64 4bpp console icon
   CMDDESC,<n>     followed by n raw bytes - the description page's text
@@ -177,7 +178,6 @@
 // Scrolling behaviour.
 #define SCROLL_STEP_MS    40    // horizontal marquee tick, until CMDSCROLL says
 #define SCROLL_PAUSE_MS   1200  // pause at each end of a marquee run
-#define VSCROLL_MS        2500  // dwell per page when fields overflow
 #define SCROLL_GAP        24    // px of blank between marquee wraps
 
 // ---------------------------------------------------------------------------
@@ -198,8 +198,9 @@
 #define DESC_MAX          1024  // bytes kept; the daemon cuts to this
 #define DESC_MAX_LINES    160   // one-character words at the narrowest column
 #define DESC_TOP          (CON_FIELD_Y0 - CON_FIELD_ASCENT)  // the field area's top row
-#define DESC_STEP_MS      200   // 5 pixels a second, until CMDSCROLL says
-#define DESC_HOLD_MS      VSCROLL_MS  // read the first lines before they move
+#define VSCROLL_SPEED_DEFAULT 6 // pixels a second, until CMDSCROLL says
+#define DESC_STEP_MS      (1000 / VSCROLL_SPEED_DEFAULT)   // 166ms a pixel
+#define DESC_HOLD_MS      2500  // read the first lines before they move
 
 // The two scroll speeds, as periods: CMDSCROLL gives them in pixels per
 // second, which is what the ini says, and they are kept as the time a pixel
@@ -219,7 +220,10 @@ int       metaKind         = MKIND_OFF;
 char      metaTitle[META_MAX_TITLE] = "";
 MetaField metaFields[META_MAX_FIELDS];
 int       metaFieldCount   = 0;
-int       metaInterval     = 12;        // arcade alternation period, seconds
+// Seconds per page, METADATA_INTERVAL: the arcade card's alternation, and the
+// console pager's dwell on each field page. It used to be a fixed 2.5s on the
+// console, which turned pages faster than they could be read.
+int       metaInterval     = 12;
 // Fields pinned to the top of the list: shown on every page rather than paged
 // through. The first metaPinned of metaFields. On the console split that is
 // the top of every page; on the arcade card it is the grid row that repeats
@@ -575,6 +579,13 @@ static int meta_fieldPageCount(void) {
 }
 
 static bool meta_hasDesc(void) { return metaDescLen > 0; }
+
+// How long a console field page stays up: METADATA_INTERVAL, as the arcade
+// card. 0 never turns a page - which also means never reaching the
+// description, since it comes after the fields.
+static unsigned long meta_pageDwellMs(void) {
+  return metaInterval > 0 ? (unsigned long)metaInterval * 1000UL : 0;
+}
 
 static int meta_pageCount(void) {
   return meta_fieldPageCount() + (meta_hasDesc() ? 1 : 0);
@@ -1343,7 +1354,7 @@ static uint8_t meta_wakeContrast(void) {
 // timer.
 //
 // Deliberately NOT called from the draw helpers. The marquee redraws every
-// 40ms and the field pager every 2.5s, both through meta_showConsole, so
+// 40ms and the field pager every METADATA_INTERVAL, both through meta_showConsole, so
 // treating any draw as activity meant a console game with a long title or a
 // second page never went idle and never dimmed. Activity is the arrival of
 // something new to show - a command from the MiSTer - not the animation of
@@ -1433,7 +1444,7 @@ bool meta_parseCoreBoot(const char *cmd) {
 // first alone.
 // ---------------------------------------------------------------------------
 bool meta_parseScroll(const char *cmd) {
-  int h = 1000 / SCROLL_STEP_MS, v = 1000 / DESC_STEP_MS;
+  int h = 1000 / SCROLL_STEP_MS, v = VSCROLL_SPEED_DEFAULT;
   if (sscanf(cmd, "CMDSCROLL,%d,%d", &h, &v) < 1) return false;
   if (h < 1) h = 1;
   if (h > HSCROLL_SPEED_MAX) h = HSCROLL_SPEED_MAX;
@@ -1689,7 +1700,8 @@ bool meta_tick(void) {
         }
         dirty = true;
       }
-    } else if (pages > 1 && now - lastPageTick >= VSCROLL_MS) {
+    } else if (pages > 1 && meta_pageDwellMs() > 0 &&
+               now - lastPageTick >= meta_pageDwellMs()) {
       int x, w, y0, y1;
       pfNextPage   = (fieldPage + 1) % pages;
       meta_consolePagedRect(&x, &w, &y0, &y1, meta_isDescPage(pfNextPage));
