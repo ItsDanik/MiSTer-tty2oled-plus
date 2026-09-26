@@ -308,6 +308,30 @@ migrate_pics
 ok "a user banner already moved is not replaced" \
    "$(cat "${TTY2OLED_PATH}/pics/user/NES.gsc")" "mine"
 
+# /media/fat is exFAT, which ignores case: there pics/ICON is not a leftover
+# of the old layout, it is pics/icon itself, and 0.5.8b to 0.6.0b deleted
+# every icon on every start by removing it under that name. A symlink stands
+# in for the second spelling, and an rm that follows it stands in for a
+# filesystem on which both names reach the same folder.
+rm -rf "${TTY2OLED_PATH}"
+mkdir -p "${TTY2OLED_PATH}/pics/icon"
+echo icon > "${TTY2OLED_PATH}/pics/icon/NES.gsc"
+ln -s icon "${TTY2OLED_PATH}/pics/ICON"
+rm() { local a=() x; for x in "$@"; do
+         case "${x}" in -*) a+=("${x}") ;; *) a+=("$(readlink -f -- "${x}")") ;; esac
+       done; command rm "${a[@]}"; }
+migrate_pics
+unset -f rm
+ok "on a case-blind card the icons survive a start" \
+   "$(cat "${TTY2OLED_PATH}/pics/icon/NES.gsc" 2>&1)" "icon"
+# Where the two names really are two folders, the old one still goes.
+command rm -f "${TTY2OLED_PATH}/pics/ICON"
+mkdir -p "${TTY2OLED_PATH}/pics/ICON"
+migrate_pics
+ok "a separate old pics/ICON is still swept" \
+   "$([ -d "${TTY2OLED_PATH}/pics/ICON" ] && echo yes || echo no)" "no"
+ok "leaving pics/icon alone" "$(cat "${TTY2OLED_PATH}/pics/icon/NES.gsc" 2>&1)" "icon"
+
 # A fresh install has neither, and the folder the user drops artwork into has
 # to exist for them to find it.
 rm -rf "${TTY2OLED_PATH}"

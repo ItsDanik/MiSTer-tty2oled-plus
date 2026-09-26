@@ -118,8 +118,8 @@ reasoning behind all of it is under [Versioning](#versioning) below.
 **tty2oled+** is a fork of
 [venice1200/MiSTer_tty2oled](https://github.com/venice1200/MiSTer_tty2oled),
 GPLv3 like upstream. The work lives on `main`, which is upstream's `50c08ac`
-plus this fork; `feature/game-metadata` is where it was written and now points
-at the same commit. `main` is what the repository shows a visitor and what a
+plus this fork. It was written on `feature/game-metadata`, since merged and
+deleted. `main` is what the repository shows a visitor and what a
 clone gets, which is why the fork's own README had to be on it.
 
 The install folder **is** the fork's own: `/media/fat/tty2oledplus`, where
@@ -1101,6 +1101,15 @@ fork's version of copying `tty2oled-user.ini` over the user's.
 
 ## Things that cost time, recorded so they do not again
 
+- **`/media/fat` is exFAT, and exFAT ignores case.** `pics/ICON` *is*
+  `pics/icon` there. 0.5.8b's `migrate_pics` swept the pre-0.5.8b `pics/ICON`
+  "once `pics/icon` exists", which on the card meant deleting the icons on
+  every daemon start - for four releases, each update restoring them and its
+  own daemon restart removing them again. The tests ran on ext4, where the two
+  names are two folders. Before removing anything by an old spelling, check
+  it is not the new one (`-ef`); and never ship two files whose names differ
+  only in case - `pics/icon` has `NEOGEO.gsc` and `NeoGeo.gsc`, harmless only
+  because they are identical.
 - **A `--radiolist` answers with what is already ticked, not what is
   highlighted.** Every single-choice picker in the settings editor was one, so
   arrowing to a new transition and pressing Enter saved the old value and the

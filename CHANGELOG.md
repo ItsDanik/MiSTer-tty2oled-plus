@@ -4,6 +4,16 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.6.1b — 2026-09-26
+
+- **The console icons are back.** Since 0.5.8b the daemon deleted the whole
+  icon folder every time it started, so the panel beside a game's details
+  stayed black. Tidying away the old `pics/ICON` folder from before 0.5.8b
+  removed `pics/icon` too, because the MiSTer's SD card does not tell upper
+  from lower case. Each update brought the icons back and the daemon restart
+  at the end of it deleted them again. Updating to this version restores
+  them, and nothing deletes them any more.
+
 ## 0.6.0b — 2026-09-24
 
 - **The update screens arrive the way everything else does.** Starting

@@ -171,7 +171,13 @@ migrate_pics() {
       mv "${pri}/ICON" "${pics}/icon" 2>/dev/null
     fi
   fi
-  [ -d "${pics}/icon" ] && rm -rf "${pics}/ICON" 2>/dev/null
+  # The pre-0.5.8b pics/ICON - but /media/fat is exFAT, which ignores case,
+  # so there pics/ICON *is* pics/icon, and removing it by that name deleted
+  # every icon on every start. Only a genuinely separate folder is a leftover.
+  if [ -d "${pics}/icon" ] && [ -d "${pics}/ICON" ] &&
+     ! [ "${pics}/icon" -ef "${pics}/ICON" ]; then
+    rm -rf "${pics}/ICON" 2>/dev/null
+  fi
 
   # What is left in pics_pri is the user's own banners, and nobody but the
   # user put them there. Never overwritten, so a file already in pics/user
