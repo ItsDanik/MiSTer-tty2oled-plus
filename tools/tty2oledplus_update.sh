@@ -297,13 +297,15 @@ main() {
 
   local scripts="yes"
   [ "${current}" = "${version}" ] && [ "${force}" = "no" ] && scripts="no"
-  # Either layout counts as "the artwork is there". pics/ itself does not:
-  # 0.5.8b split it into banner/alt/icon/user, and an install that predates
-  # that has a pics/ with the old pics/GSC inside it - which S60tty2oled
-  # renames into the new folders on its next start, locally, without fetching
-  # 80MB again. Asking about pics/ alone would skip a fresh install whose
-  # pics/ holds nothing but the icons out of the scripts archive.
-  [ -d "${INSTALL}/pics/banner" ] || [ -d "${INSTALL}/pics/GSC" ] || pics="yes"
+  # The artwork is there when the arcade wheel pack is. pics/ itself says
+  # nothing - a fresh install's pics/ holds the icons out of the scripts
+  # archive - and neither does pics/banner any more: every install from
+  # before the wheels has one, full of the arcade marquees they replaced,
+  # and asking about it is why the updater that introduced them could not
+  # fetch them. This one can, so an install that reached the wheel release
+  # through an older updater gets them on its next Update.
+  [ -r "${INSTALL}/pics/arcade/wheels.idx" ] && [ -r "${INSTALL}/pics/arcade/wheels.bin" ] \
+    && [ -d "${INSTALL}/pics/banner" ] || pics="yes"
 
   if upstream_installed; then
     die "Upstream tty2oled is installed in ${FAT}/tty2oled. tty2oled+ replaces it
@@ -413,8 +415,23 @@ main() {
 
   if [ "${pics}" = "yes" ]; then
     say "Installing the artwork pack"
-    tar -C "${FAT}" --no-same-owner -xzf "${STAGE}/tty2oledplus-pics.tar.gz" \
-      || die "Could not unpack the artwork pack."
+    # Unpacked beside the install first, then swapped in folder by folder:
+    # the release's folders are replaced whole, so a picture a release has
+    # dropped - the arcade marquees, pics/alt - goes from the card too,
+    # instead of lingering unread in 128KB clusters. pics/user is not in
+    # the archive's list of folders to replace, and is never touched.
+    local new="${STAGE}/pics-new" d
+    mkdir -p "${new}"
+    tar -C "${new}" --no-same-owner -xzf "${STAGE}/tty2oledplus-pics.tar.gz" \
+      || die "Could not unpack the artwork pack. Nothing was changed."
+    mkdir -p "${INSTALL}/pics/user"
+    for d in banner arcade; do
+      [ -d "${new}/tty2oledplus/pics/${d}" ] || continue
+      rm -rf "${INSTALL}/pics/${d}"
+      mv "${new}/tty2oledplus/pics/${d}" "${INSTALL}/pics/${d}" \
+        || die "Could not install pics/${d}."
+    done
+    rm -rf "${INSTALL}/pics/alt"
   fi
 
   # --- Firmware -----------------------------------------------------------

@@ -291,12 +291,23 @@ echo icon  > "${TTY2OLED_PATH}/pics_pri/ICON/NES.gsc"
 echo mine  > "${TTY2OLED_PATH}/pics_pri/NES.gsc"
 migrate_pics
 ok "the pack becomes pics/banner"        "$(cat "${TTY2OLED_PATH}/pics/banner/NES.gsc" 2>&1)" "nes"
-ok "its alternatives move to pics/alt"   "$(cat "${TTY2OLED_PATH}/pics/alt/NES_alt1.gsc" 2>&1)" "alt"
-ok "and are out of the banner folder"    "$(ls "${TTY2OLED_PATH}/pics/banner" | grep -c _alt)" "0"
+# The alternatives were dropped since: nothing reads them any more, so an
+# install old enough to still have them loses them rather than moving them.
+ok "its alternatives are dropped"        "$(ls "${TTY2OLED_PATH}/pics/banner" | grep -c _alt)" "0"
+ok "and not moved anywhere"              "$([ -e "${TTY2OLED_PATH}/pics/alt" ] && echo there || echo gone)" "gone"
 ok "the icons become pics/icon"          "$(cat "${TTY2OLED_PATH}/pics/icon/NES.gsc" 2>&1)" "icon"
 ok "your own banners become pics/user"   "$(cat "${TTY2OLED_PATH}/pics/user/NES.gsc" 2>&1)" "mine"
 ok "and nothing is left of the old names" \
    "$(ls -d "${TTY2OLED_PATH}/pics/GSC" "${TTY2OLED_PATH}/pics_pri" 2>/dev/null | wc -l | tr -d ' ')" "0"
+
+# An install from between the two has a pics/alt of the release's, and the
+# next start removes it - pics/user, beside it, is untouched.
+mkdir -p "${TTY2OLED_PATH}/pics/alt"
+echo alt > "${TTY2OLED_PATH}/pics/alt/NES_alt1.gsc"
+migrate_pics
+ok "a pics/alt left by an earlier release is removed" \
+   "$([ -e "${TTY2OLED_PATH}/pics/alt" ] && echo there || echo gone)" "gone"
+ok "and your own banners are not"        "$(cat "${TTY2OLED_PATH}/pics/user/NES.gsc" 2>&1)" "mine"
 
 # It runs on every start, so it has to be safe to run twice - and must never
 # overwrite a user banner with a stale copy of itself.
@@ -511,8 +522,7 @@ UPDATE_ALL_SCREEN="yes"
 TTYDEV="/dev/stdout"
 picturefolder="${TMP}/pics"
 bannerfolder="${picturefolder}/banner"; userbannerfolder="${picturefolder}/user"
-altbannerfolder="${picturefolder}/alt"
-mkdir -p "${bannerfolder}" "${userbannerfolder}" "${altbannerfolder}"
+mkdir -p "${bannerfolder}" "${userbannerfolder}"
 SHOW_METADATA="yes"; TRANSITION="-2"; META_WIRE_LAST="CMDMETA,..."
 # Moving to the update_all screen is as much a change of picture as a core
 # change is, so it arrives the same way - CMDMSG carries the effect, which a

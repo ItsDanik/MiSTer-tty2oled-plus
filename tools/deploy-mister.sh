@@ -241,9 +241,13 @@ if [ "${WITH_PICS}" = "yes" ]; then
   # part of pics/ a release is not allowed to touch; sending them would be
   # this fork's own version of copying tty2oled-user.ini over theirs. The
   # daemon creates pics/user on the MiSTer if it is missing.
+  #
+  # pics/banner and pics/arcade are the release's and are replaced whole, as
+  # the updater replaces them, so a picture dropped here - the arcade
+  # marquees, pics/alt - goes from the MiSTer too rather than lingering.
   say "Copying the artwork pack ($(find pics -type f -not -path 'pics/user/*' -not -name boot.png | wc -l | tr -d ' ') files, $(du -sh --exclude=pics/user pics | cut -f1))"
   tar --owner=0 --group=0 --numeric-owner --exclude='pics/user' --exclude='pics/boot.png' -czf - pics \
-    | ssh "${MISTER}" "tar -C ${REMOTE} --no-same-owner -xzf -"
+    | ssh "${MISTER}" "rm -rf ${REMOTE}/pics/banner ${REMOTE}/pics/arcade ${REMOTE}/pics/alt && tar -C ${REMOTE} --no-same-owner -xzf -"
 fi
 
 say "Fixing permissions"

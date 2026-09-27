@@ -904,6 +904,106 @@ int main() {
         meta_reset();
     }
 
+    section("a core launched with its game, replayed in the daemon's order");
+    {
+        // The firmware acts on each command as it lands: between two of them
+        // loop() runs the tickers, meta_tick included, whenever the port is
+        // quiet. So what the daemon sends first is what happens first, and
+        // the order is the whole of the behaviour. This replays it.
+        const uint16_t keepFade = tfFadeMs, keepBlank = tfBlankMs;
+        tfFadeMs = 800; tfBlankMs = 1000;           // the shipped defaults
+        auto quiet = [](unsigned long ms) {         // loop(), port idle
+            for (unsigned long t = 0; t < ms; t += 5) {
+                g_fakeMillis += 5; contrast_tick(); transition_tick(); meta_tick();
+            }
+        };
+        auto settle = []() {                        // drain whatever is running
+            for (int i = 0; i < 400 && tfState != TF_IDLE; i++) {
+                g_fakeMillis += 25; contrast_tick(); transition_tick();
+            }
+        };
+        // A picture arriving: the 8KB read blocks, so nothing ticks for its
+        // length. draw is CMDCOR, and then the sketch's own branch, which
+        // test-wire.sh holds the sketch to; CMDAPD only stores.
+        auto picture = [](bool draw) {
+            g_fakeMillis += 900;
+            memset(logoBin, 0x99, sizeof(logoBin));
+            actPicType = GSC;
+            tEffect = EFFECT_FADE;
+            if (!draw) return;
+            if (metaKind == MKIND_CONSOLE && !coreBootHolding) meta_showConsole();
+            else oled_transition(tEffect);
+        };
+        const char *game = "CMDMETA,2,0,Advance Wars|System=GBA|Region=USA";
+        tEffect = EFFECT_FADE;                      // what the last CMDCOR carried
+
+        // Why the order matters, pinned so that nobody puts it back. CMDMETA
+        // first: the layout's transition is under way before anything behind
+        // it - the hold, the picture - has arrived.
+        meta_reset();
+        meta_parse(game);
+        quiet(200);
+        okBool("old order: CMDMETA alone starts the layout's transition",
+               tfState != TF_IDLE && tfSrc == metaBin, true);
+        settle();
+        // And CMDCBOOT ahead of the picture starts its clock in the gap
+        // before CMDCOR, so the transfer and the fade spend the hold.
+        meta_reset();
+        meta_parseCoreBoot("CMDCBOOT,3000");
+        quiet(50);
+        okBool("old order: a hold sent before the picture starts too soon",
+               coreBootSince != 0, true);
+
+        // Now as sent: off, picture, hold, game, description, icon.
+        meta_reset();
+        quiet(200);                                 // CMDMETAOFF's wait
+        okBool("nothing moves before the picture", tfState == TF_IDLE, true);
+        picture(true);
+        okBool("the picture's own transition starts as it lands",
+               tfState != TF_IDLE && tfSrc == logoBin, true);
+        quiet(50);
+        meta_parseCoreBoot("CMDCBOOT,3000");
+        quiet(50);
+        meta_parse(game);
+        quiet(200);
+        meta_setDesc("A war game.", 11);
+        quiet(400);
+        metaHasIcon = true;                         // the icon, 2752 bytes later
+        quiet(450);
+        okBool("everything after it lands without redirecting the fade",
+               tfState != TF_IDLE && tfSrc == logoBin, true);
+        okBool("and the hold has not started counting", coreBootSince == 0, true);
+
+        unsigned long up = 0, layoutAt = 0;
+        for (int i = 0; i < 2000 && !layoutAt; i++) {
+            g_fakeMillis += 5; contrast_tick(); transition_tick(); meta_tick();
+            if (!up && tfState == TF_IDLE) up = g_fakeMillis;
+            if (up && tfState != TF_IDLE) layoutAt = g_fakeMillis;
+        }
+        okBool("the artwork reaches the panel", up != 0, true);
+        okBool("then the layout's transition follows", layoutAt != 0, true);
+        okBool("towards the layout", tfSrc == metaBin, true);
+        okBool("after the whole hold, counted from the artwork",
+               layoutAt - up >= 3000 && layoutAt - up < 3100, true);
+        settle();
+
+        // core_bootscreen_time=0: the picture is stored, not drawn, and the
+        // layout is the only transition.
+        meta_reset();
+        quiet(200);
+        picture(false);
+        okBool("no hold: the picture is stored and nothing moves", tfState == TF_IDLE, true);
+        meta_parse(game);
+        quiet(20);
+        okBool("and the game's layout is the one transition",
+               tfState != TF_IDLE && tfSrc == metaBin, true);
+        settle();
+
+        meta_reset();
+        tEffect = -1;
+        tfFadeMs = keepFade; tfBlankMs = keepBlank;
+    }
+
     section("an icon still in flight makes the fade-in");
     {
         // The daemon sends the console icon just after the metadata, so when a

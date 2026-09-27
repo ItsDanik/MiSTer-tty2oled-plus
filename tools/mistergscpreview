@@ -1,0 +1,266 @@
+#!/bin/bash
+#
+# Show .gsc pictures on the MiSTer's own display, from the workstation.
+#
+#   ./tools/mistergscpreview pics/banner/1942.gsc
+#   ./tools/mistergscpreview ~/wheels-gsc/sf2*.gsc
+#   ./tools/mistergscpreview ~/wheels-gsc               # every .gsc in it
+#   ./tools/mistergscpreview -i 2 ~/wheels-gsc          # a new one every 2s
+#   ./tools/mistergscpreview -t -2 a.gsc b.gsc          # with the Fade
+#   ./tools/mistergscpreview -r                         # the calibration ramp
+#
+# Stops the tty2oled daemon so the serial port is free, and starts it again
+# when you quit - Ctrl-C or q - which puts the running core's picture back.
+#
+# With more than one picture:
+#   n, Space, Enter, Right   next         p, Backspace, Left   previous
+#   r                        send again   q, Ctrl-C            quit
+#
+# Options:
+#   -t EFFECT   transition to each picture with this effect, as TRANSITION in
+#               the ini numbers them (default 0, drawn at once)
+#   -i SECONDS  move on by itself every SECONDS; the keys still work
+#   -r          show the grey ramp first (or alone, given no files): which
+#               neighbouring levels this panel can tell apart
+#
+# The ramp is sixteen bands, black on the left to level 15 on the right. In
+# the top half each band holds a square one level brighter than itself, in
+# the bottom half one two levels brighter. Count from the left the bands
+# whose squares you can still see: that says how many levels apart two
+# colours need to be - wheels2gsc.py's --min-step.
+#
+# A 256x64 banner is shown as it is, a 256x54 boot screen with the firmware's
+# band below it black, and an 86x64 icon in the middle of a black panel.
+#
+# Host defaults to root@MiSTer.local; override with MISTER=root@192.168.1.206.
+# Every ssh rides on one connection, so a password is asked for once at most.
+
+set -u
+
+MISTER="${MISTER:-root@MiSTer.local}"
+REMOTE="${REMOTE:-/media/fat/tty2oledplus}"
+
+EFFECT=0
+INTERVAL=""
+RAMP="no"
+
+say() { printf '==> %s\n' "$1"; }
+die() { echo "mistergscpreview: $1" >&2; exit 1; }
+usage() { sed -n '2,/^set -u/p' "${0}" | grep '^#' | sed 's/^# \{0,1\}//'; }
+
+while getopts ":t:i:rh" opt; do
+  case "${opt}" in
+    r) RAMP="yes" ;;
+    t) EFFECT="${OPTARG}" ;;
+    i) INTERVAL="${OPTARG}" ;;
+    h) usage; exit 0 ;;
+    :) die "-${OPTARG} needs a value" ;;
+    *) die "unknown option -${OPTARG} (-h for help)" ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+[[ "${EFFECT}" =~ ^-?[0-9]+$ ]] || die "-t wants an effect number, got '${EFFECT}'"
+[ -z "${INTERVAL}" ] || [[ "${INTERVAL}" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
+  || die "-i wants seconds, got '${INTERVAL}'"
+[ $# -gt 0 ] || [ "${RAMP}" = "yes" ] || { usage; exit 2; }
+
+for tool in ssh xxd; do
+  command -v "${tool}" >/dev/null 2>&1 || die "'${tool}' is not installed on this machine."
+done
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/gscpreview.XXXXXX")"
+FRAME="${WORK}/frame.bin"
+trap 'rm -rf "${WORK}"' EXIT
+
+# --- What to show -----------------------------------------------------------
+PICS=()
+if [ "${RAMP}" = "yes" ]; then
+  RAMPFILE="${WORK}/ramp.gsc"
+  # Band k is x 16k..16k+15 at level k; its square is x 16k+4..16k+11, rows
+  # 8..23 at k+1 and rows 40..55 at k+2, where those exist.
+  awk 'BEGIN {
+    print "// grey ramp"; print "//"; print "//"
+    for (y = 0; y < 64; y++) {
+      row = ""
+      for (x = 0; x < 256; x++) {
+        k = int(x / 16); v = k; c = x % 16
+        if (c >= 4 && c < 12) {
+          if (y >= 8 && y < 24 && k + 1 <= 15) v = k + 1
+          if (y >= 40 && y < 56 && k + 2 <= 15) v = k + 2
+        }
+        row = row sprintf("%x", v)
+      }
+      print row
+    }
+  }' >"${RAMPFILE}"
+  PICS+=("${RAMPFILE}")
+fi
+for arg in "$@"; do
+  if [ -d "${arg}" ]; then
+    while IFS= read -r f; do PICS+=("${f}"); done \
+      < <(find "${arg}" -maxdepth 1 -type f -iname '*.gsc' | LC_ALL=C sort)
+  elif [ -f "${arg}" ]; then
+    PICS+=("${arg}")
+  else
+    die "no such file or folder: ${arg}"
+  fi
+done
+[ ${#PICS[@]} -gt 0 ] || die "no .gsc files in $*"
+
+# The picture as the 8192 bytes CMDCOR wants, in ${FRAME}. Checked here
+# rather than on the MiSTer: the firmware reads exactly 8192 bytes after the
+# header, and a short file would leave it swallowing the next command as
+# picture data.
+frame() {
+  local f="${1}" n
+  tail -n +4 "${f}" | xxd -r -p >"${WORK}/raw.bin" 2>/dev/null
+  n="$(wc -c <"${WORK}/raw.bin")"
+  case "${n}" in
+    8192)
+      cp "${WORK}/raw.bin" "${FRAME}" ;;
+    6912)  # 256x54 boot screen: the band below it black
+      { cat "${WORK}/raw.bin"; head -c 1280 /dev/zero; } >"${FRAME}" ;;
+    2752)  # 86x64 icon: 43 bytes a row, centred at x=84 (byte 42) of 128
+      xxd -p -c 43 "${WORK}/raw.bin" \
+        | awk -v l="$(printf '%084d' 0)" -v r="$(printf '%086d' 0)" '{ print l $0 r }' \
+        | xxd -r -p >"${FRAME}" ;;
+    *)
+      echo "    ${f}: ${n} bytes - not a banner (8192), boot screen (6912) or icon (2752); skipped" >&2
+      return 1 ;;
+  esac
+}
+
+# --- One connection to the MiSTer -------------------------------------------
+CTL="${WORK}/ctl"
+SSH_OPTS=(-o ControlMaster=auto -o "ControlPath=${CTL}" -o ControlPersist=300
+          -o ConnectTimeout=10)
+rsh() { command ssh "${SSH_OPTS[@]}" "${MISTER}" "$@"; }
+
+DAEMON_WAS_RUNNING="no"
+STOPPED="no"
+restore() {
+  trap '' INT TERM
+  if [ "${STOPPED}" = "yes" ]; then
+    if [ "${DAEMON_WAS_RUNNING}" = "yes" ]; then
+      say "Restarting the tty2oled daemon"
+      # Its own stdio, or this ssh waits on the daemon for as long as it lives.
+      rsh "'${REMOTE}/S60tty2oled' start </dev/null >>/tmp/tty2oled-daemon.log 2>&1" </dev/null \
+        || echo "    could not restart it - run: ssh ${MISTER} ${REMOTE}/S60tty2oled start" >&2
+    else
+      say "The daemon was not running before, so it is left stopped"
+    fi
+  fi
+  command ssh "${SSH_OPTS[@]}" -O exit "${MISTER}" >/dev/null 2>&1
+  rm -rf "${WORK}"
+}
+trap restore EXIT
+trap 'echo; exit 130' INT
+trap 'exit 143' TERM
+
+say "Connecting to ${MISTER}"
+rsh true </dev/null || die "cannot reach ${MISTER}. Set MISTER=root@<address> if MiSTer.local does not resolve."
+
+# Everything on the MiSTer side in one round trip: read the ini, refuse if
+# something else owns the port, stop the daemon, set the port up, and say
+# what was found. The sleep file is SAM's claim on the panel - see
+# SLEEPFILE in tty2oled.sh - and two writers on one port corrupt both.
+SETUP="$(rsh bash -s -- "'${REMOTE}'" <<'EOF'
+T2O="$1"
+[ -r "${T2O}/tty2oled-system.ini" ] || { echo "ERR no tty2oled+ install at ${T2O}"; exit 0; }
+. "${T2O}/tty2oled-system.ini"
+[ -r "${T2O}/tty2oled-user.ini" ] && . "${T2O}/tty2oled-user.ini"
+if [ -e "${SLEEPFILE:-/tmp/tty2oled_sleep}" ]; then
+  echo "ERR ${SLEEPFILE:-/tmp/tty2oled_sleep} exists - MiSTer SAM or another script is drawing on the display"
+  exit 0
+fi
+running=no
+"${T2O}/S60tty2oled" status >/dev/null 2>&1 && running=yes
+echo "RUNNING ${running}"
+"${T2O}/S60tty2oled" stop >/dev/null 2>&1
+[ "${running}" = yes ] && sleep 1
+[ -c "${TTYDEV}" ] || { echo "ERR ${TTYDEV} is not there - is the display plugged in?"; exit 0; }
+stty -F "${TTYDEV}" ${BAUDRATE} ${TTYPARAM} || { echo "ERR cannot set up ${TTYDEV}"; exit 0; }
+echo "TTYDEV ${TTYDEV}"
+echo "WAITSECS ${WAITSECS:-0.2}"
+EOF
+)" || die "the setup on ${MISTER} failed"
+
+TTYDEV="" WAITSECS="0.2" ERR=""
+while read -r key val; do
+  case "${key}" in
+    RUNNING)  DAEMON_WAS_RUNNING="${val}"; STOPPED="yes" ;;
+    TTYDEV)   TTYDEV="${val}" ;;
+    WAITSECS) WAITSECS="${val}" ;;
+    ERR)      ERR="${val}" ;;
+  esac
+done <<<"${SETUP}"
+[ -z "${ERR}" ] || die "${ERR}"
+[ -n "${TTYDEV}" ] || die "the MiSTer did not say which serial port the display is on"
+
+# Out of the metadata layout, so CMDCOR draws a plain picture; and no idle
+# dimming for as long as this runs. The daemon's own startup sends the user's
+# dimming again, and CMDCOR,MENU puts the menu back.
+rsh "printf 'CMDMETAOFF\nCMDDIM,0,0,-1\n' >'${TTYDEV}'" </dev/null
+
+# The daemon's own sequence: the header, a pause, then the bytes.
+show() {
+  local f="${1}" name
+  frame "${f}" || return 1
+  name="$(basename "${f}" .gsc)"
+  name="${name//,/ }"
+  rsh "printf '%s\n' 'CMDCOR,${name//\'/},${EFFECT}' >'${TTYDEV}'; sleep ${WAITSECS}; cat >'${TTYDEV}'" \
+    <"${FRAME}"
+}
+
+# One key off the terminal. Arrows arrive as ESC [ C / ESC [ D.
+KEY=""
+readkey() {
+  local k rest timeout=()
+  [ -n "${INTERVAL}" ] && timeout=(-t "${INTERVAL}")
+  KEY=""
+  IFS= read -rsn1 "${timeout[@]}" k
+  case $? in
+    0) ;;
+    1) KEY="quit"; return 0 ;;      # end of input: nobody left to press a key
+    *) KEY="next"; return 0 ;;      # above 128: the interval ran out
+  esac
+  if [ "${k}" = $'\e' ]; then
+    IFS= read -rsn2 -t 0.05 rest || true
+    k="${k}${rest}"
+  fi
+  case "${k}" in
+    n|N|' '|''|$'\e[C')          KEY="next" ;;
+    p|P|$'\x7f'|$'\b'|$'\e[D')   KEY="prev" ;;
+    r|R)                         KEY="again" ;;
+    q|Q)                         KEY="quit" ;;
+  esac
+}
+
+COUNT=${#PICS[@]}
+if [ "${COUNT}" -eq 1 ] && [ -z "${INTERVAL}" ]; then
+  say "Showing ${PICS[0]} - Ctrl-C or q to put the daemon back"
+  show "${PICS[0]}" || exit 1
+  while :; do
+    readkey
+    [ "${KEY}" = "quit" ] && break
+    [ "${KEY}" = "again" ] && show "${PICS[0]}"
+  done
+  exit 0
+fi
+
+say "${COUNT} pictures - n/Space next, p previous, r resend, q or Ctrl-C quit"
+i=0
+while :; do
+  printf '\r\033[K  [%d/%d] %s' $((i + 1)) "${COUNT}" "$(basename "${PICS[$i]}")"
+  show "${PICS[$i]}" || printf '\n'
+  while :; do
+    readkey
+    case "${KEY}" in
+      next)  i=$(((i + 1) % COUNT)); break ;;
+      prev)  i=$(((i + COUNT - 1) % COUNT)); break ;;
+      again) break ;;
+      quit)  printf '\n'; exit 0 ;;
+    esac
+  done
+done

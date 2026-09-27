@@ -1418,10 +1418,11 @@ bool meta_parseDim(const char *cmd) {
 // ---------------------------------------------------------------------------
 // meta_parseCoreBoot - CMDCBOOT,<ms>
 //
-// Hold the core picture that is about to arrive for <ms> before letting the
-// split layout replace it. Sent only on a core change, and only when the
-// game is already known, so receiving it at all is the decision; 0 is
-// accepted and simply holds nothing.
+// Hold the core picture just sent for <ms> before letting the split layout
+// replace it. Sent only on a console core change, after the picture - so its
+// transition is running or done, and meta_tick stamps the start once the
+// artwork is actually up - and before CMDMETA. Receiving it at all is the
+// decision; 0 is accepted and simply holds nothing.
 // ---------------------------------------------------------------------------
 bool meta_parseCoreBoot(const char *cmd) {
   int ms = 0;

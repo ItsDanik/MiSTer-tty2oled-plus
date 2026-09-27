@@ -42,11 +42,12 @@ section "make-release.sh"
 # ===========================================================================
 
 SRC="${TMP}/src"
-mkdir -p "${SRC}/index" "${SRC}/pics/banner" "${SRC}/pics/alt" "${SRC}/pics/icon" \
+mkdir -p "${SRC}/index" "${SRC}/pics/banner" "${SRC}/pics/arcade" "${SRC}/pics/icon" \
          "${SRC}/pics/user" "${SRC}/fw/fw-lolin32" "${SRC}/fw/fw-esp32s3" "${SRC}/fw/fw-tiny"
 echo "00000000|Test Game|USA|1990|Test|Action|Test|" > "${SRC}/index/NES.idx"
 echo "#define x 1" > "${SRC}/pics/banner/NES.gsc"
-echo "#define x 1" > "${SRC}/pics/alt/NES_alt1.gsc"
+head -c 8192 /dev/zero > "${SRC}/pics/arcade/wheels.bin"
+printf '# frames 1\ndkong|0\n' > "${SRC}/pics/arcade/wheels.idx"
 echo "#define x 1" > "${SRC}/pics/icon/NES.gsc"
 echo "#define x 1" > "${SRC}/pics/icon/SNES.gsc"
 # The user's own. A release must never carry one: it would overwrite theirs.
@@ -95,13 +96,21 @@ ok "and the drawn icons" "$(printf '%s\n' "${LISTING}" | grep -c 'pics/icon/.*\.
 ok "everything unpacks under tty2oledplus/" "$(printf '%s\n' "${LISTING}" | grep -vc '^tty2oledplus/')" "0"
 PICSLIST="$(tar tzf "${D}/tty2oledplus-pics.tar.gz")"
 ok "the artwork is in its own archive" "$(printf '%s\n' "${PICSLIST}" | grep -c 'tty2oledplus/pics/banner/NES.gsc')" "1"
-ok "with the alternatives beside it" "$(printf '%s\n' "${PICSLIST}" | grep -c 'tty2oledplus/pics/alt/NES_alt1.gsc')" "1"
+ok "with the wheel pack beside it" \
+   "$(printf '%s\n' "${PICSLIST}" | grep -c 'tty2oledplus/pics/arcade/wheels\.\(bin\|idx\)$')" "2"
+ok "and no alternatives, which are gone" "$(printf '%s\n' "${PICSLIST}" | grep -c 'pics/alt')" "0"
 # pics/user is the user's own artwork and the one folder no release may write
 # into - the same reason tty2oled-user.ini is not in the manifest. The empty
 # folder goes in so a fresh install has somewhere to put a picture.
 ok "and nothing of the user's in either" \
    "$(printf '%s\n%s\n' "${LISTING}" "${PICSLIST}" | grep -c 'pics/user/.')" "0"
 ok "though the folder itself is made" "$(printf '%s\n' "${PICSLIST}" | grep -c 'tty2oledplus/pics/user/$')" "1"
+# No wheel pack, no release: every arcade core would show its name as text,
+# and an updater that fetched it would count the artwork as installed.
+mv "${SRC}/pics/arcade/wheels.bin" "${TMP}/wheels.bin.away"
+release "${TMP}/dist-nowheels"; RC="${?}"
+ok "a release without the wheel pack is refused" "${RC}:$(grep -c 'wheels.bin' "${TMP}/release.out")" "1:1"
+mv "${TMP}/wheels.bin.away" "${SRC}/pics/arcade/wheels.bin"
 ok "the notes carry this version's changelog" \
    "$(head -n1 "${TMP}/notes.md" | grep -c .)" "1"
 ok "and how to install it" "$(grep -c '^curl .*releases/latest/download/tty2oledplus_update.sh | bash$' "${TMP}/notes.md")" "1"
@@ -192,6 +201,8 @@ ok "every file in the manifest is installed, tools executable" "${MISSING}" ""
 ok "the installed version is the release's" "$(sed -n 's/^TTY2OLED_VERSION="\(.*\)".*/\1/p' "${INSTALL}/tty2oled-system.ini")" "${VERSION}"
 ok "the title index is installed" "$(yesno test -f "${INSTALL}/titleindex/NES.idx")" "yes"
 ok "the artwork pack is installed" "$(yesno test -f "${INSTALL}/pics/banner/NES.gsc")" "yes"
+ok "and the arcade wheel pack with it" \
+   "$(yesno test -f "${INSTALL}/pics/arcade/wheels.bin" -a -f "${INSTALL}/pics/arcade/wheels.idx")" "yes"
 ok "the display was flashed, once, with its own board's image" "$(flashed)" "tty2oledplus-lolin32.bin chip=esp32 port=free"
 ok "with a board id found behind stale ttyacks" "$(said 'reported: lolin32, firmware 0.3.0b')" "1"
 ok "the boot hook is added" "$(grep -c "${INSTALL}/S60tty2oled" "${FAT}/linux/user-startup.sh")" "1"
@@ -259,6 +270,24 @@ ok "the boot hook is not added twice" "$(grep -c "${INSTALL}/S60tty2oled" "${FAT
 rm "${INSTALL}/pics/banner/NES.gsc"
 T2OP_HWINF="HWLOLIN32;${VERSION};" install --pics
 ok "--pics fetches the artwork again" "$(yesno test -f "${INSTALL}/pics/banner/NES.gsc")" "yes"
+
+# An install from before the wheel pack: pics/banner full of arcade marquees,
+# pics/alt beside it, no pics/arcade. The updater that brought this version
+# asked only whether pics/banner existed and fetched nothing, so this one has
+# to see that the wheels are missing - on a run that has no scripts to
+# install - and replace the release's folders whole, so the marquees and the
+# alternatives go from the card rather than lingering beside the wheels.
+rm -rf "${INSTALL}/pics/arcade"
+echo marquee > "${INSTALL}/pics/banner/dkong.gsc"
+mkdir -p "${INSTALL}/pics/alt"; echo alt > "${INSTALL}/pics/alt/NES_alt1.gsc"
+T2OP_HWINF="HWLOLIN32;${VERSION};" install; RC="${?}"
+ok "an install with no wheel pack fetches the artwork" "${RC}:$(said 'Installing the artwork pack')" "0:1"
+ok "the wheels are installed" "$(yesno test -f "${INSTALL}/pics/arcade/wheels.idx")" "yes"
+ok "the old arcade marquee is gone" "$(yesno test -e "${INSTALL}/pics/banner/dkong.gsc")" "no"
+ok "and so is pics/alt" "$(yesno test -e "${INSTALL}/pics/alt")" "no"
+ok "the core banners are back" "$(yesno test -f "${INSTALL}/pics/banner/NES.gsc")" "yes"
+ok "your own banners are untouched" "$(cat "${INSTALL}/pics/user/NES.gsc" 2>/dev/null)" "mine"
+ok "and your boot.png" "$(cat "${INSTALL}/pics/boot.png" 2>/dev/null)" "bootpng"
 
 T2OP_HWINF="HWLOLIN32;${VERSION};" install --force
 ok "--force reflashes a current display" "$(flashed)" "tty2oledplus-lolin32.bin chip=esp32 port=free"

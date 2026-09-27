@@ -225,6 +225,34 @@ static void scene_card(const char *name, const char *cmd, int page) {
   save(name);
 }
 
+// An arcade set's wheel logo, cut out of the pack the way the daemon does:
+// its frame in pics/arcade/wheels.idx, 8192 bytes at frame * 8192 of
+// wheels.bin.
+static void scene_wheel(const char *name, const char *set) {
+  std::string idx = repoRoot + "/pics/arcade/wheels.idx";
+  FILE *f = fopen(idx.c_str(), "r");
+  if (!f) { fprintf(stderr, "render: cannot open %s\n", idx.c_str()); return; }
+  char line[256];
+  long frame = -1;
+  size_t len = strlen(set);
+  while (fgets(line, sizeof line, f)) {
+    if (!strncmp(line, set, len) && line[len] == '|') { frame = atol(line + len + 1); break; }
+  }
+  fclose(f);
+  if (frame < 0) { fprintf(stderr, "render: %s is not in %s\n", set, idx.c_str()); return; }
+  std::string bin = repoRoot + "/pics/arcade/wheels.bin";
+  f = fopen(bin.c_str(), "rb");
+  if (!f) { fprintf(stderr, "render: cannot open %s\n", bin.c_str()); return; }
+  bool ok = fseek(f, frame * (long)sizeof logoBin, SEEK_SET) == 0 &&
+            fread(logoBin, 1, sizeof logoBin, f) == sizeof logoBin;
+  fclose(f);
+  if (!ok) { fprintf(stderr, "render: frame %ld is not in %s\n", frame, bin.c_str()); return; }
+  srcBin = logoBin;
+  actPicType = GSC;
+  oled_drawlogo(0);
+  save(name);
+}
+
 static void scene_picture(const char *name, const char *gsc) {
   if (!gsc_load((repoRoot + "/" + gsc).c_str(), logoBin, sizeof logoBin)) return;
   srcBin = logoBin;
@@ -316,9 +344,9 @@ int main(int argc, char **argv) {
   scene_card("arcade-card-1", nbajam, 0);
   scene_card("arcade-card-2", nbajam, 1);
 
-  // The artwork the card alternates with, and a computer core's banner - which
-  // is the whole of what a computer core shows.
-  scene_picture("arcade-art",  "pics/banner/nbajam.gsc");
+  // The wheel logo the card alternates with, and a computer core's banner -
+  // which is the whole of what a computer core shows.
+  scene_wheel("arcade-art", "nbajam");
   scene_picture("computer-art", "pics/banner/C64.gsc");
 
   // Power-on: the built-in logo, the version, and the comet mid-run.

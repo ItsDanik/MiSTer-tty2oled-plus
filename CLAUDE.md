@@ -172,13 +172,17 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 1993 checks, no hardware needed. |
+| `tests/` | 2041 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation **and MiSTer**: three backends, the third being a PNG reader built on the standard library, which is what the MiSTer has. |
+| `tools/wheels2gsc.py` | A folder of arcade wheel logos (colour PNG, transparent) -> 256x64 `.gsc` banners: crop, fit, colour to grey, level stretch; `--nodupes` removes identical pictures into `duplicates.txt`. Pillow. Workstation. See [Arcade wheel logos](#arcade-wheel-logos-not-wired-in-yet). |
+| `tools/gscpack.py` | A folder of 256x64 `.gsc` banners -> `<name>.bin` (raw 8192-byte frames) and `<name>.idx` (`set\|frame`, duplicates folded in). Workstation. |
+| `tools/mistergscpreview` | Shows `.gsc` files on the real panel over SSH: stops the daemon, steps through them, restarts it on Ctrl-C/q. `-r` shows a grey ramp for judging which levels the panel tells apart. Workstation. |
 | `tools/make-screenshots.sh`, `tools/screenshots/` | The README's screenshots. Compiles the display headers against the real GFX/u8g2 libraries, composes each screen into a real framebuffer and writes `docs/img/*.png`. Re-run it when a layout changes. Workstation. |
 | `pics/icon/` | The icons themselves, 27 core names over 26 systems; same path as on the MiSTer. |
-| `pics/banner/`, `pics/alt/` | The core artwork pack, 1768 banners and 137 alternatives. Upstream's, vendored, converted to one format and split. |
+| `pics/banner/` | 192 console, computer and utility core banners. Upstream's, vendored and converted to one format; the arcade marquees and the alternatives are gone. |
+| `pics/arcade/` | `wheels.bin` + `wheels.idx`: the arcade wheel logos, 12235 MAME sets in 4621 pictures. Built by `wheels2gsc.py` and `gscpack.py`. |
 | `pics/user/` | The user's own banners. Empty here, and no release writes into it. |
 | `pics/boot.png` | The user's boot screen, if they have one. Gitignored; no release writes it. |
 | `tools/tty2oled-bootimg.sh` | Installs/clears the stored boot screen. **On the MiSTer**. |
@@ -209,7 +213,7 @@ composes it.
 
 | kind | layout |
 |---|---|
-| `arcade` | full-screen artwork, then each page of the info card in turn, then the artwork again - one step every `METADATA_INTERVAL`s |
+| `arcade` | the game's wheel logo, then each page of the info card in turn, then the logo again - one step every `METADATA_INTERVAL`s |
 | `console` | split: "Now playing", a rule, the title, paged fields on the left - a page every `METADATA_INTERVAL`s, then the description page if there is one; an 86x64 icon on the right |
 | `computer` | untouched - full-screen artwork, as upstream |
 | `unknown` | as `computer`; metadata off |
@@ -218,12 +222,33 @@ A console core launched **with** its game - a frontend, or a `.mgl` - would
 otherwise never show the core's own artwork at all: `CMDCOR` composes the split
 layout directly for console kinds. `core_bootscreen_time` holds the artwork
 first. The daemon decides *whether* (`sendcoreboot`, only from `senddata`, so
-only on a core change with a game already known); the firmware decides *when
-the hold starts* (the first `meta_tick` after `tfState` goes idle, so a fade in
-front of it is not counted). No `CMDCBOOT`, no hold - which is what a game
-loaded into a running core gets, and what `0` gets. It is sent **before**
-`CMDICON`, because the icon composes the layout as it lands and would draw it a
-moment before the artwork replaced it.
+only on a console core change); the firmware decides *when the hold starts*
+(the first `meta_tick` that finds `tfState` idle, so a fade in front of it is
+not counted). No `CMDCBOOT`, no hold - which is what a game loaded into a
+running core gets, and what `0` gets. With `0` and the game already known,
+the picture goes as `CMDAPD` - stored, not drawn - so the layout is the one
+transition rather than the artwork fading in only to fade straight out.
+
+**A core change is sent in one order: `CMDMETAOFF`, the picture, `CMDCBOOT`,
+then `CMDMETA`, `CMDDESC`, `CMDICON`.** The firmware acts on each command as
+it lands - `loop()` runs `meta_tick` whenever the port is quiet - so the order
+*is* the behaviour, and two orders were wrong:
+
+- `CMDMETA` first, as it was up to 0.6.6b: a core launched with its game had
+  the transition to the layout under way before the `CMDCBOOT` behind it
+  arrived. The old screen took a palette step or two, froze for the picture's
+  blocking 8KB read, and then - `tf_stepsDue()` owed the whole fade - jumped
+  to black before the artwork faded in.
+- `CMDCBOOT` before the picture: the first idle tick, in the 50ms before
+  `CMDCOR` arrived, started the hold's clock, and the ~1s transfer plus a
+  2.6s Fade spent all of it. The artwork faded in and straight back out.
+
+After the picture, the panel is either mid-Fade (so the stamp waits for it)
+or already showing the artwork (a wipe blocks until it is done), and the
+metadata, description and icon all land while the firmware is waiting. Both
+are held by tests: `test-wire.sh` checks the order `senddata` puts on the
+wire, and `test_meta_layout` replays it against the firmware and fails on
+either of the two old ones.
 
 The hold **ends in a transition**, not a cut: `meta_transitionToConsole` renders
 the layout, snapshots it to `metaBin` and points `srcBin` there, exactly as
@@ -722,7 +747,7 @@ session. These are the fork's additions, all ESP32-only:
 | `CMDMETAOFF` | none - leave metadata mode, back to plain artwork |
 | `CMDICON` | followed by exactly 2752 raw bytes (86x64, 4bpp) |
 | `CMDSHMETA` | none - force the metadata view now |
-| `CMDCBOOT,<ms>` | one line; hold the core picture that follows for <ms> before the split layout replaces it, 0..10000. Sent only on a core change for a console core whose game is already known - receiving it at all is the decision |
+| `CMDCBOOT,<ms>` | one line; hold the core picture just sent for <ms> before the split layout replaces it, 0..10000, counted from when it is up. Sent only on a console core change, **after** the picture and before `CMDMETA` - receiving it at all is the decision |
 | `CMDDIM,<seconds>,<contrast>,<wake>[,<dim fade ms>]` | one line; 0 seconds disables; contrast 0..255, capped at the wake level; wake -1 means CONTRAST; going dim takes the fade time, 0..10000, default 6000 - waking takes `CMDFADE`'s |
 | `CMDFADE,<ms>` | one line; how long every contrast change fades, 0..4000, 0 jumps. Sent before the first `CMDCON` |
 | `CMDBOOTPIC,<core>,<effect>` | one line, no payload; show the boot image as the core's picture. Sent for MENU when `BOOTSCREEN_AS_MENU` is on. Nothing transitions if the power-on screen is still up |
@@ -808,7 +833,7 @@ settings editor's pickers are, and a typed "y" is not one: a pad cannot answer
 it. Keeping copies `tty2oled-user.ini`, `coretypes.ini`, `pics/boot.png` and
 `pics/user` into `${FAT}/tty2oledplus-saved` - one folder rather than a
 scatter of `*.saved` files, because what is kept is no longer only two inis.
-`pics/banner`, `pics/alt` and `pics/icon` are the release's and are not kept;
+`pics/banner`, `pics/arcade` and `pics/icon` are the release's and are not kept;
 a new install brings them back.
 
 With no terminal to ask in - `fb_terminal=0`, where the Scripts menu shows the
@@ -1112,18 +1137,18 @@ survive a deploy. `titleindex/`, `pics/icon/` and the rest of `pics/` move only 
 asked for by flag, because all three are large and none of them changes with
 the scripts.
 
-`pics/` is **upstream's core artwork pack, vendored into this repo** - 1905
-files, what `CMDCOR` actually puts on screen. 82MB on disk but only ~12MB
-packed, because a `.gsc` is `0X00,`-style hex text and compresses about
-sevenfold. It is vendored rather than fetched so a fresh MiSTer needs nothing
+`pics/` is **vendored into this repo**: the core banners - upstream's,
+converted - and the arcade wheel pack, what `CMDCOR` actually puts on
+screen. It is vendored rather than fetched so a fresh MiSTer needs nothing
 but this repo; upstream's picture repo and its updaters are not part of the
 fork, for the reasons under [Staying out of upstream's way](#staying-out-of-upstreams-way).
 
-`--pics` sends it as one `tar` stream rather than 1905 `scp` calls. `/media/fat`
-is mounted `sync,dirsync`, so every separate file write waits on the SD card -
-the difference is minutes against seconds. `du` on the MiSTer reports the pack
-as rather more than 82MB, which is exFAT cluster slack over 1905 small files,
-not a different set of files.
+`--pics` sends it as one `tar` stream rather than a `scp` per file.
+`/media/fat` is mounted `sync,dirsync`, so every separate file write waits on
+the SD card - the difference is minutes against seconds. It **replaces**
+`pics/banner` and `pics/arcade` on the MiSTer rather than unpacking over
+them, as the updater does, so a picture dropped here goes from the card too;
+`pics/alt` is removed in the same command.
 
 **One format, one folder per kind.** Upstream shipped five - `GSC_US`,
 `XBM_US`, `GSC`, `XBM`, `XBM_TEXT` - searched in that order, with three ini
@@ -1163,15 +1188,14 @@ is what found the `FULLPATH` bug.
 
 ## The four artwork folders
 
-0.5.8b flattened `pics/GSC` + `pics_pri` into four lower-case folders under
-`pics/`, one per kind of picture:
+`pics/` holds one folder per kind of picture, lower case:
 
 | folder | what | size | whose |
 |---|---|---|---|
-| `pics/banner` | the core artwork pack, one file per core | 256x64 | the release's |
-| `pics/alt` | its `<core>_alt1.gsc`, `_alt2.gsc` ... alternatives | 256x64 | the release's |
+| `pics/banner` | console, computer and utility core banners, one file per core | 256x64 | the release's |
 | `pics/icon` | the console icons for the split layout | 86x64 | the release's |
-| `pics/user` | banners of the user's own | 256x64 | **theirs** |
+| `pics/arcade` | the arcade wheel logos, packed: `wheels.bin`, `wheels.idx` | 256x64 | the release's |
+| `pics/user` | banners of the user's own, by core or by arcade set | 256x64 | **theirs** |
 
 The first three are replaced by every update; `pics/user` is never written to
 by one. That is the whole point of it, and it is `tty2oled-user.ini`'s
@@ -1179,34 +1203,47 @@ argument applied to artwork: `pics_pri` had the same job, but nothing said so
 in its name, and the pack folder sat one level up from it looking equally
 editable.
 
-The alternatives are their own folder because `findbanner` trims a core name
-down to a prefix to find a base picture, and a folder holding one file per
-core is what makes that safe - `_alt` files mixed in with the banners are
-exactly what a prefix search can land on by accident.
+History, since it explains what `migrate_pics` still does: 0.5.8b flattened
+upstream's `pics/GSC` + `pics_pri` into `pics/{banner,alt,icon,user}`, with
+the `_altN` alternatives split out of the banners. The wheel pack then
+replaced the arcade marquees - 1570 of the 1768 banners, every one named
+after an arcade game - and the alternatives went with them, and so did
+`RANDOMIZE_ALT_BANNERS` and `randomalt`, the dice between a banner and its
+alternatives. `deferred_setup` says so in the log if a user ini still sets
+that name (or upstream's `USE_RANDOM_ALT`), like `DIM_PERCENT` before it.
 
-**Two settings, and one of them changes upstream's behaviour deliberately:**
+**Which banners went.** Everything named after a set in the wheel index,
+unless `coretypes.ini` names it a core (`N64`, `NEOGEO` and `Saturn` are MAME
+set names too); then the arcade titles among the rest, by name - lower-case
+MAME-style set names, upstream's `A.ARKANOID`-style arcade names, `Yie Ar
+Kung Fu` and the like. Seven names were unclear and went to a person rather
+than a guess: `anpanman`, `ares`, `mazeman`, `titan`, `xenocrisis` and `Clean
+Sweep` were arcade and went too; `System1` is a core and stayed. 192 are
+left. A stray arcade banner would be unreachable from an arcade core anyway -
+see below - and cost 128KB of card and nothing else. `test-wire.sh` fails if
+a banner is named after a wheel set that is not a core.
 
-- `PRIORITIZE_USER_BANNERS="yes"` searches `pics/user` before `pics/banner`,
-  and the other way round when it is `no`. Either way the other folder is the
-  fallback. The trimming runs **per folder**, not across both, which makes the
-  priority absolute: a user banner for a shorter prefix beats the pack's
-  longer match, rather than the most specific filename winning wherever it
-  lives. Cross-folder trimming is not wrong so much as unpredictable from the
-  setting's name - a user's `MegaDrive.gsc` would be ignored because the pack
-  ships a `MegaDriveX`.
-- `RANDOMIZE_ALT_BANNERS="no"` replaces upstream's `USE_RANDOM_ALT="yes"`,
-  **off** where upstream was on. The pack's alternatives are a different
-  artist's take on a system rather than a variant of one picture, so a core
-  that looked one way yesterday looking another way today reads as a fault.
-  `randomalt` dices the banner and its alternatives uniformly - the primary is
-  one face of the die, which is what upstream's `RANDOM % (count + 1)` was -
-  and takes them from `pics/alt` and from `pics/user`, so a user can have
-  alternatives of their own without editing a folder a release replaces. The
-  base name comes from the picture that was *found*, not from the core, since
-  it may have been trimmed.
+**How a core's picture is found** (`findpicture` in `tty2oled.sh`):
 
-`deferred_setup` says so in the log if a user ini still sets the old name,
-like `DIM_PERCENT` before it.
+- An **arcade** core - `classify_core` says so, which a `.mra` in
+  `STARTPATH` makes definitive - is a game, and its picture is the game's
+  wheel: `pics/user`, then the wheel index by the whole set name, lower-cased.
+  **Never `pics/banner`**, and never a trimmed set name: that folder holds
+  cores, not games, and trimming finds a different game's wheel for 367 sets
+  (see the section below). A set with neither shows its name as text.
+  `core_kind` asks `classify_core` itself, shadowing `META_KIND`, because the
+  picture has to know the kind whether or not the metadata display is on.
+- **Every other core**: `findbanner`, `pics/user` then `pics/banner`, with
+  the name trimmed a character at a time, as before.
+
+`PRIORITIZE_USER_BANNERS="yes"` puts `pics/user` first in both, and `no`
+puts the shipped artwork first; either way the other is the fallback. The
+trimming runs **per folder**, not across both, which makes the priority
+absolute: a user banner for a shorter prefix beats the pack's longer match,
+rather than the most specific filename winning wherever it lives.
+Cross-folder trimming is not wrong so much as unpredictable from the
+setting's name - a user's `MegaDrive.gsc` would be ignored because the pack
+ships a `MegaDriveX`.
 
 **Icons have no user override folder.** `pics/user` holds 256x64 banners named
 after the core, and an 86x64 icon of the same name in there would be
@@ -1215,22 +1252,161 @@ indistinguishable from one until the firmware had read 2752 bytes of an
 
 **The migration is renames, not a download** (`migrate_pics` in `S60tty2oled`).
 It is there for the reason `place_menu_scripts` is: the update that introduces
-the new layout is applied by the *previous* updater, which knows nothing about
-moving anything - and which decides whether to fetch the 80MB pack by asking
-whether the artwork is already there, so it does not bring the new one either.
-`pics/GSC` and `pics/banner` hold byte-identical files, so the whole thing is
-`mv` on the SD card. A folder is only removed once its replacement is already
-there, so a half-finished update never leaves a MiSTer with no artwork; a user
-banner already in `pics/user` is never overwritten, because this runs on every
-start and has to be safe to run twice. `tty2oledplus_update.sh` accepts either
-layout as "the artwork is there" - `pics/` alone would skip a fresh install
-whose `pics/` holds nothing but the icons out of the scripts archive.
+a new layout is applied by the *previous* updater, which knows nothing about
+moving anything. `pics/GSC` and `pics/banner` hold byte-identical files, so
+the 0.5.8b move is `mv` on the SD card, with the `_alt` pictures now dropped
+rather than moved; and `pics/alt`, where an install from between the two
+keeps them, is removed on every start - nothing reads it. A folder is only
+otherwise removed once its replacement is already there, so a half-finished
+update never leaves a MiSTer with no artwork; a user banner already in
+`pics/user` is never overwritten, because this runs on every start and has
+to be safe to run twice.
 
-**The icons ship in the scripts archive, the banners in the pack.** 27 small
-files that every update should carry, against 80MB fetched only when it is
-missing. `pics/user` ships in neither, and `deploy-mister.sh --pics` excludes
-it from its tar - the repo's copy is empty, and sending it would be this
-fork's version of copying `tty2oled-user.ini` over the user's.
+**The wheel pack arrives one Update late on an existing install.** The
+updater that installs the wheel release is the previous one, and it decides
+whether to fetch the artwork by asking whether `pics/banner` exists - which
+it does, full of marquees. So it fetches nothing, and until the next Update
+every arcade core shows its name as text; `deferred_setup` logs why and what
+to do. The new updater asks for `pics/arcade/wheels.idx` and `.bin` as well,
+so that next Update - even one with no new version, which otherwise does
+nothing - fetches the pack. It then **replaces** `pics/banner` and
+`pics/arcade` whole, unpacking beside the install first, and removes
+`pics/alt`: unpacked over the old folders, the 1570 marquees would stay on
+the card for good, 128KB each. `test-installer.sh` plays exactly this -
+marquee and `pics/alt` present, no wheels, same version.
+
+**The icons ship in the scripts archive, the banners and wheels in the
+pack.** 27 small files that every update should carry, against a pack
+fetched only when it is missing. `pics/user` ships in neither, and
+`deploy-mister.sh --pics` excludes it from its tar - the repo's copy is
+empty, and sending it would be this fork's version of copying
+`tty2oled-user.ini` over the user's. `make-release.sh` refuses to build
+without `wheels.bin` and `wheels.idx`.
+
+## Arcade wheel logos
+
+An arcade core shows its game's wheel logo. `tools/wheels2gsc.py` converts a
+folder of MAME wheel logos (the 0.277 set: 12235 transparent colour PNGs,
+named by MAME set) into 256x64 `.gsc` banners, `tools/gscpack.py` packs them
+into `pics/arcade`, and `tools/mistergscpreview` shows any `.gsc` on the real
+panel. They replaced upstream's marquee scans, which were busy, mostly white,
+and 256x64 of lit pixels, where a wheel is a logo on black. To rebuild the
+pack from a new wheel set:
+
+```bash
+./tools/wheels2gsc.py ~/Downloads/MAME0.277Wheels -o /tmp/wheels-gsc --nodupes --report /tmp/wheels.csv
+./tools/gscpack.py /tmp/wheels-gsc -o pics/arcade
+```
+
+**Converted on the workstation, not on the MiSTer.** Measured: `png2gsc.py`'s
+standard-library backend takes 4-16s per wheel on the DE10-Nano (6.0s for
+`pacman`, 16.0s for `mslug`) before any of the cropping or level work, and
+refuses the 1136 interlaced ones. Pillow does the whole job in 5ms. An arcade
+core change cannot wait a quarter of a minute for its picture.
+
+**Brightness: a level stretch, two narrow fixes, and nothing cleverer.**
+Each logo's 2nd..99th percentile is stretched over `--floor`..255 with
+`--gamma`. Two fixes sit on top, and only change what they are aimed at:
+
+- A logo in one flat colour has nothing between its two percentiles, and
+  the stretch put its body on the floor - Cloud 9, VS. Tennis and Wall St
+  came out near black with a white rim of resampling ringing. A span under
+  `MIN_SPAN` is widened downwards, so the colour itself is the top.
+- A logo whose brightest pixel still falls short of level 15 has every
+  non-black pixel raised by the shortfall, **at most two levels**
+  (`MAX_LIFT`). 171 of the 12235 are lifted.
+- A logo with nothing above level 4 (`DARK_TOP`) is dark lettering drawn for
+  a light background, invisible on a black panel however far it is lifted.
+  It is converted again with its greys inverted. In the 0.277 set that is
+  13 sets, all of which came out at exactly level 2 - the floor - with the
+  next-dimmest logo at level 8, so the line is not a fine one.
+
+`--report` lists each set's brightest level, its lift and whether it was
+inverted. Left dim on purpose: logos like The Goonies and Marine Boy, whose
+lettering sits around level 5-7 because a small white detail (the skull, the
+hearts) already takes 15. Lifting the lettering to meet the detail is what
+flattened the hearts in the body-anchored version.
+
+Everything else comes out byte-identical to the plain stretch. A version
+that mapped each logo's *body* - its most prominent colour - to level 15
+was built and thrown away: on the panel it read as less contrast and
+gradients squashed together, even where every part of the logo stayed
+distinct on a contact sheet. The contact sheet was not the panel. What that
+experiment did measure on the real SSD1322 (`mistergscpreview -r`, the grey
+ramp): every pair of neighbouring levels is visible except 0 and 1, so
+level 1 is black and `--floor` 40, which lands on level 2, is the dimmest
+grey a dark outline can usefully have.
+
+**`--nodupes` and `duplicates.txt`.** A set's clones and bootlegs mostly share
+the parent's wheel: 7614 of the 12235 pictures are byte-identical to another,
+in 2406 groups (the largest is 416 IGT poker sets), leaving 4621 files. That
+matters on the card - `/media/fat` here is exFAT with **128KB clusters**, so
+every file costs 128KB whatever its size, and 12235 of them would be 1.5GB.
+The duplicates are found by hashing the *converted* `.gsc`, so two different
+PNGs that come out as the same picture count as one. Of each group the
+shortest name is kept (then alphabetical) - nearly always the parent, since a
+parent's name is a prefix of most of its clones'. Every name removed goes into
+`duplicates.txt` in the same folder as `<removed set>|<kept set>`. Runs are
+cumulative: an entry whose kept set is later removed follows it to the new
+one, and an entry is dropped once its set has a file of its own again.
+
+**Packed: `tools/gscpack.py` makes `wheels.bin` and `wheels.idx`.** The
+converted folder is the working copy; what goes to the MiSTer is one pack.
+`wheels.bin` is the 4621 pictures back to back, raw, 8192 bytes each - what
+`tail -n +4 | xxd -r -p` makes of a `.gsc`, so no `xxd` at run time - and
+`wheels.idx` is `<set>|<frame>`, one line for **every** set, 12235 of them:
+a set whose picture is shared points at the one frame, which folds
+`duplicates.txt` into the index. 37.9MB and 164KB, about 10MB gzipped, where
+4621 loose files would take ~590MB of 128KB clusters on this card and minutes
+to copy onto a `sync` mount. Set names are lower-cased in the index, because
+the file names they replace were matched without case on exFAT. The packer
+reads every `.gsc` through `xxd -r -p` rather than its own parser, for the
+reason under [Artwork](#artwork-icons-and-the-boot-screen). Checked: every
+one of the 12235 sets, looked up and cut out of the pack, is byte-identical
+to its own unpacked conversion.
+
+**How the daemon shows a set's picture** (`findwheel`, then `senddata`):
+
+```bash
+frame="$(awk -F'|' -v c="${core,,}" '$1 == c { print $2; exit }' "${WHEEL_IDX}")"
+[ -n "${frame}" ] && dd if="${WHEEL_BIN}" bs=8192 skip="${frame}" count=1 2>/dev/null >"${TTYDEV}"
+```
+
+after the `CMDCOR,<core>,<effect>` header and `WAITSECS`, exactly where
+`senddata` now does `tail -n +4 "${picfnam}" | xxd -r -p`. Measured on the
+DE10-Nano: the lookup is ~100ms at worst over the 12235 lines, against the
+~0.7s the 8KB transfer takes; GNU `dd` (coreutils, not busybox) seeks to the
+frame. Match the whole field with `awk` - not `grep "^${core}|"`, which makes
+an MRA's setname a regex. The `# frames N` header line is there to check
+the `.bin` against: its size must be N * 8192, or the two are from different
+runs.
+
+The order of lookups:
+
+1. `pics/user/<core>.gsc`, as for every banner - the user's own beats the
+   pack, as the priority rules under [The four artwork
+   folders](#the-four-artwork-folders) already say.
+2. The wheel index, whole name only. `findwheel` also checks the frame
+   against the size of the `.bin` actually there, so an index from one run
+   beside a pack from another sends nothing rather than a picture cut out of
+   the middle of two, or a read past the end the firmware waits on forever.
+3. Nothing else: the name as text. `pics/banner` is not searched for an
+   arcade core - it holds cores, not games, since the marquees went - so an
+   MRA whose set name is not a MAME name gets its name, or a picture of the
+   user's own in `pics/user`.
+
+**Never trim a name to search the index.** Measured over the sets that share
+a picture: trimming finds the identical picture for 4897 of them, a
+*different game's* wheel for 367 (`hook_408` -> `hook`, `spyhuntsp` ->
+`spy`, `topgunbl` -> `topgun`), and nothing at all for 2350 (`rayforcej`'s
+wheel is kept as `gunlock`, `trvmstrb`'s as `trvgns`). An index entry is a
+statement about the pixels; a shared prefix is only a statement about the
+name.
+
+It ships in the artwork archive, `tty2oledplus-pics.tar.gz`, with the core
+banners - about 10MB of the archive, fetched only when missing. Still open:
+where the PNGs come from - redistributing 12k third-party logos is not the
+question vendoring upstream's pack was.
 
 ## Things that cost time, recorded so they do not again
 

@@ -35,14 +35,14 @@ the fields come round again.
 ![The description page: Sonic the Hedgehog's description scrolling under its
 title, the Mega Drive icon beside it](docs/img/console-description.png)
 
-**Arcade cores** alternate the artwork with an info card, one step every
-`METADATA_INTERVAL` seconds — artwork, each page of the card in turn, then the
-artwork again. The card's top half is the console layout's, across the whole
+**Arcade cores** alternate the game's logo with an info card, one step every
+`METADATA_INTERVAL` seconds — logo, each page of the card in turn, then the
+logo again. The card's top half is the console layout's, across the whole
 width: "Now playing", the title — scrolling when it is too long — and a corner
 that says Arcade. Below it, the details from the core's `.mra`, two to a row,
 and the long ones, like the button names, on a row each.
 
-![NBA Jam's marquee artwork](docs/img/arcade-art.png)
+![NBA Jam's wheel logo](docs/img/arcade-art.png)
 
 ![Card page one: year, manufacturer, region, orientation, core, author, set and
 MAME version](docs/img/arcade-card-1.png)
@@ -280,7 +280,7 @@ So to change something the editor does not cover, put it in the user ini and
 restart the display:
 
 ```sh
-echo 'RANDOMIZE_ALT_BANNERS="yes"' >> /media/fat/tty2oledplus/tty2oled-user.ini
+echo 'UPDATE_ALL_POLL="5"' >> /media/fat/tty2oledplus/tty2oled-user.ini
 /media/fat/tty2oledplus/S60tty2oled restart
 ```
 
@@ -320,8 +320,7 @@ sent over when it restarts, so nothing needs reflashing.
 | `SELF_UPDATE_SCREEN` | `yes` | The same, while tty2oled+ updates itself. |
 | `ROTATE` | `no` | Turn the whole display 180°. |
 | `USE_NAMES_TXT` | `yes` | Name cores as your MiSTer menu names them. |
-| `PRIORITIZE_USER_BANNERS` | `yes` | Look in `pics/user` before the artwork pack, so a picture you put there replaces the shipped one. `no` searches the pack first. |
-| `RANDOMIZE_ALT_BANNERS` | `no` | Where a core has `_altN` alternatives, dice between them on every load — upstream's behaviour. Off shows the same picture every time. |
+| `PRIORITIZE_USER_BANNERS` | `yes` | Look in `pics/user` before the shipped banners and arcade logos, so a picture you put there replaces the shipped one. `no` searches the shipped artwork first. |
 | `GAME_ROOTS` | SD, `usb0`–`usb5`, `cifs` | Where your games live, searched in order. |
 
 `coretypes.ini`, in the same folder, says which cores are consoles, which are
@@ -370,23 +369,25 @@ All of it lives under `/media/fat/tty2oledplus/pics/`, one kind per folder:
 
 | folder | what | size |
 |---|---|---|
-| `pics/banner` | the core artwork pack — the full-screen picture | 256x64 |
-| `pics/alt` | its alternatives, `<core>_alt1.gsc`, `_alt2.gsc` … | 256x64 |
+| `pics/banner` | console and computer core banners — the full-screen picture | 256x64 |
 | `pics/icon` | the console icons, for the split layout | 86x64 |
+| `pics/arcade` | the arcade games' wheel logos, packed: `wheels.bin` and `wheels.idx` | 256x64 |
 | `pics/user` | **yours** | 256x64 |
 | `pics/boot.png` | **yours** — the boot screen, see below | 256x54 |
 
 The first three are the release's and are replaced by every update. `pics/user`
 is yours and no update ever touches it — which is what makes it the place to
 put a picture of your own, rather than editing `pics/banner` and having the
-next release undo it. A file there named after the core replaces the pack's
+next release undo it. A file there named after the core — or, for an arcade
+game, after its MAME set, `sf2.gsc` — replaces the shipped one
 (`PRIORITIZE_USER_BANNERS`, on by default).
 
-A core with alternatives shows the same one every time unless you turn
-`RANDOMIZE_ALT_BANNERS` on, which dices between the picture and its
-alternatives on each load. Upstream does that by default; this fork does not,
-because a core that looked one way yesterday looking another way today reads
-as a fault rather than a feature.
+An arcade game is shown by its wheel logo, found by the set name in its
+`.mra`: 12235 MAME sets, whose clones and bootlegs share their parent's logo.
+They are one file rather than thousands because an SD card stores every file
+in a whole cluster: 4621 separate pictures would take about 590MB of a large
+card, and packed they take 38MB. A set the pack does not know shows its name
+as text.
 
 ### Icons
 
@@ -409,8 +410,9 @@ MiSTer names it: `MegaDrive.gsc`, `GBA.gsc`, `NES.gsc`.
 # then copy it into /media/fat/tty2oledplus/pics/icon/
 ```
 
-Core artwork — the full-screen picture — is **256x64**, named the same way, and
-goes in `/media/fat/tty2oledplus/pics/user/`:
+Core artwork — the full-screen picture — is **256x64**, named the same way (or
+after the MAME set, for an arcade game), and goes in
+`/media/fat/tty2oledplus/pics/user/`:
 
 ```sh
 ./tools/png2gsc.py --banner --out MegaDrive.gsc art.png

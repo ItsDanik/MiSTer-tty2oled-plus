@@ -4,6 +4,31 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.6.7b — 2026-09-27
+
+- **Arcade games show their logo.** Every arcade game now gets its wheel
+  logo - the game's title artwork, on black - instead of a marquee scan,
+  alternating with the info card as before. 12235 MAME sets are covered;
+  clones and bootlegs show their parent's logo. A game without one shows its
+  name.
+- **Update twice to get them.** The first Update installs this version, but
+  it is carried out by the version you had, which does not know about the
+  logos, so it does not fetch them - arcade games show their name until
+  then. Run **Update** from the tty2oledplus menu once more and they are
+  downloaded (about 10MB). The display log says so while they are missing.
+- **The arcade marquees and the alternative pictures are gone**, and with
+  them the setting that picked between a core's pictures at random. The
+  update removes them from the SD card - about 1700 files. Console and
+  computer cores keep their banners, and new ones for the 3DO, Atari Lynx,
+  Mega-CD, Nintendo 64 and Virtual Boy.
+- **Your own pictures still win.** A `.gsc` in `pics/user` named after the
+  core, or after the arcade game's MAME set (`sf2.gsc`), replaces the shipped
+  one, as before.
+- **A console core started together with its game** - from a frontend, a
+  `.mgl` or Recents - no longer stutters and jumps to black before its
+  artwork fades in, and the core boot screen time is no longer used up
+  before the artwork is even on screen.
+
 ## 0.6.6b — 2026-09-27
 
 - **Console game details turn a page every 12 seconds**, like the arcade

@@ -14,7 +14,7 @@ HERE="$(cd "$(dirname "${0}")" && pwd)"
 ROOT="$(dirname "${HERE}")"
 FIX="${HERE}/fixtures"
 TMP="${FIX}/tmp"
-mkdir -p "${TMP}" "${TMP}/pics/icon" "${TMP}/pics/banner" "${TMP}/pics/alt" "${TMP}/pics/user"
+mkdir -p "${TMP}" "${TMP}/pics/icon" "${TMP}/pics/banner" "${TMP}/pics/arcade" "${TMP}/pics/user"
 
 # Some containers have no xxd; tests/bin provides a stand-in. MiSTer has the
 # real thing, which is what the daemon uses.
@@ -62,8 +62,9 @@ debug="false"
 debugfile="${TMP}/debuglog"
 iconfolder="${TMP}/pics/icon"
 bannerfolder="${TMP}/pics/banner"
-altbannerfolder="${TMP}/pics/alt"
 userbannerfolder="${TMP}/pics/user"
+wheelpack="${TMP}/pics/arcade/wheels.bin"
+wheelindex="${TMP}/pics/arcade/wheels.idx"
 
 dbug() { :; }
 
@@ -240,53 +241,104 @@ ok "and the trimming one would have" "${BANNERFILE}" "${bannerfolder}/upd.gsc"
 rm -f "${bannerfolder}/upd.gsc"
 
 # ---------------------------------------------------------------------------
-section "banners: the alternatives, and that they are off by default"
+section "arcade: the wheel pack, by whole set name"
 # ---------------------------------------------------------------------------
-printf '#\n#\n#\n00\n' > "${altbannerfolder}/NES_alt1.gsc"
-printf '#\n#\n#\n00\n' > "${altbannerfolder}/NES_alt2.gsc"
+# Three frames, each one byte value throughout so a frame is recognisable on
+# the wire: 0a (a lone newline, like the picture fixtures above), 11 and 22.
+{ head -c 8192 /dev/zero | tr '\0' '\n'
+  head -c 8192 /dev/zero | tr '\0' '\021'
+  head -c 8192 /dev/zero | tr '\0' '\042'; } > "${wheelpack}"
+cat > "${wheelindex}" <<'EOIDX'
+# tty2oled+ picture index for wheels.bin, written by tools/gscpack.py
+# frames 3
+dkong|0
+gunlock|2
+nes|1
+pacman|1
+rayforcej|2
+sf2|0
+sf2ua|0
+EOIDX
+frame_bytes() { dd if="${wheelpack}" bs=8192 skip="${1}" count=1 2>/dev/null | od -An -tx1 | tr -s ' \n' ' ' | cut -c1-12; }
 
-unset RANDOMIZE_ALT_BANNERS
-PICKED=""
-for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-  PICKED="${PICKED}$(randomalt "${bannerfolder}/NES.gsc")\n"
-done
-ok "off by default: twenty loads, one picture" \
-   "$(printf "${PICKED}" | sort -u | wc -l | tr -d ' ')" "1"
-ok "and it is the banner itself" \
-   "$(randomalt "${bannerfolder}/NES.gsc")" "${bannerfolder}/NES.gsc"
+reset_capture
+printf '%s\n' "${FIX}/mra/dkong.mra" > "${TMP}/STARTPATH"
+findpicture "sf2"
+ok "an arcade set is found in the pack" "${PICFRAME}:${PICFILE}" "0:"
+findpicture "sf2ua"
+ok "a set that shares its parent's picture points at the same frame" "${PICFRAME}" "0"
+findpicture "rayforcej"
+ok "and one whose picture is kept under an unrelated name" "${PICFRAME}" "2"
+findpicture "SF2"
+ok "the name is matched without case, as exFAT file names were" "${PICFRAME}" "0"
 
-# On, every candidate has to be reachable - the primary included, which is
-# what upstream's "RANDOM % (count + 1)" amounted to. Twenty rolls of a fair
-# three-sided die miss a face about one time in 3000, and RANDOM is seeded
-# from the shell, so this is run until it has seen them all or given up.
-RANDOMIZE_ALT_BANNERS="yes"
-PICKED=""
-for i in $(seq 1 60); do
-  PICKED="${PICKED}$(randomalt "${bannerfolder}/NES.gsc")\n"
-done
-ok "on: the banner and both alternatives all come up" \
-   "$(printf "${PICKED}" | sort -u | tr '\n' ' ')" \
-   "${altbannerfolder}/NES_alt1.gsc ${altbannerfolder}/NES_alt2.gsc ${bannerfolder}/NES.gsc "
+# Never trimmed: two thirds of the MAME sets share a picture, and a prefix of
+# a set name finds a different game's wheel for hundreds of them.
+findpicture "sf2xyz"; r=$?
+ok "a set the pack does not have is not trimmed to one it does" "${r}:${PICFRAME}:${PICFILE}" "1::"
+# And the banner folder is never searched for an arcade core: it holds
+# console and computer banners only, and nothing there is a game.
+printf '#\n#\n#\n00\n' > "${bannerfolder}/sf2xyz.gsc"
+findpicture "sf2xyz"; r=$?
+ok "nor looked for among the core banners" "${r}:${PICFILE}" "1:"
+rm -f "${bannerfolder}/sf2xyz.gsc"
 
-# Alternatives of your own live beside your own banner, since pics/alt is the
-# pack's and an update replaces it.
-printf '#\n#\n#\n11\n' > "${userbannerfolder}/NES_alt9.gsc"
-PICKED=""
-for i in $(seq 1 60); do
-  PICKED="${PICKED}$(randomalt "${bannerfolder}/NES.gsc")\n"
-done
-contains "yours in pics/user are diced in too" \
-   "$(printf "${PICKED}" | sort -u | tr '\n' ' ')" "${userbannerfolder}/NES_alt9.gsc"
-rm -f "${userbannerfolder}/NES_alt9.gsc"
+# pics/user comes first, as it does for every core - a picture of your own
+# for a set beats the pack's - and PRIORITIZE_USER_BANNERS turns it round.
+printf '#\n#\n#\n33\n' > "${userbannerfolder}/pacman.gsc"
+PRIORITIZE_USER_BANNERS="yes"
+findpicture "pacman"
+ok "yours beats the pack" "${PICFILE}:${PICFRAME}" "${userbannerfolder}/pacman.gsc:"
+PRIORITIZE_USER_BANNERS="no"
+findpicture "pacman"
+ok "and the pack wins when told to" "${PICFILE}:${PICFRAME}" ":1"
+findpicture "puckman"; r=$?
+ok "with yours as the fallback, by the same trimming as any banner of yours" \
+   "${r}:${PICFILE}" "1:"
+PRIORITIZE_USER_BANNERS="yes"
+rm -f "${userbannerfolder}/pacman.gsc"
 
-# The alternatives are named after the picture that was found, not after the
-# core - it may have been trimmed down to a prefix on the way.
-findbanner "NESabc"
-ok "a trimmed match still finds its own alternatives" \
-   "$(for i in $(seq 1 60); do randomalt "${BANNERFILE}"; echo; done | sort -u | wc -l | tr -d ' ')" "3"
+# A console core never looks in the pack, even for a name it holds.
+printf '/media/fat/_Console/NES_20240101.rbf\n' > "${TMP}/STARTPATH"
+printf '#\n#\n#\n00\n' > "${bannerfolder}/NES.gsc"
+findpicture "NES"
+ok "a console core's picture is its banner" "${PICFILE}:${PICFRAME}" "${bannerfolder}/NES.gsc:"
+rm -f "${bannerfolder}/NES.gsc"
 
-RANDOMIZE_ALT_BANNERS="no"
-rm -f "${altbannerfolder}/NES_alt1.gsc" "${altbannerfolder}/NES_alt2.gsc" "${bannerfolder}/NES.gsc"
+# An index from one run beside a pack from another: a frame past the end of
+# the .bin would leave the firmware waiting for bytes that never come.
+printf '%s\n' "${FIX}/mra/dkong.mra" > "${TMP}/STARTPATH"
+printf 'gone|3\n' >> "${wheelindex}"
+findpicture "gone"; r=$?
+ok "a frame the .bin does not have is not sent" "${r}:${PICFRAME}" "1:"
+mv "${wheelpack}" "${wheelpack}.away"
+findpicture "sf2"; r=$?
+ok "and no pack at all is no picture, not an error" "${r}:${PICFRAME}" "1:"
+mv "${wheelpack}.away" "${wheelpack}"
+
+# On the wire: the header, then exactly the frame's 8192 bytes.
+reset_capture
+printf '%s\n' "${FIX}/mra/dkong.mra" > "${TMP}/STARTPATH"
+TRANSITION="-1"; BOOTSCREEN_AS_MENU="yes"
+SHOW_METADATA="no"; META_KIND="left-alone"
+senddata "pacman" >/dev/null 2>&1
+SHOW_METADATA="yes"
+ok "the wheel goes out as CMDCOR and its frame" \
+   "$(captured | head -c 40 | head -n1)" "CMDCOR,pacman,${TRANSITION}"
+ok "8192 bytes of it, and nothing else" \
+   "$(captured | tail -n +2 | wc -c | tr -d ' ')" "8192"
+ok "the right frame" "$(captured | tail -n +2 | od -An -tx1 | tr -s ' \n' ' ' | cut -c1-12)" \
+   "$(frame_bytes 1)"
+# With the metadata display off, META_KIND is never set - the lookup asks
+# the core's kind itself, and leaves META_KIND as it found it.
+ok "without touching META_KIND" "${META_KIND}" "left-alone"
+META_KIND=""
+
+reset_capture
+SHOW_METADATA="no"
+senddata "notinpack" >/dev/null 2>&1
+SHOW_METADATA="yes"
+ok "a set the pack lacks goes out as its name, as text" "$(captured)" "notinpack"
 
 # ---------------------------------------------------------------------------
 section "computer cores turn metadata mode off"
@@ -345,8 +397,9 @@ sendmeta "dkong"
 ok "first send goes out"      "$(sync_capture; wc -l < "${CAPTURE}")" "1"
 sendmeta "dkong"
 ok "identical repeat suppressed" "$(sync_capture; wc -l < "${CAPTURE}")" "1"
-sendmeta "dkong" force
-ok "force resends"            "$(sync_capture; wc -l < "${CAPTURE}")" "2"
+# A core change resends regardless: its CMDMETAOFF has just reset the firmware.
+senddata "dkong" >/dev/null 2>&1
+ok "a core change resends"    "$(captured | grep -ac '^CMDMETA,')" "2"
 
 reset_capture
 printf '%s\n' "${FIX}/mra/dkong.mra" > "${TMP}/STARTPATH"
@@ -371,7 +424,7 @@ printf 'GAMEBOY\n' > "${TMP}/CORENAME"          # core written AFTER the game st
 printf 'GAMEBOY\n' > "${TMP}/RBFNAME"
 printf 'console\n' > "${TMP}/coretypes" 2>/dev/null || true
 printf 'GAMEBOY=console\n' > "${TMP}/coretypes"
-sendmeta "GAMEBOY" force            # a core change, which is when this applies
+senddata "GAMEBOY" >/dev/null 2>&1  # a core change, which is when this applies
 out="$(captured)"
 contains "metadata mode turned off" "${out}" "CMDMETAOFF"
 case "${out}" in
@@ -543,44 +596,64 @@ ok "every shipped fade time is one the firmware will take" "${BAD}" ""
 section "the artwork pack is one folder of one format"
 # ---------------------------------------------------------------------------
 # 0.4.10b finished upstream's half-done migration from 1bpp .xbm to 4bpp .gsc.
-# The daemon looks in pics/user, pics/banner, pics/alt and pics/icon and
-# nowhere else, so anything that is not a .gsc in the pack is unreachable by
-# construction, and a .gsc that does not decode to exactly 8192 bytes is
-# dropped by the firmware as a truncated transfer - silently, which is why it
-# is worth a test.
-ok "pics/ holds the four folders" "$(ls "${ROOT}/pics" | tr '\n' ' ')" "alt banner icon user "
-ok "and nothing in them but .gsc files" \
-   "$(find "${ROOT}/pics/banner" "${ROOT}/pics/alt" "${ROOT}/pics/icon" -type f ! -name '*.gsc' | head -n3 | tr '\n' ' ')" ""
+# The daemon looks in pics/user, pics/banner and pics/icon for files, and in
+# the wheel pack in pics/arcade, and nowhere else, so anything that is not a
+# .gsc among the banners is unreachable by construction, and a .gsc that does
+# not decode to exactly 8192 bytes is dropped by the firmware as a truncated
+# transfer - silently, which is why it is worth a test.
+ok "pics/ holds the four folders" "$(ls "${ROOT}/pics" | tr '\n' ' ')" "arcade banner icon user "
+ok "and nothing among the banners and icons but .gsc files" \
+   "$(find "${ROOT}/pics/banner" "${ROOT}/pics/icon" -type f ! -name '*.gsc' | head -n3 | tr '\n' ' ')" ""
+ok "pics/arcade is the pack and its index, nothing else" \
+   "$(ls "${ROOT}/pics/arcade" | tr '\n' ' ')" "wheels.bin wheels.idx "
 
-# Alternatives are in pics/alt and nowhere else: the banner folder is one file
-# per core, which is what lets findbanner trim a core name down to a prefix
-# without ever landing on a variant.
-ok "no alternatives left among the banners" \
-   "$(ls "${ROOT}/pics/banner" | grep -c '_alt')" "0"
-ok "and the alt folder is nothing but" \
-   "$(ls "${ROOT}/pics/alt" | grep -vc '_alt[0-9]*\.gsc$')" "0"
+# The alternatives and the dice between them are gone, and so are the arcade
+# marquees: an arcade core's picture is its wheel, and pics/banner is never
+# searched for one, so a marquee left there would be 128KB of card for a
+# picture nothing can reach.
+ok "no alternatives among the banners" "$(ls "${ROOT}/pics/banner" | grep -c '_alt')" "0"
+# N64, NEOGEO and Saturn are MAME set names too, and console cores in
+# coretypes.ini: those are banners, and stay.
+MARQUEES="$(ls "${ROOT}/pics/banner" | sed 's/\.gsc$//' | tr 'A-Z' 'a-z' \
+            | grep -Fxf <(grep -v '^#' "${ROOT}/pics/arcade/wheels.idx" | cut -d'|' -f1) \
+            | grep -vixFf <(grep -v '^[[:space:]]*#' "${ROOT}/coretypes.ini" | grep '=' | cut -d= -f1) \
+            | head -n5 | tr '\n' ' ')"
+ok "and no banner but a core's is named after a set the wheel pack has" "${MARQUEES}" ""
 
-# The fifteen converted from .xbm, by name: these are the ones that would have
-# gone blank had the conversion been skipped, so they are pinned rather than
-# sampled. Decoded through the daemon's own reader.
-CONVERTED="A.ARKANOID a.astdelux A.COSMIC alienaru arkanoiduo"
-CONVERTED="${CONVERTED} contrae Cotton HyperOlympic jtsdram48 jtsdram96 quartet2a tokiob"
-BAD=""
-for n in ${CONVERTED} "Clean Sweep" "Diet Go Go" "Yie Ar Kung Fu"; do
-  f="${ROOT}/pics/banner/${n}.gsc"
-  if [ ! -e "${f}" ]; then BAD="${BAD} ${n}:missing"; continue; fi
-  b="$(tail -n +4 "${f}" | xxd -r -p | wc -c)"
-  [ "${b}" = "8192" ] || BAD="${BAD} ${n}:${b}"
-done
-ok "every picture converted from .xbm is a full 8192-byte .gsc" "${BAD}" ""
+# The pack itself: every frame whole, every line pointing inside it, every
+# frame used, and names lower case and unique - the lookup lower-cases a core
+# name, and a line it could never match is a picture nobody sees.
+PACKCHECK="$(python3 - "${ROOT}/pics/arcade" <<'EOPY'
+import os, sys
+d = sys.argv[1]
+size = os.path.getsize(os.path.join(d, "wheels.bin"))
+frames, names, used, bad = None, set(), set(), []
+for line in open(os.path.join(d, "wheels.idx")):
+    line = line.rstrip("\n")
+    if line.startswith("# frames "):
+        frames = int(line.split()[2])
+    if line.startswith("#"):
+        continue
+    name, _, frame = line.partition("|")
+    if name != name.lower(): bad.append(f"{name}:case")
+    if name in names: bad.append(f"{name}:twice")
+    names.add(name)
+    used.add(int(frame))
+if frames is None: bad.append("no frames line")
+elif size != frames * 8192: bad.append(f"bin is {size} bytes, not {frames} x 8192")
+elif used != set(range(frames)): bad.append(f"{frames - len(used)} frames unused, or a line past the end")
+print(" ".join(bad[:5]))
+EOPY
+)"
+ok "the wheel pack and its index agree" "${PACKCHECK}" ""
 
-# And the pack at large, since a picture that is not exactly 8192 bytes is a
+# The banners at large, since a picture that is not exactly 8192 bytes is a
 # short readBytes in the firmware, which draws the transfer-error bitmap - the
 # core looks broken rather than unpainted. upstream's invinco.gsc was one: 6976
 # bytes of what renders as static, and it had been showing a transfer error for
-# as long as it has been in the pack. One python pass rather than 1905 pipes,
-# which is the difference between a second and a minute.
-SHORT="$(python3 - "${ROOT}/pics/banner" "${ROOT}/pics/alt" <<'EOPY'
+# as long as it has been in the pack. One python pass rather than a pipe per
+# file, which is the difference between a second and a minute.
+SHORT="$(python3 - "${ROOT}/pics/banner" <<'EOPY'
 import glob, os, sys
 def decode(b):
     out = bytearray(); pending = None
@@ -601,7 +674,7 @@ for f in files:
 print(' '.join(bad))
 EOPY
 )"
-ok "and so is every other picture in the pack" "${SHORT}" ""
+ok "and every banner is a whole 8192-byte picture" "${SHORT}" ""
 
 # The suite's own xxd stand-in, for machines with no real one. It has to agree
 # with the real thing on the pack's "0X1f,0Xa2," spelling, and it did not: it
@@ -628,7 +701,6 @@ section "transitions: -2 reaches the firmware, and the ini lists every effect"
 # ---------------------------------------------------------------------------
 reset_capture
 TRANSITION="-2"
-RANDOMIZE_ALT_BANNERS="no"
 newcore="NES"; META_ICON=""
 printf '#\n#\n#\n00\n' > "${TMP}/pics/banner/NES.gsc"
 senddata "NES" >/dev/null 2>&1
@@ -742,18 +814,104 @@ sendcoreboot
 ok "a value that is not a number sends nothing" "$(sync_capture; stat -c%s "${CAPTURE}")" "0"
 core_bootscreen_time="3000"
 
-# Order matters as much as the command: the icon composes the split layout as
-# soon as it lands, so it has to come after the hold is armed or it would draw
-# the layout a moment before the artwork replaced it.
-ok "the hold is armed before the icon is sent" \
-   "$(grep -n 'sendcoreboot$\|sendicon "\${META_ICON}"' "${ROOT}/tty2oled.sh" \
-      | head -n2 | cut -d: -f2 | sed 's/^ *//;s/\[.*&& //' | paste -sd' ')" \
-   "sendcoreboot sendicon \"\${META_ICON}\""
+# ---------------------------------------------------------------------------
+section "a core change sends its picture before the game's details"
+# ---------------------------------------------------------------------------
+# The firmware acts on each command as it lands. When CMDMETA went first, a core
+# launched with its game had the transition to the layout started before the
+# CMDCBOOT behind it arrived; the 8KB picture's blocking read then froze that
+# fade, and the panel jumped to black. So on a core change: leave the old
+# layout, send the picture, and only then the game.
+#
+# The hold goes between the two. Ahead of the picture, the firmware's first
+# idle tick - in the 50ms before CMDCOR - started its clock, and the transfer
+# and a Fade used the whole of it up: the artwork faded in and straight out.
+#
+# The same-second mtimes are what a launch that brings its game looks like -
+# a frontend, a .mgl, Recents - and what build_meta accepts on a core change.
+launch_with_game() {
+  reset_capture
+  printf 'GBA=console\n'                          > "${TMP}/coretypes"
+  printf '/media/fat/_Console/GBA_20240101.rbf\n' > "${TMP}/STARTPATH"
+  printf '/media/fat/games/GBA\n'                 > "${TMP}/FULLPATH"
+  printf 'Advance Wars (USA).gba\n'               > "${TMP}/CURRENTPATH"
+  printf 'selected\n'                             > "${TMP}/FILESELECT"
+  printf 'GBA\n'                                  > "${TMP}/CORENAME"
+  touch -r "${TMP}/CURRENTPATH" "${TMP}/CORENAME" "${TMP}/FULLPATH"
+}
+# The command names in the order they reached the port. The picture fixture
+# decodes to a lone newline, so no payload byte can run into a command.
+wire_order() { captured | grep -aoE '^CMD[A-Z]+' | paste -sd' '; }
+
+TRANSITION="-2"; BOOTSCREEN_AS_MENU="yes"
+printf '#\n#\n#\n0a\n' > "${bannerfolder}/GBA.gsc"
+{ echo "#"; echo "#"; echo "#"; head -c 2752 /dev/zero | xxd -p; } > "${iconfolder}/GBA.gsc"
+
+launch_with_game
+core_bootscreen_time="3000"
+senddata "GBA" >/dev/null 2>&1
+ok "with a hold: off, picture, hold, then the game and its icon" \
+   "$(wire_order)" "CMDMETAOFF CMDCOR CMDCBOOT CMDMETA CMDICON"
+contains "and the game did reach the wire" "$(captured | grep -a '^CMDMETA,')" "Advance Wars"
+
+# With no hold the artwork would fade in only to fade straight out again, so it
+# is stored without being drawn - upstream's CMDAPD - and the layout is the one
+# transition. Still ahead of the metadata, for the same reason.
+launch_with_game
+core_bootscreen_time="0"
+senddata "GBA" >/dev/null 2>&1
+ok "without one: the picture is stored, not drawn, before the game" \
+   "$(wire_order)" "CMDMETAOFF CMDAPD CMDMETA CMDICON"
+contains "carrying the transition the layout will use" \
+   "$(captured | grep -a '^CMDAPD')" "CMDAPD,GBA,-2"
+core_bootscreen_time="3000"
+
+# The usual case on real hardware: the core first, the game later. The artwork
+# is drawn and held, and nothing else goes out - one CMDMETAOFF, not two.
+launch_with_game
+rm -f "${TMP}/CURRENTPATH" "${TMP}/FULLPATH" "${TMP}/FILESELECT"
+senddata "GBA" >/dev/null 2>&1
+ok "a core with no game yet: off, picture, hold and nothing more" \
+   "$(wire_order)" "CMDMETAOFF CMDCOR CMDCBOOT"
+
+# Arcade: no hold, and the card's metadata after the wheel too. dkong is
+# frame 0 of the fixture pack, newlines throughout, so the card's command
+# still starts a line of its own.
+reset_capture
+printf '%s\n' "${FIX}/mra/dkong.mra" > "${TMP}/STARTPATH"
+senddata "dkong" >/dev/null 2>&1
+ok "an arcade core: off, wheel, then the card" \
+   "$(wire_order)" "CMDMETAOFF CMDCOR CMDMETA"
+
+# The menu keeps its own picture request, and has nothing to describe.
+reset_capture
+senddata "MENU" >/dev/null 2>&1
+ok "the menu: off, then the boot screen as its picture" \
+   "$(wire_order)" "CMDMETAOFF CMDBOOTPIC"
+
+# A game change within the core is unchanged: details only, no picture.
+launch_with_game
+META_WIRE_LAST="OFF"
+refreshmeta "GBA" >/dev/null 2>&1
+ok "a game change in a running core sends only the details" \
+   "$(wire_order)" "CMDMETA CMDICON"
+
+rm -f "${bannerfolder}/GBA.gsc" "${iconfolder}/GBA.gsc"
+TRANSITION="-1"
+
+# test_meta_layout replays this order against the firmware, with the sketch's
+# picture handling written out, since the sketch itself does not compile on the
+# host. These hold the sketch to what the replay assumes.
+INO="${ROOT}/MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino"
+ok "CMDAPD stores the picture and draws nothing" \
+   "$(grep -A2 'startsWith("CMDAPD")' "${INO}" | sed -n 2p | sed 's/ *\/\/.*//;s/^ *//')" \
+   "oled_readlogo();"
+ok "CMDCOR composes the layout only for a console with no hold armed" \
+   "$(grep -c 'if (metaKind==MKIND_CONSOLE && !coreBootHolding) {' "${INO}")" "1"
 
 # ---------------------------------------------------------------------------
 section "BOOTSCREEN_AS_MENU: the menu asks for the boot screen, and sends no picture"
 # ---------------------------------------------------------------------------
-RANDOMIZE_ALT_BANNERS="no"
 META_ICON=""; TRANSITION="-2"
 printf '#\n#\n#\n00\n' > "${bannerfolder}/MENU.gsc"
 printf '#\n#\n#\n00\n' > "${bannerfolder}/NES.gsc"

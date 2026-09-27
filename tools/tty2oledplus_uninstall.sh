@@ -297,7 +297,7 @@ main() {
     # Everything here is the user's own work, not ours: two inis they edited,
     # the banners they drew, the boot screen they chose, and what Scrape
     # metadata found - days of a daily quota to get again. pics/banner,
-    # pics/alt and pics/icon are the release's and are not kept - a new
+    # pics/arcade and pics/icon are the release's and are not kept - a new
     # install brings them back.
     say "Keeping what is yours"
     local f kept=0

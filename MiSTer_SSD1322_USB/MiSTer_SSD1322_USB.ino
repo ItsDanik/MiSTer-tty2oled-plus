@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.6.6b"
+#define BuildVersion "0.6.7b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -795,10 +795,10 @@ void loop(void) {
         // instead. Arcade and computer modes fall through to the normal
         // full-screen path below.
         //
-        // Unless a CMDCBOOT just asked for the core's artwork to be held
-        // first, which is what a core launched with its game already chosen
-        // gets: then it goes up full-screen like any other picture and
-        // meta_tick puts the layout over it once the hold is done.
+        // This daemon sends CMDMETAOFF before a core's picture and the game
+        // after it, so metaKind is off here and the picture goes up
+        // full-screen; meta_tick puts the layout over it once any hold is
+        // done. The branch is for a sender that describes the game first.
         if (metaKind==MKIND_CONSOLE && !coreBootHolding) {
           meta_showConsole();
         }

@@ -99,8 +99,7 @@ COMPACT_YEAR_COMPANY|bool||Year and publisher on one row|"1989, Acclaim" on a si
 core_bootscreen_time|int|0 10000|Core boot screen (ms)|How long a console core's own artwork is held before the game's details replace it, when the core and the game are loaded together. 0 goes straight to the details.
 METADATA_INTERVAL|int|0 600|Seconds per page|How long each page of game details stays up, console and arcade. Arcade alternates the artwork with the info card's pages; a console game's description page stays until its text has scrolled through. 0 never turns a page.
 ROTATE|bool||Upside down|Turn the whole display 180 degrees, for a panel mounted the other way up.
-RANDOMIZE_ALT_BANNERS|bool||Vary the artwork|Where a core has alternative pictures, pick between them at random each time it loads, instead of always showing the same one.
-PRIORITIZE_USER_BANNERS|bool||Prefer your own artwork|Look in pics/user before the artwork pack, so a picture you put there replaces the shipped one. Off searches the pack first.
+PRIORITIZE_USER_BANNERS|bool||Prefer your own artwork|Look in pics/user before the shipped banners and arcade logos, so a picture you put there replaces the shipped one. Off searches the shipped artwork first.
 HSCROLL_SPEED|int|1 200|Horizontal scroll speed (pixels/s)|How fast a title too long for the screen scrolls sideways. Bigger is faster; 25 is a pixel every 40ms.
 VSCROLL_SPEED|int|1 100|Vertical scroll speed (pixels/s)|How fast a game's description scrolls up. Bigger is faster; 6 is a pixel every 166ms.
 EOS

@@ -132,7 +132,9 @@ place_menu_scripts() {
 # The artwork folders were flattened in 0.5.1b: pics/GSC became pics/banner
 # with its _altN pictures split off into pics/alt, pics_pri/ICON became
 # pics/icon, and pics_pri itself - where a user's own banners went - became
-# pics/user.
+# pics/user. Later the alternatives were dropped altogether, with the arcade
+# marquees, and pics/alt is removed: it was the release's, nothing reads it,
+# and on a card with 128KB clusters 137 unread files are 17MB.
 #
 # Here for the same reason place_menu_scripts is: the update that introduces
 # the new layout is applied by the *previous* updater, which knows nothing
@@ -159,13 +161,13 @@ migrate_pics() {
     if [ -d "${pics}/banner" ]; then              # a new pack is already here
       rm -rf "${pics}/GSC" 2>/dev/null
     elif mv "${pics}/GSC" "${pics}/banner" 2>/dev/null; then
-      mkdir -p "${pics}/alt" 2>/dev/null
       for f in "${pics}/banner"/*_alt*.gsc; do
         [ -e "${f}" ] || continue
-        mv "${f}" "${pics}/alt/" 2>/dev/null
+        rm -f "${f}" 2>/dev/null
       done
     fi
   fi
+  rm -rf "${pics}/alt" 2>/dev/null
 
   # The icons. Same move, and the same "only if it is not already there".
   if [ -d "${pri}/ICON" ]; then

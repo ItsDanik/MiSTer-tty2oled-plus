@@ -100,15 +100,17 @@ cp -p "${INDEX}"/*.idx "${P}/titleindex/"
 cp -p "${PICS}/icon"/*.gsc "${P}/pics/icon/"
 pack "${OUT}/tty2oledplus.tar.gz" tty2oledplus
 
-# The banners and their alternatives. pics/icon ships in the scripts archive
-# above instead - 27 small files that every update should carry, against 80MB
-# of pack that is fetched only when it is missing. pics/user ships in neither:
-# it is the user's own and no release may write into it.
+# The core banners and the arcade wheel pack. pics/icon ships in the scripts
+# archive above instead - 27 small files that every update should carry,
+# against a pack that is fetched only when it is missing. pics/user ships in
+# neither: it is the user's own and no release may write into it.
 say "Packing tty2oledplus-pics.tar.gz"
+[ -s "${PICS}/arcade/wheels.bin" ] && [ -s "${PICS}/arcade/wheels.idx" ] \
+  || die "no ${PICS}/arcade/wheels.bin and wheels.idx - build them with tools/wheels2gsc.py and tools/gscpack.py"
 rm -rf "${P}"
-mkdir -p "${P}/pics/user"
+mkdir -p "${P}/pics/user" "${P}/pics/arcade"
 cp -rp "${PICS}/banner" "${P}/pics/banner"
-cp -rp "${PICS}/alt" "${P}/pics/alt"
+cp -p "${PICS}/arcade/wheels.bin" "${PICS}/arcade/wheels.idx" "${P}/pics/arcade/"
 pack "${OUT}/tty2oledplus-pics.tar.gz" tty2oledplus
 
 # --- Firmware --------------------------------------------------------------

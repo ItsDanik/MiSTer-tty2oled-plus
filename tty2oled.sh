@@ -149,7 +149,7 @@ sendrotation() {
 # Locate a core's 256x64 banner, and set BANNERFILE to it. Returns 1 when
 # there is none, which is the caller's cue to send the core name as text.
 #
-# Two folders hold banners since 0.5.8b: pics/banner, the artwork pack's, which
+# Two folders hold banners since 0.5.8b: pics/banner, the release's, which
 # every update replaces, and pics/user, yours, which no update ever touches.
 # PRIORITIZE_USER_BANNERS decides which is searched first and the other is the
 # fallback. One artwork format, one folder each: upstream searched five -
@@ -168,67 +168,126 @@ sendrotation() {
 #
 # "exact" turns the trimming off, for the names that are looked up whole:
 # update_all is one, and the prefix search would happily settle on some
-# unrelated arcade set starting with "upd".
+# unrelated banner starting with "upd".
 findbanner() {
-  local core="${1}" mode="${2:-}" first="${userbannerfolder}" second="${bannerfolder}" d c
+  local core="${1}" mode="${2:-}" first="${userbannerfolder}" second="${bannerfolder}" d
   BANNERFILE=""
   [ -n "${core}" ] || return 1
   if [ "${PRIORITIZE_USER_BANNERS:-yes}" != "yes" ]; then
     first="${bannerfolder}"; second="${userbannerfolder}"
   fi
   for d in "${first}" "${second}"; do
-    [ -n "${d}" ] || continue
-    if [ "${mode}" = "exact" ]; then
-      [ -e "${d}/${core}.gsc" ] && { BANNERFILE="${d}/${core}.gsc"; return 0; }
-      continue
-    fi
-    for ((c = "${#core}"; c >= 1; c--)); do
-      [ -e "${d}/${core:0:$c}.gsc" ] && { BANNERFILE="${d}/${core:0:$c}.gsc"; return 0; }
-    done
+    bannerin "${d}" "${core}" "${mode}" && return 0
   done
   return 1
 }
 
-# Dice between a banner and its alternatives, and print the winner.
-#
-# The alternatives are <base>_alt1.gsc, _alt2.gsc ... in pics/alt - the pack's
-# - and beside your own banner in pics/user. Named after the picture that was
-# actually found rather than after the core, since that may have been a
-# trimmed prefix. The primary is one of the faces of the die, which is what
-# upstream's "RANDOM % (count + 1)" amounted to.
-#
-# Off by default here, unlike upstream: the pack's alternatives are a
-# different take on a system rather than a variant of one picture, and a core
-# that looked one way yesterday looking another way today reads as a fault.
-randomalt() {
-  local pic="${1}" base f
-  if [ "${RANDOMIZE_ALT_BANNERS:-no}" != "yes" ]; then printf '%s' "${pic}"; return 0; fi
-  base="$(basename "${pic}" .gsc)"
-  local -a cands=("${pic}")
-  for f in "${altbannerfolder}/${base}"_alt*.gsc "${userbannerfolder}/${base}"_alt*.gsc; do
-    [ -e "${f}" ] && cands+=("${f}")
+# One folder of findbanner's: the whole name, then shorter and shorter
+# prefixes of it unless "exact". Sets BANNERFILE.
+bannerin() {
+  local d="${1}" core="${2}" mode="${3:-}" c
+  BANNERFILE=""
+  [ -n "${d}" ] && [ -n "${core}" ] || return 1
+  if [ "${mode}" = "exact" ]; then
+    [ -e "${d}/${core}.gsc" ] && { BANNERFILE="${d}/${core}.gsc"; return 0; }
+    return 1
+  fi
+  for ((c = "${#core}"; c >= 1; c--)); do
+    [ -e "${d}/${core:0:$c}.gsc" ] && { BANNERFILE="${d}/${core:0:$c}.gsc"; return 0; }
   done
-  printf '%s' "${cands[$((RANDOM % ${#cands[@]}))]}"
+  return 1
+}
+
+# An arcade set's wheel logo in the pack: sets WHEELFRAME to its frame in
+# ${wheelpack}, 8192 bytes at frame * 8192. Returns 1 when the pack does not
+# have the set, or the frame is not in the .bin beside the index.
+#
+# The whole name, lower-cased as the index is - never trimmed. Two thirds of
+# the MAME sets share their picture with another, and trimming a name finds a
+# different game's wheel for hundreds of them (hook_408 -> hook); the index
+# lists every set, so a set it lacks is a set the pack has no picture for.
+# awk rather than grep, so an MRA's set name is never a regex.
+findwheel() {
+  local key="${1,,}" frame size
+  WHEELFRAME=""
+  [ -n "${key}" ] && [ -r "${wheelindex}" ] && [ -r "${wheelpack}" ] || return 1
+  frame="$(awk -F'|' -v c="${key}" '$1 == c { print $2; exit }' "${wheelindex}" 2>/dev/null)"
+  [[ "${frame}" =~ ^[0-9]+$ ]] || return 1
+  # An index from one run beside a pack from another would cut a picture out
+  # of the middle of two, or read past the end - which the firmware waits
+  # forever to finish. Checked against the .bin actually there.
+  size="$(stat -c %s "${wheelpack}" 2>/dev/null)"
+  [ -n "${size}" ] && [ $(((frame + 1) * 8192)) -le "${size}" ] || return 1
+  WHEELFRAME="${frame}"
+}
+
+# What kind of core this is - arcade, console, computer, unknown - into
+# CORE_KIND, without touching META_KIND: the picture has to know whether to
+# look in the wheel pack whether or not the metadata display is on.
+core_kind() {
+  local META_KIND="" CORE_STARTPATH=""
+  classify_core "${1}"
+  CORE_KIND="${META_KIND}"
+}
+
+# Where a core's picture comes from. Sets PICFILE, a .gsc, or PICFRAME, a
+# frame of the wheel pack; returns 1 with neither, which is the caller's cue
+# to send the core name as text.
+#
+# An arcade core is a game, and its picture is that game's wheel logo, looked
+# up by the MRA's set name - which MiSTer writes to CORENAME. pics/banner is
+# never searched for one: since the arcade marquees went, it holds console
+# and computer banners only, and trimming a set name down into those could
+# only ever find the wrong picture. pics/user is, first by default, so your
+# own picture for a set beats the pack.
+findpicture() {
+  local core="${1}"
+  PICFILE=""; PICFRAME=""
+  core_kind "${core}"
+  if [ "${CORE_KIND}" != "arcade" ]; then
+    findbanner "${core}" && PICFILE="${BANNERFILE}"
+    [ -n "${PICFILE}" ]; return
+  fi
+  if [ "${PRIORITIZE_USER_BANNERS:-yes}" = "yes" ]; then
+    if bannerin "${userbannerfolder}" "${core}"; then PICFILE="${BANNERFILE}"
+    elif findwheel "${core}"; then PICFRAME="${WHEELFRAME}"; fi
+  else
+    if findwheel "${core}"; then PICFRAME="${WHEELFRAME}"
+    elif bannerin "${userbannerfolder}" "${core}"; then PICFILE="${BANNERFILE}"; fi
+  fi
+  [ -n "${PICFILE}${PICFRAME}" ]
 }
 
 # Send-Picture-Data function
 senddata() {
   newcore="${1}"
-  unset picfnam
+  local picdraw="CMDCOR" hold="no"
 
-  # Metadata first: the firmware needs to know which layout to compose
-  # before the picture arrives, and the console icon has to be in place
-  # before CMDCOR triggers the first paint of the split layout.
-  # sendmeta answers 0 when it put game details on the wire and 1 when it sent
-  # CMDMETAOFF instead - which is the usual case here, because MiSTer publishes
-  # the core a second or two before the game. The hold has to be armed either
-  # way: it is about the core's artwork, which is going up regardless, and the
-  # game will arrive against it whenever MiSTer gets round to saying so.
-  sendmeta "${newcore}" force; local metaon="${?}"
-  # Before the icon, not after: the icon composes the layout as it lands, and
-  # would put it on the panel a moment before the artwork replaced it.
-  sendcoreboot
-  [ "${metaon}" -eq 0 ] && sendicon "${META_ICON}"
+  # Off, the picture, the hold, and only then the game's details.
+  #
+  # The firmware acts on each command as it lands - loop() runs between any
+  # two of them - so a CMDMETA sent first had the transition to the split
+  # layout under way before the CMDCBOOT saying "artwork first" had arrived.
+  # A core launched with its game (a frontend, a .mgl, Recents) showed the old
+  # screen start to fade, froze it for the picture's blocking 8KB read, then
+  # jumped to black and faded the artwork in. Picture first, the panel simply
+  # holds still while it transfers; everything after it lands during the
+  # artwork's transition, which the firmware waits out before drawing again.
+  if [ "${SHOW_METADATA}" = "yes" ]; then
+    build_meta "${newcore}" corechange
+    # Off first, always: the core has changed, so whatever layout the
+    # firmware holds is the previous game's, and the picture below must go up
+    # as a picture rather than be composed into it.
+    sendmetaoff
+    if coreboot_ms >/dev/null; then
+      hold="yes"
+    elif [ "${META_KIND}" = "console" ] && [ "${META_GAME:-no}" = "yes" ]; then
+      # No hold, and the layout is due at once: store the picture without
+      # drawing it (upstream's CMDAPD), so the only transition is the one to
+      # the layout. Drawn, the artwork would fade in only to fade out again.
+      picdraw="CMDAPD"
+    fi
+  fi
 
   # The menu's picture is the boot screen, which lives on the display - so
   # there is nothing to send but the request. At power-on the boot screen is
@@ -238,18 +297,32 @@ senddata() {
     dbug "Sending: CMDBOOTPIC,${newcore},${TRANSITION}"
     echo "CMDBOOTPIC,${newcore},${TRANSITION}" >${TTYDEV}
     cmdwait
-    return 0
-  fi
-
-  if findbanner "${newcore}"; then
-    picfnam="$(randomalt "${BANNERFILE}")"
-    dbug "Sending: CMDCOR,${1},${TRANSITION}"
-    echo "CMDCOR,${1},${TRANSITION}" >${TTYDEV}    # Send CORECHANGE" Command and Corename
+  elif findpicture "${newcore}"; then
+    dbug "Sending: ${picdraw},${1},${TRANSITION} (${PICFILE:-wheel ${PICFRAME}})"
+    echo "${picdraw},${1},${TRANSITION}" >${TTYDEV}  # Send CORECHANGE" Command and Corename
     sleep ${WAITSECS}                              # sleep needed here ?!
-    tail -n +4 "${picfnam}" | xxd -r -p >${TTYDEV} # The Magic, send the Picture-Data up from Line 4 and process
-  else                                               # No Picture available!
+    if [ -n "${PICFRAME}" ]; then                  # A wheel: its 8192 bytes, cut out of the pack
+      dd if="${wheelpack}" bs=8192 skip="${PICFRAME}" count=1 2>/dev/null >${TTYDEV}
+    else
+      tail -n +4 "${PICFILE}" | xxd -r -p >${TTYDEV} # The Magic, send the Picture-Data up from Line 4 and process
+    fi
+  elif [ "${picdraw}" = "CMDCOR" ]; then           # No Picture available!
     echo "${1}" >${TTYDEV}                           # Send just the CORENAME
   fi                                                 # End if Picture check
+
+  # After the picture, so none of it can start a transition ahead of it.
+  if [ "${SHOW_METADATA}" = "yes" ]; then
+    # The hold before the game, or the layout would be drawn unheld; and
+    # after the picture, because the firmware starts its clock on the first
+    # tick that finds the panel idle. Sent ahead of the picture, that was the
+    # 50ms gap before CMDCOR, and the transfer and a Fade ate the whole hold -
+    # the artwork faded in and straight back out.
+    [ "${hold}" = "yes" ] && sendcoreboot
+    # CMDMETAOFF went out above, so a game's line always differs from the
+    # last one sent and a core with no game sends nothing more.
+    sendbuiltmeta && sendicon "${META_ICON}"
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -296,26 +369,36 @@ findicon() {
 
 # Send CMDMETA for the current game. Returns 1 if metadata mode is not active
 # so the caller can fall back to plain picture display.
+#
+# For a game change within a running core. A core change builds the metadata
+# itself, because the picture has to go out between building and sending it -
+# see senddata.
 sendmeta() {
-  local corename="${1}" force="${2:-}" kindnum="" payload="" label="" value="" f="" wire=""
-
   [ "${SHOW_METADATA}" = "yes" ] || return 1
+  build_meta "${1}"
+  sendbuiltmeta
+}
 
-  # "force" is set on a core change, which is the only time the leftover-state
-  # guard in build_meta applies.
-  build_meta "${corename}" "${force:+corechange}"
+# Leave metadata mode on the firmware, and remember that it has been left.
+sendmetaoff() {
+  dbug "Sending: CMDMETAOFF (kind=${META_KIND} game=${META_GAME:-no})"
+  echo "CMDMETAOFF" >${TTYDEV}
+  sleep ${WAITSECS}
+  META_WIRE_LAST="OFF"
+}
+
+# Put what build_meta produced on the wire: CMDMETA and the description, or
+# CMDMETAOFF when there is no game to describe. Nothing at all when it would
+# repeat the last thing sent.
+sendbuiltmeta() {
+  local kindnum="" payload="" label="" value="" f="" wire=""
 
   # Computer cores stay on plain full-screen artwork by design, and so does a
   # console core sitting at its menu with no game loaded - there is nothing to
   # describe, and the core's artwork is the better screen.
   if [ "${META_KIND}" = "computer" ] || [ "${META_KIND}" = "unknown" ] ||
      [ "${META_GAME:-no}" != "yes" ]; then
-    if [ "${force}" = "force" ] || [ "${META_WIRE_LAST:-}" != "OFF" ]; then
-      dbug "Sending: CMDMETAOFF (kind=${META_KIND} game=${META_GAME:-no})"
-      echo "CMDMETAOFF" >${TTYDEV}
-      sleep ${WAITSECS}
-      META_WIRE_LAST="OFF"
-    fi
+    [ "${META_WIRE_LAST:-}" != "OFF" ] && sendmetaoff
     return 1
   fi
 
@@ -343,9 +426,9 @@ sendmeta() {
   # The daemon now also wakes on game-state changes, and MiSTer rewrites those
   # files while the user is merely browsing. Resending an identical line would
   # restart the card's scroll and animation for no reason, so send only what
-  # actually changed. "force" is used on a core change, where the firmware has
-  # just been reset and must be told again regardless.
-  if [ "${force}" != "force" ] && [ "${sent}" = "${META_WIRE_LAST:-}" ]; then
+  # actually changed. A core change always sends: senddata's CMDMETAOFF has
+  # just reset the firmware, and set META_WIRE_LAST to say so.
+  if [ "${sent}" = "${META_WIRE_LAST:-}" ]; then
     dbug "Metadata unchanged, not resending"
     return 1
   fi
@@ -418,6 +501,16 @@ sendicon() {
   return 0
 }
 
+# How long this core change holds the core's artwork, in ms; fails when it
+# holds nothing - not a console core, or core_bootscreen_time 0 or not a number.
+coreboot_ms() {
+  local ms="${core_bootscreen_time:-3000}"
+  [ "${META_KIND}" = "console" ] || return 1
+  case "${ms}" in ''|*[!0-9]*) return 1 ;; esac
+  [ "${ms}" -gt 0 ] || return 1
+  printf '%s' "${ms}"
+}
+
 # Ask the firmware to hold the core's own artwork before the game's layout
 # replaces it - the core boot screen.
 #
@@ -431,15 +524,17 @@ sendicon() {
 # from the moment the artwork reaches the panel, so a game that arrives after
 # it has already expired is drawn at once and nothing is delayed.
 #
+# It goes out after the picture, never before: the firmware stamps the start
+# of the hold on the first tick that finds the panel idle, and ahead of the
+# picture that is before the transfer has even begun.
+#
 # Deciding here rather than in the firmware is the point. Only the daemon can
 # tell a core change from a game change; only the firmware knows when the
 # transition finished and the artwork is actually on the panel. Send nothing
 # and there is no hold, which is what core_bootscreen_time=0 does.
 sendcoreboot() {
-  local ms="${core_bootscreen_time:-3000}"
-  [ "${META_KIND}" = "console" ] || return 1
-  case "${ms}" in ''|*[!0-9]*) return 1 ;; esac
-  [ "${ms}" -gt 0 ] || return 1
+  local ms
+  ms="$(coreboot_ms)" || return 1
   dbug "Sending: CMDCBOOT,${ms}"
   echo "CMDCBOOT,${ms}" >${TTYDEV}
   cmdwait
@@ -525,12 +620,19 @@ deferred_setup() {
   [ "${DEFERRED_DONE}" = "yes" ] && return 0
   DEFERRED_DONE="yes"
 
-  # USE_RANDOM_ALT became RANDOMIZE_ALT_BANNERS in 0.5.8b, and the default
-  # turned over with the rename. The system ini no longer sets the old name,
-  # so if it is set at all it came from the user's own ini - and a user who
-  # asked for the dice deserves to be told they are not being rolled.
-  if [ -n "${USE_RANDOM_ALT:-}" ]; then
-    echo "tty2oled: USE_RANDOM_ALT is gone - set RANDOMIZE_ALT_BANNERS (yes/no) in tty2oled-user.ini instead. Using ${RANDOMIZE_ALT_BANNERS:-no}."
+  # The alternative banners went with the arcade marquees, and the dice
+  # between them with them. The system ini sets neither name any more, so one
+  # that is set came from the user's own ini - and a user who asked for the
+  # dice deserves to be told they are not being rolled.
+  if [ -n "${RANDOMIZE_ALT_BANNERS:-}${USE_RANDOM_ALT:-}" ]; then
+    echo "tty2oled: RANDOMIZE_ALT_BANNERS is gone - there are no alternative banners any more. It can be removed from tty2oled-user.ini."
+  fi
+  # The update that brings the wheel pack is applied by the previous
+  # updater, which decides whether to fetch the artwork by asking whether
+  # pics/banner exists - so it does not. Until the next Update, every arcade
+  # core shows its name as text, and this is where that is explained.
+  if ! [ -r "${wheelindex}" ] || ! [ -r "${wheelpack}" ]; then
+    echo "tty2oled: the arcade wheel logos (${wheelindex%/*}) are missing - arcade cores show their name as text. Run Update from the tty2oledplus menu to fetch them."
   fi
 
   checkversion												# Scripts and firmware in step?

@@ -319,19 +319,26 @@ ok "after the scripts it runs with are in place" \
    "$(awk '/^SCP.*tty2oled.sh /{s=NR} /flash-mister.sh$/{f=NR} END{print (s && f > s) ? "yes" : "no"}' "${LOG}")" "yes"
 ok "with no restart of its own to undo it" "$(grep -c 'S60tty2oled restart' "${LOG}")" "0"
 
-mkdir -p "${REPO}/pics/banner" "${REPO}/pics/alt" "${REPO}/pics/icon" "${REPO}/pics/user"
+mkdir -p "${REPO}/pics/banner" "${REPO}/pics/arcade" "${REPO}/pics/icon" "${REPO}/pics/user"
 echo 00 > "${REPO}/pics/banner/NES.gsc"
-echo 00 > "${REPO}/pics/alt/NES_alt1.gsc"
+echo 00 > "${REPO}/pics/arcade/wheels.bin"
+echo 00 > "${REPO}/pics/arcade/wheels.idx"
 echo 00 > "${REPO}/pics/icon/NES.gsc"
 echo 00 > "${REPO}/pics/user/NES.gsc"
 deploy --pics; RC="${?}"
 ok "--pics succeeds" "${RC}" "0"
 ok "the pack goes as one tar stream" "$(grep -c 'tar -C /media/fat/tty2oledplus --no-same-owner -xzf -' "${LOG}")" "1"
+# The release's folders are replaced whole, as the updater replaces them, so
+# the arcade marquees and pics/alt go from the MiSTer - and in the same
+# command as the unpacking, never pics/user.
+ok "after removing the release's folders, and pics/alt" \
+   "$(grep -c 'rm -rf /media/fat/tty2oledplus/pics/banner /media/fat/tty2oledplus/pics/arcade /media/fat/tty2oledplus/pics/alt && tar -C' "${LOG}")" "1"
+ok "and not pics/user" "$(grep 'rm -rf' "${LOG}" | grep -c 'pics/user')" "0"
 # Read out of the stream itself rather than off the command line: what
 # matters is what would land on the MiSTer.
 SENT="$(tar tzf "${STDIN}.tar" | sort | tr '\n' ' ')"
-ok "with the banners and their alternatives in it" "${SENT}" \
-   "pics/ pics/alt/ pics/alt/NES_alt1.gsc pics/banner/ pics/banner/NES.gsc pics/icon/ pics/icon/NES.gsc "
+ok "with the banners and the wheel pack in it" "${SENT}" \
+   "pics/ pics/arcade/ pics/arcade/wheels.bin pics/arcade/wheels.idx pics/banner/ pics/banner/NES.gsc pics/icon/ pics/icon/NES.gsc "
 # pics/user is the user's own artwork, and the repo's copy of it is empty.
 # Sending it is this fork's version of copying tty2oled-user.ini over theirs -
 # and unlike the ini, nothing would report it: the deploy's own tar would
