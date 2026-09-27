@@ -87,8 +87,8 @@ def entry(system, key):
 section("which systems are offered")
 rc, out = run("--list-systems")
 listed = [l.split("\t") for l in out.splitlines()]
-ok("one per system with an icon, keyed and labelled", [l[0] for l in listed],
-   ["NES", "SNES", "GBC", "MegaDrive", "NeoGeo"])
+ok("one per console with an icon, and the arcade, keyed and labelled", [l[0] for l in listed],
+   ["NES", "SNES", "GBC", "MegaDrive", "NeoGeo", "Arcade"])
 ok("the Mega Drive once, though both of its icons ship", sum(1 for l in listed if l[0] == "MegaDrive"), 1)
 ok("a label to show in the menu", listed[0][1], "Nintendo NES")
 rc, out = run("--systems", "")
@@ -176,6 +176,49 @@ ok("found without the extension too", daemon("Zelda (USA)").split("|")[0], "The 
 ok("and a game no gamelist lists is no hit", daemon("Castlevania (USA).nes"), "miss")
 
 # ---------------------------------------------------------------------------
+section("arcade: games/mame, beside the zips, keyed by set")
+write(os.path.join(ROOT_B, "games", "MAME", "gamelist.xml"), b"""<gameList>
+  <game><path>./dkong.zip</path><name>Donkey Kong</name>
+    <desc>A barrel of fun.</desc><players>2</players>
+    <developer>Nintendo R&amp;D1, Ikegami</developer><rating>0.9</rating></game>
+  <game><path>./notes.txt</path><name>Not a game</name></game>
+</gameList>""")
+write(os.path.join(ROOT_A, "games", "hbmame", "gamelist.xml"),
+      b"<gameList><game><path>./sf2hack.zip</path><name>SF2 Hack</name></game>"
+      b"<game><path>./readme.txt</path><name>Readme</name></game></gameList>")
+# _Arcade holds the .mra files, not what a scraper writes: not searched.
+write(os.path.join(ROOT_A, "_Arcade", "gamelist.xml"),
+      b"<gameList><game><path>./1942 (Revision B).mra</path><name>1942</name></game></gameList>")
+rc, out = run("--systems", "Arcade")
+ok("imported", rc, 0)
+ok("keyed on the set's name", entry("Arcade", "dkong")[11], "A barrel of fun.")
+ok("its fields as a console game's", (entry("Arcade", "dkong")[5], entry("Arcade", "dkong")[6]), ("2", "18"))
+ok("games/mame is the arcade's own: taken whole", entry("Arcade", "notes")[3], "Not a game")
+ok("games/hbmame is shared: its sets only", (entry("Arcade", "sf2hack")[3], entry("Arcade", "readme")),
+   ("SF2 Hack", None))
+ok("and _Arcade is not searched at all", entry("Arcade", "1942 (Revision B)"), None)
+
+sh_arcade = r'''
+SCRAPE_DIR="%s/scraped"
+. "%s"
+MRA_SETNAME="$1"
+arcade_lookup_scraped "$2" || { echo miss; exit; }
+printf '%%s|%%s' "${SCR_TITLE}" "${SCR_DESC}"
+''' % (INSTALL, META)
+
+
+def daemon_arcade(setname, core):
+    return subprocess.run(["bash", "-c", sh_arcade, "x", setname, core],
+                          capture_output=True, text=True).stdout.strip()
+
+
+ok("the daemon finds a set by the .mra's set name",
+   daemon_arcade("dkong", "dkong"), "Donkey Kong|A barrel of fun.")
+ok("or by the core name when the .mra names no set",
+   daemon_arcade("", "dkong"), "Donkey Kong|A barrel of fun.")
+ok("and nothing for a set no gamelist lists", daemon_arcade("puckman", "puckman"), "miss")
+
+# ---------------------------------------------------------------------------
 section("importing again")
 # It replaces what was there for the games it lists and leaves every other
 # game alone.
@@ -195,7 +238,8 @@ ok("the good one is still imported", entry("NES", "Super Mario Bros. (World)")[3
 ok("and nothing already there is lost", entry("NES", "Metroid (USA)")[3], "Metroid II")
 
 rc, out = run("--systems", "SNES")
-ok("none to be found says where to put one", "games/NES/gamelist.xml" in out, True)
+ok("none to be found says where to put one",
+   ("games/NES/gamelist.xml" in out, "games/mame/gamelist.xml" in out), (True, True))
 ok("and writes no file for it", os.path.exists(os.path.join(INSTALL, "scraped", "SNES.txt")), False)
 
 # ---------------------------------------------------------------------------

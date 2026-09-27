@@ -183,13 +183,14 @@
 // ---------------------------------------------------------------------------
 // The description page
 // ---------------------------------------------------------------------------
-// A console game with a description - imported on the MiSTer from the
-// gamelist.xml a scraper left in its games folder - gets one more page after
-// its fields. The header, the title and the icon
+// A game with a description - imported on the MiSTer from the gamelist.xml a
+// scraper left in its games folder, or in _Arcade - gets one more page after
+// its fields. The header, the title and the icon (or the arcade card's cell)
 // stay; everything below the title is the description, word-wrapped to the
-// text column in the field font and scrolling upwards a pixel at a time. The
-// pager moves on when the last line has scrolled out of sight, so however long
-// the text is, all of it goes past.
+// text column - the whole width on the card - in the field font and scrolling
+// upwards a pixel at a time. The page moves on when the last line has
+// scrolled out of sight, so however long the text is, all of it goes past: to
+// the first field page on a console, back to the artwork on the card.
 //
 // It arrives as its own transfer, CMDDESC,<bytes> and then the bytes, because
 // a description is longer than the rest of a CMDMETA line put together and
@@ -604,6 +605,15 @@ static int meta_textW(void) {
   return metaFlipped ? (DispWidth - (ICON_W + 4) - 2) : TEXT_W;
 }
 
+// Where the description is drawn: the text column beside the icon, or the
+// arcade card's whole width, which has no icon to share it with.
+static int meta_descX(void) {
+  return metaKind == MKIND_ARCADE ? CARD_MARGIN_X : meta_textX();
+}
+static int meta_descW(void) {
+  return metaKind == MKIND_ARCADE ? CARD_FULL_W : meta_textW();
+}
+
 // ---------------------------------------------------------------------------
 // meta_textWidth - measure a string in the currently selected u8g2 font.
 // ---------------------------------------------------------------------------
@@ -707,7 +717,7 @@ static void meta_descWrap(int width) {
 // Wrapped for this width, in the field font - which it leaves selected.
 static void meta_descEnsureWrapped(void) {
   oled_setfont(CON_FIELD_FONT);
-  if (descWrapW != meta_textW()) meta_descWrap(meta_textW());
+  if (descWrapW != meta_descW()) meta_descWrap(meta_descW());
 }
 
 // How far the text scrolls before its last line has left the top of the
@@ -718,6 +728,40 @@ static long meta_descTravel(void) {
   meta_descEnsureWrapped();
   if (descLineCount <= 0) return 0;
   return (long)(descLineCount - 1) * CON_FIELD_PITCH + CON_FIELD_ASCENT + 1;
+}
+
+// ---------------------------------------------------------------------------
+// meta_drawDesc - the description's visible lines, scrolled up descScrollY
+// pixels, for either layout.
+//
+// Called first, before the header and title, so that what has scrolled up
+// past the area's top can be blacked out before they go on: u8g2 has no
+// clipping, and a line half way out would otherwise be drawn across the title.
+// ---------------------------------------------------------------------------
+static void meta_drawDesc(void) {
+  meta_descEnsureWrapped();
+  const int x = meta_descX();
+  const int w = meta_descW();
+  u8g2.setForegroundColor(SSD1322_WHITE);
+  u8g2.setBackgroundColor(SSD1322_BLACK);
+  char line[256];
+  for (int l = 0; l < descLineCount; l++) {
+    int y = CON_FIELD_Y0 + l * CON_FIELD_PITCH - (int)descScrollY;
+    if (y < DESC_TOP) continue;                            // gone past the top
+    if (y - CON_FIELD_ASCENT > (int)DispHeight - 1) break; // not up yet
+    memcpy(line, metaDesc + descLineStart[l], descLineLen[l]);
+    line[descLineLen[l]] = 0;
+    meta_drawClipped(line, x, y, w, 0);
+  }
+  oled.fillRect(0, 0, DispWidth, DESC_TOP, SSD1322_BLACK);
+}
+
+// Start the description from its first line, and hold it there long enough
+// to be read before it moves - every time its page comes round.
+static void meta_descRewind(unsigned long now) {
+  descScrollY   = 0;
+  descHoldUntil = now + DESC_HOLD_MS;
+  lastDescTick  = now;
 }
 
 // ---------------------------------------------------------------------------
@@ -858,15 +902,29 @@ static int meta_cardWidePages(void) {
   return (wide + slots - 1) / slots;
 }
 
-static int meta_cardPageCount(void) {
+// The pages the fields take. A card with none at all and a description is
+// the description alone, rather than an empty page in front of it.
+static int meta_cardFieldPageCount(void) {
   int pages = meta_cardGridPages() + meta_cardWidePages();
-  return pages < 1 ? 1 : pages;
+  if (pages < 1) return (metaFieldCount == 0 && meta_hasDesc()) ? 0 : 1;
+  return pages;
 }
 
-// The first wide field on the current page, or -1 on a grid page.
+// The description, when there is one, is the card's last page, as it is the
+// console's: after the fields, before the artwork comes back.
+static int meta_cardPageCount(void) {
+  return meta_cardFieldPageCount() + (meta_hasDesc() ? 1 : 0);
+}
+
+static bool meta_cardIsDescPage(int page) {
+  return meta_hasDesc() && page >= meta_cardFieldPageCount();
+}
+
+// The first wide field on the current page, or -1 on a grid page - or the
+// description's, which has no fields.
 static int meta_cardWideFirst(void) {
   const int gridPages = meta_cardGridPages();
-  if (cardPage < gridPages) return -1;
+  if (cardPage < gridPages || meta_cardIsDescPage(cardPage)) return -1;
   return meta_cardGridCount() + (cardPage - gridPages) * meta_cardWideSlots();
 }
 
@@ -913,6 +971,12 @@ static void meta_renderCard(void) {
 
   const int pages = meta_cardPageCount();
   if (cardPage >= pages) cardPage = 0;
+  const bool descPage = meta_cardIsDescPage(cardPage);
+
+  // --- Description ---------------------------------------------------------
+  // First, for the reason meta_drawDesc gives: the rows it scrolls past are
+  // blacked before the header and title are drawn over them.
+  if (descPage) meta_drawDesc();
 
   // --- Header --------------------------------------------------------------
   // Worked out before the caption is drawn so it can be clipped short of the
@@ -961,7 +1025,9 @@ static void meta_renderCard(void) {
 
   int y = CARD_FIELD_Y0;
 
-  if (cardPage < gridPages) {
+  if (descPage) {
+    // The whole area is the description's, pinned row included.
+  } else if (cardPage < gridPages) {
     // A grid page: this page's share of the paired fields.
     int first = cardPage * CARD_FIELD_ROWS * 2;
     int last  = first + CARD_FIELD_ROWS * 2;
@@ -1045,21 +1111,7 @@ static void meta_renderConsole(void) {
   // First, so that what has scrolled up past the area's top can be blacked
   // out before the header and title go on: u8g2 has no clipping, and a line
   // half way out would otherwise be drawn across the title.
-  if (descPage) {
-    meta_descEnsureWrapped();
-    u8g2.setForegroundColor(SSD1322_WHITE);
-    u8g2.setBackgroundColor(SSD1322_BLACK);
-    char line[256];
-    for (int l = 0; l < descLineCount; l++) {
-      int y = CON_FIELD_Y0 + l * CON_FIELD_PITCH - (int)descScrollY;
-      if (y < DESC_TOP) continue;                          // gone past the top
-      if (y - CON_FIELD_ASCENT > (int)DispHeight - 1) break; // not up yet
-      memcpy(line, metaDesc + descLineStart[l], descLineLen[l]);
-      line[descLineLen[l]] = 0;
-      meta_drawClipped(line, tx, y, tw, 0);
-    }
-    oled.fillRect(0, 0, DispWidth, DESC_TOP, SSD1322_BLACK);
-  }
+  if (descPage) meta_drawDesc();
 
   // --- Header --------------------------------------------------------------
   // Fixed caption rather than the game title: the title has moved below the
@@ -1146,9 +1198,12 @@ static void meta_consolePagedRect(int *x, int *w, int *y0, int *y1,
   *y1 = DispHeight;
 }
 
-// Card: the rows below the pinned grid row, across the whole panel.
-static void meta_cardPagedRect(int *x, int *w, int *y0, int *y1) {
-  const int firstPaged = meta_cardPairRows(meta_cardPinned());
+// Card: the rows below the pinned grid row, across the whole panel - or, for
+// a turn to the description page, the whole field area, since it has no
+// pinned row.
+static void meta_cardPagedRect(int *x, int *w, int *y0, int *y1,
+                               bool whole = false) {
+  const int firstPaged = whole ? 0 : meta_cardPairRows(meta_cardPinned());
   *x  = 0;
   *w  = DispWidth;
   *y0 = CARD_FIELD_Y0 + firstPaged * CARD_FIELD_PITCH - CARD_FIELD_ASCENT;
@@ -1262,6 +1317,7 @@ void meta_showCard(int effect) {
   titleScrollX    = 0;
   valueScrollX    = 0;
   cardScrollArmed = false;
+  descScrollY     = 0;              // held until the card lands, as the title is
   meta_renderCard();
   meta_snapshot();
 
@@ -1499,7 +1555,8 @@ void meta_setDesc(const char *text, size_t n) {
 // meta_tick - non-blocking periodic work, called from the sketch's main loop.
 //
 // Arcade : artwork, then each page of the card in turn, then the artwork
-//          again - one step every metaInterval seconds.
+//          again - one step every metaInterval seconds, but the description
+//          page for as long as its text takes to scroll through.
 // Console: advance the marquee and the field pager.
 //
 // Returns true if it drew anything, so the caller can skip its own redraw.
@@ -1516,13 +1573,7 @@ extern int tEffect;
 static int  pfNextPage = 0;
 static void meta_redrawConsolePage(void) {
   fieldPage = pfNextPage;
-  // The description starts from its first line every time round, and holds
-  // there long enough to be read before it moves.
-  if (meta_onDescPage()) {
-    descScrollY   = 0;
-    descHoldUntil = millis() + DESC_HOLD_MS;
-    lastDescTick  = millis();
-  }
+  if (meta_onDescPage()) meta_descRewind(millis());
   meta_renderConsole();
   metaNeedsDraw = false;            // as meta_showConsole would have done
 }
@@ -1530,6 +1581,7 @@ static void meta_redrawCardPage(void) {
   cardPage       = pfNextPage;
   valueScrollX   = 0;               // a new page's values start from their start
   valueHoldUntil = millis() + SCROLL_PAUSE_MS;
+  if (meta_cardIsDescPage(cardPage)) meta_descRewind(millis());
   meta_renderCard();
 }
 
@@ -1548,6 +1600,8 @@ static bool meta_cardScrollTick(unsigned long now) {
     scrollHoldUntil = now + SCROLL_PAUSE_MS;
     valueHoldUntil  = now + SCROLL_PAUSE_MS;
     lastScrollTick  = now;
+    // A card that is nothing but its description lands on that page.
+    if (meta_cardIsDescPage(cardPage)) meta_descRewind(now);
     return false;
   }
   if (now - lastScrollTick < metaHStepMs) return false;
@@ -1620,16 +1674,39 @@ bool meta_tick(void) {
     return true;
   }
 
-  if (metaKind == MKIND_ARCADE && metaInterval > 0 && metaFieldCount > 0) {
+  if (metaKind == MKIND_ARCADE && metaInterval > 0 &&
+      (metaFieldCount > 0 || meta_hasDesc())) {
+    // The description page does not dwell, as on the console: it is up for
+    // exactly as long as its text takes to scroll through, and then the
+    // artwork comes back. The title marquee carries on above it.
+    if (metaShowingCard && meta_cardIsDescPage(cardPage)) {
+      bool moved = meta_cardScrollTick(now);     // arms the hold on landing
+      if (cardScrollArmed && now >= descHoldUntil &&
+          now - lastDescTick >= metaVStepMs) {
+        lastDescTick = now;
+        if (++descScrollY >= meta_descTravel()) {
+          cardPage = 0;
+          meta_showPicture(tEffect);
+          return true;
+        }
+        moved = true;
+      }
+      if (moved) {
+        meta_renderCard();
+        oled.display();
+      }
+      return moved;
+    }
     if (now - metaLastSwap >= (unsigned long)metaInterval * 1000UL) {
       if (!metaShowingCard) {
         meta_showCard(tEffect);              // artwork -> first page
       } else if (cardPage + 1 < meta_cardPageCount()) {
         // One page to the next: only the rows below the pinned grid row
         // change, so only those fade. The title, the rule and the pinned row
-        // stay lit throughout.
+        // stay lit throughout - unless the page is the description, which
+        // has the pinned row's place too.
         int x, w, y0, y1;
-        meta_cardPagedRect(&x, &w, &y0, &y1);
+        meta_cardPagedRect(&x, &w, &y0, &y1, meta_cardIsDescPage(cardPage + 1));
         pfNextPage = cardPage + 1;
         metaLastSwap = now;
         pf_start(x, w, y0, y1, meta_redrawCardPage);

@@ -13,8 +13,10 @@
 #
 #   /media/fat/tty2oledplus/tty2oledplus_scrape.py --systems NES,SNES
 #
-# Only systems with a console icon are offered: the description page is part
-# of the console layout, which is what the icons are for.
+# Of the consoles, only those with an icon are offered: their description
+# page is part of the split layout, which is what the icons are for. Arcade is
+# always offered - its gamelist lives in games/mame, beside the zips - and its
+# description is a page of the info card.
 
 # Overridable for tests.
 FAT="${T2OP_FAT:-/media/fat}"
@@ -68,8 +70,9 @@ pick_systems() {  # sets CHECKED to what was ticked; fails on Back
       --ok-label "Import" --extra-button --extra-label "Select all" \
       --help-button --help-label "Select none" --cancel-label "Back" \
       --checklist "Which systems to import? Each needs a gamelist.xml in its own
-games folder - games/NES/gamelist.xml - as Skraper, ES-DE and
-Batocera write it. What it says replaces what was there.$(pick_note)" \
+games folder - games/NES/gamelist.xml, games/mame/gamelist.xml -
+as Skraper, ES-DE and Batocera write it. What it says replaces what
+was there.$(pick_note)" \
       "${DIALOG_HEIGHT}" 72 14 "${items[@]}"
     case "${DIALOG_RC}" in
       0)
@@ -99,8 +102,8 @@ main() {
   load_systems
   if [ "${#KEYS[@]}" -eq 0 ]; then
     dialog --clear --title "Scrape metadata" \
-      --msgbox "There are no console icons in ${INSTALL}/pics/icon, so there is no
-system with a description page to import for. Update tty2oled+ to put them back." 9 72
+      --msgbox "The importer offered no systems to import - ${SCRAPER} did not run.
+Update tty2oled+ to put it back." 8 72
     clear; return 0
   fi
 

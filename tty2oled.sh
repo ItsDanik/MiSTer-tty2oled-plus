@@ -441,8 +441,8 @@ sendbuiltmeta() {
   return 0
 }
 
-# The description page's text, for a console game an imported gamelist
-# described.
+# The description page's text, for a console or arcade game an imported
+# gamelist described.
 #
 # CMDDESC,<bytes> and then exactly that many bytes, like an icon: at up to a
 # kilobyte it is longer than the rest of the metadata put together, and a
@@ -452,7 +452,7 @@ sendbuiltmeta() {
 DESC_MAX_BYTES=1024
 senddesc() {
   local text=""
-  [ "${META_KIND}" = "console" ] || return 1
+  case "${META_KIND}" in console|arcade) ;; *) return 1 ;; esac
   [ -n "${META_DESC:-}" ] || return 1
   text="$(printf '%s' "${META_DESC}" | LC_ALL=C tr -c ' -~' ' ' | LC_ALL=C tr -s ' ')"
   text="${text:0:${DESC_MAX_BYTES}}"

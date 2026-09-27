@@ -752,40 +752,50 @@ _FIELD_ORDER_DEFAULT="System Region Year Company Genre Developer Format Players 
 # has a region and a file format.
 #
 # The card is two lists rather than one, because the values are two shapes.
-# Eight short ones pair up two to a row and fill a page:
+# The short ones pair up two to a row, four rows to a page:
 #
 #     Year     1993          Manufctr  Midway
-#     Region   World         Orient    Horizontal
-#     Core     blahmid_tunit Author    rejectedcoins
-#     Set      nbajam        MAME      0289
+#     Players  4             Rating    8/10
+#     Developr Midway        Region    World
+#     Orient   Horizontal    Core      blahmid_tunit
+#
+#     Author   rejectedcoins Set       nbajam
+#     MAME     0289
 #
 # and the long ones - "Turbo/Shoot / Block/Pass / Steal" is 32 characters -
-# get a row each on the page after it, under a repeat of the pinned row:
+# get a row each on the page after them, under a repeat of the pinned row:
 #
 #     Year     1993          Manufctr  Midway
-#     Players  4
 #     Controls 8-way
 #     Buttons  Turbo/Shoot / Block/Pass / Steal
 #
 # Genre, Platform and Version are known but unlisted: name them in either ini
 # list to show them. Genre belongs in the wide list - "Fighter / 2.5D" does
 # not fit half a row.
-_ARCADE_ORDER_DEFAULT="Year Manufacturer Region Orientation Core Author Set MAME"
-_ARCADE_WIDE_DEFAULT="Players Controls Buttons"
+#
+# Developer, Publisher, Rating, Released and Series come from an imported
+# gamelist.xml rather than the MRA, as a console game's do - a set no
+# gamelist describes has none of them, and their places close up.
+_ARCADE_ORDER_DEFAULT="Year Manufacturer Players Rating Developer Region Orientation Core Author Set MAME"
+_ARCADE_WIDE_DEFAULT="Controls Buttons"
 
 # Every name either list accepts. A name absent from both is simply not shown.
-_ARCADE_KNOWN="Year Manufacturer Genre Players Controls Buttons Region Platform Orientation Set Core MAME Version Author"
+_ARCADE_KNOWN="Year Manufacturer Genre Players Controls Buttons Region Platform Orientation Set Core MAME Version Author Developer Publisher Rating Released Series"
 
 # The grid row repeated above each wide page, so a page of controls is still
 # labelled with the game's year and maker. These must be in ARCADE_FIELDS -
 # only a paired field can pin, a wide one is a whole row.
 : "${ARCADE_PINNED=Year Manufacturer}"
 
-# A column is about fifteen characters wide, which two of the names are not.
+# A column is about fifteen characters wide, which some of the names are not.
+# None is longer than "Manufctr": the value column is measured off the widest
+# label on the card, and a ninth letter would move every value on it.
 _arcade_display_label() {
   case "${1}" in
     Manufacturer) printf 'Manufctr' ;;
     Orientation)  printf 'Orient'   ;;
+    Developer)    printf 'Developr' ;;
+    Publisher)    printf 'Publishr' ;;
     *)            printf '%s' "${1}" ;;
   esac
 }
@@ -873,12 +883,20 @@ arcade_avail_from_mra() {
   local corename="${1}" count="" part="" out="" n=0
 
   ARCADE_AVAIL=()
-  ARCADE_AVAIL[Year]="${MRA_YEAR}"
-  ARCADE_AVAIL[Manufacturer]="${MRA_MANUFACTURER}"
+  # The MRA first, the imported gamelist (SCR_*, from arcade_lookup_scraped)
+  # for whatever it leaves out - the MRA is about this very set, where a
+  # gamelist entry may have been matched to a parent or a clone.
+  ARCADE_AVAIL[Year]="${MRA_YEAR:-${SCR_RELEASED:0:4}}"
+  ARCADE_AVAIL[Manufacturer]="${MRA_MANUFACTURER:-$(_nocomma "${SCR_PUBLISHER:-${SCR_DEVELOPER}}")}"
   # catver is the finer-grained of the two - "Platform / Run Jump" against
   # "Platform" - so it wins where the MRA carries it.
-  ARCADE_AVAIL[Genre]="${MRA_CATVER:-${MRA_CATEGORY}}"
-  ARCADE_AVAIL[Players]="${MRA_PLAYERS}"
+  ARCADE_AVAIL[Genre]="${MRA_CATVER:-${MRA_CATEGORY:-$(_nocomma "${SCR_GENRE}")}}"
+  ARCADE_AVAIL[Players]="${MRA_PLAYERS:-${SCR_PLAYERS}}"
+  ARCADE_AVAIL[Developer]="$(_nocomma "${SCR_DEVELOPER}")"
+  ARCADE_AVAIL[Publisher]="$(_nocomma "${SCR_PUBLISHER}")"
+  ARCADE_AVAIL[Rating]="$(_scr_rating "${SCR_RATING}")"
+  ARCADE_AVAIL[Released]="${SCR_RELEASED}"
+  ARCADE_AVAIL[Series]="$(_nocomma "${SCR_SERIES}")"
   ARCADE_AVAIL[Controls]="${MRA_JOYSTICK}"
   ARCADE_AVAIL[Region]="${MRA_REGION}"
   ARCADE_AVAIL[Platform]="${MRA_PLATFORM}"
@@ -922,6 +940,27 @@ arcade_avail_from_mra() {
       ARCADE_AVAIL[Controls]="${count} buttons"
     fi
   fi
+}
+
+# A gamelist says "Capcom, Inc." and "Shooter, Vertical", and metasanitize
+# would turn each comma into a space beside the one already there. One space.
+_nocomma() {
+  local v="${1//, / }"
+  printf '%s' "${v//,/ }"
+}
+
+# What an imported gamelist said about the running arcade game. The gamelist
+# is the one in games/mame, beside the zips, so it names sets - "dkong" - and
+# the .mra's <setname> is the key; the core name, which for arcade is the set
+# name too, covers an .mra that has none.
+# Always resets SCR_*, so a set no gamelist lists cannot show the last game's.
+arcade_lookup_scraped() {
+  local corename="${1}"
+  scr_reset
+  [ -n "${MRA_SETNAME}" ] && lookup_scraped "${MRA_SETNAME}" "" Arcade && return 0
+  [ -n "${corename}" ] && [ "${corename}" != "${MRA_SETNAME}" ] &&
+    lookup_scraped "${corename}" "" Arcade && return 0
+  return 1
 }
 
 # Emit the arcade fields held in ARCADE_AVAIL: the paired ones first, then the
@@ -990,8 +1029,10 @@ build_meta() {
         META_TITLE="${MRA_NAME}"
         META_SOURCE="mra"
         META_GAME="yes"
+        arcade_lookup_scraped "${corename}"
         arcade_avail_from_mra "${corename}"
         arcade_addfields_ordered
+        [ "${SHOW_DESCRIPTION:-yes}" = "yes" ] && META_DESC="${SCR_DESC}"
       else
         # STARTPATH missing (log_file_entry off) - fall back to the corename,
         # which for arcade is already the MRA setname. Not names.txt: that is

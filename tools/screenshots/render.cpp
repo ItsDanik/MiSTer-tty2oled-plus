@@ -217,10 +217,13 @@ static void scene_description(const char *name, const char *cmd, const char *ico
   save(name);
 }
 
-static void scene_card(const char *name, const char *cmd, int page) {
+static void scene_card(const char *name, const char *cmd, int page,
+                       const char *desc = nullptr, int scroll = 0) {
   meta_reset();
   meta_parse(cmd);
-  cardPage = page;
+  if (desc) meta_setDesc(desc, strlen(desc));
+  cardPage    = page;
+  descScrollY = scroll;
   meta_renderCard();
   save(name);
 }
@@ -334,15 +337,23 @@ int main(int argc, char **argv) {
                     "robots. Collect rings, find the Chaos Emeralds and rescue "
                     "your friends.", 3);
 
-  // Arcade card, both pages: the grid, then the wide fields under a repeat of
-  // the pinned row. 2 pinned, 8 paired two to a row.
+  // Arcade card, as the shipped lists lay it out for a set an imported
+  // gamelist describes: the grid's first page, the wide fields under a repeat
+  // of the pinned row, and the description. 2 pinned, 11 paired two to a row
+  // - two grid pages - then the wide page, then the description.
   const char *nbajam =
-      "CMDMETA,1,12,2,8,NBA Jam (rev 3.01 04/07/93)"
-      "|Year=1993|Manufctr=Midway|Region=World|Orient=Horizontal"
-      "|Core=blahmid_tunit|Author=rejectedcoins|Set=nbajam|MAME=0289"
-      "|Players=4|Controls=8-way|Buttons=Turbo/Shoot / Block/Pass / Steal";
+      "CMDMETA,1,12,2,11,NBA Jam (rev 3.01 04/07/93)"
+      "|Year=1993|Manufctr=Midway|Players=4|Rating=8/10|Developr=Midway"
+      "|Region=World|Orient=Horizontal|Core=blahmid_tunit|Author=rejectedcoins"
+      "|Set=nbajam|MAME=0289"
+      "|Controls=8-way|Buttons=Turbo/Shoot / Block/Pass / Steal";
+  const char *nbajamDesc =
+      "NBA Jam is a two-on-two basketball game with exaggerated dunks, "
+      "real NBA players and a ball that catches fire after three baskets in a "
+      "row. Up to four players can join in, two on each side.";
   scene_card("arcade-card-1", nbajam, 0);
-  scene_card("arcade-card-2", nbajam, 1);
+  scene_card("arcade-card-2", nbajam, 2);
+  scene_card("arcade-description", nbajam, 3, nbajamDesc, 3);
 
   // The wheel logo the card alternates with, and a computer core's banner -
   // which is the whole of what a computer core shows.

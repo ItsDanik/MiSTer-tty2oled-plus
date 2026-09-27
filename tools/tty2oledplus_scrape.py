@@ -6,9 +6,11 @@ left in a system's own games folder, games/NES/gamelist.xml, and keeps what it
 says about each game in scraped/<system>.txt for the daemon: the title,
 release date, players, rating, genre, developer, publisher, series and a
 description. No account and no network: the scraping was done elsewhere.
+Arcade games are one more system, whose gamelist sits in games/mame beside
+the zips.
 
     tty2oledplus_scrape.py --list-systems
-    tty2oledplus_scrape.py --systems NES,SNES
+    tty2oledplus_scrape.py --systems NES,SNES,Arcade
     tty2oledplus_scrape.py --systems all
 
 The Scripts menu reaches it through tty2oledplus_scrape.sh, which asks which
@@ -30,9 +32,9 @@ import xml.etree.ElementTree as ET
 DESC_MAX = 1024   # the firmware keeps this much
 
 # ---------------------------------------------------------------------------
-# The systems: one per console icon in pics/icon, since the description page
-# is the console layout's. Keyed by the icon's name, which is the core name
-# the daemon looks the file up by.
+# The systems: one per console icon in pics/icon, since a console's
+# description page is part of the split layout the icons are for. Keyed by the
+# icon's name, which is the core name the daemon looks the file up by.
 #
 #   key, menu label, folders under games/, extensions
 #
@@ -68,6 +70,13 @@ SYSTEMS = [
     ("WonderSwan",      "WonderSwan",                ["WonderSwan"],           "ws"),
     ("WonderSwanColor", "WonderSwan Color",          ["WonderSwanColor"],      "wsc"),
 ]
+
+# Arcade needs no icon - the card is the whole panel - so it is always
+# offered. Its gamelist is the one in games/mame, beside the zips, so it is
+# keyed by MAME set name, which is what an .mra's <setname> says and what the
+# daemon looks it up by. _Arcade is not searched: its .mra files are not what
+# a scraper scrapes, and a set's name is the key both sides agree on.
+ARCADE = ("Arcade", "Arcade (games/mame)", ["mame", "hbmame"], "zip 7z")
 
 # Other names an icon goes by. Both spellings ship in pics/icon, and one
 # system should appear once in the menu, not twice.
@@ -136,13 +145,15 @@ def icon_names(install):
 
 
 def supported_systems(install):
-    """The systems with an icon - the only ones with a description page."""
+    """The consoles with an icon - the only ones with a split layout to put a
+    description page in - and the arcade, whose card needs none."""
     have = icon_names(install)
     out = []
     for s in SYSTEMS:
         names = [s[0]] + ICON_ALIASES.get(s[0], [])
         if any(n.lower() in have for n in names):
             out.append(s)
+    out.append(ARCADE)
     return out
 
 
@@ -345,7 +356,8 @@ def import_summary(totals, problems):
     if not any(t[1] for t in totals):
         lines.append("")
         lines.append("No gamelist.xml was found. Put one in each system's own games")
-        lines.append("folder - games/NES/gamelist.xml - and import again.")
+        lines.append("folder - games/NES/gamelist.xml, or games/mame/gamelist.xml")
+        lines.append("for arcade - and import again.")
     if problems:
         lines.append("")
         lines.append("Could not be read:")
@@ -373,8 +385,8 @@ def main(argv=None):
     wanted = [w.strip().lower() for w in args.systems.split(",") if w.strip()]
     systems = [s for s in supported if "all" in wanted or s[0].lower() in wanted]
     if not systems:
-        say("Name the systems to import: --systems NES,SNES (or all).")
-        say("Only systems with a console icon have a description page.")
+        say("Name the systems to import: --systems NES,SNES,Arcade (or all).")
+        say("Of the consoles, only those with an icon have a description page.")
         return 2
 
     totals, problems = import_gamelists(cfg, systems)

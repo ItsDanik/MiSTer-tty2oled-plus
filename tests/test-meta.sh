@@ -207,18 +207,20 @@ clear_state
 printf '%s\n' "${FIX}/mra/tmnt.mra" > "${TMP}/STARTPATH"
 build_meta "tmnt"
 ok "all fields"  "${#META_FIELDS[@]}"    "11"
-ok "paired"      "${META_COMPACT_COUNT}" "8"
+ok "paired"      "${META_COMPACT_COUNT}" "9"
 ok "pinned"      "${META_PINNED_COUNT}"  "2"
 ok "grid row 1"  "${META_FIELDS[0]}"  "$(printf 'Year\t1989')"
 ok "grid row 1 right" "${META_FIELDS[1]}" "$(printf 'Manufctr\tKonami')"
-ok "grid row 4 right" "${META_FIELDS[7]}" "$(printf 'MAME\t0229')"
+# Players is a short field, paired straight after the pinned row. Rating and
+# Developer would follow it, but only an imported gamelist has them.
+ok "grid row 2"  "${META_FIELDS[2]}"  "$(printf 'Players\t4')"
+ok "the last paired" "${META_FIELDS[8]}" "$(printf 'MAME\t0229')"
 # The wide list follows the paired one, in its own order.
-ok "wide 1"      "${META_FIELDS[8]}"  "$(printf 'Players\t4')"
-ok "wide 2"      "${META_FIELDS[9]}"  "$(printf 'Controls\t8-way')"
+ok "wide 1"      "${META_FIELDS[9]}"  "$(printf 'Controls\t8-way')"
 # Only the first <buttons count> names are the game's; "Start", "Coin" and
 # "Pause" belong to the cabinet, and "-" is a placeholder. "/" rather than ","
 # because metasanitize turns a comma into a space on the wire.
-ok "wide 3"      "${META_FIELDS[10]}" "$(printf 'Buttons\tAttack/Jump')"
+ok "wide 2"      "${META_FIELDS[10]}" "$(printf 'Buttons\tAttack/Jump')"
 # Genre is known but not in either default list.
 ok "genre not shown by default" \
    "$(printf '%s\n' "${META_FIELDS[@]}" | grep -c '^Genre')" "0"

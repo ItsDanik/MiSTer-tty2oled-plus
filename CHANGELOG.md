@@ -4,6 +4,26 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.6.8b — 2026-09-27
+
+- **Arcade games get a description, too.** **Scrape metadata** now offers
+  **Arcade**: it imports the `gamelist.xml` your scraper wrote into
+  `games/mame`, beside the zips, and matches each game by its MAME set name.
+  A game it describes gets one more page on the info card, after the
+  details: "Now playing", the title and the Arcade corner stay, and the
+  description scrolls slowly up beneath them. When it has all gone past, the
+  logo comes back. `SHOW_DESCRIPTION` turns it off for arcade and console
+  alike. This needs the new firmware, which the update flashes.
+- **More arcade details.** The card shows the game's players, rating and
+  developer beside the year and manufacturer, two to a row. Players comes
+  from the `.mra` as before; rating and developer only for games the
+  gamelist describes, and their places close up for the rest. Where the
+  `.mra` has no year, manufacturer, genre or player count, the gamelist's
+  fills in. Publisher, Released and Series are there to add in Settings.
+  Controls and the button names keep the wide page to themselves. If you
+  changed the arcade field lists yourself, your lists are kept - add the new
+  names in **Settings → Arcade info card** to see them.
+
 ## 0.6.7b — 2026-09-27
 
 - **Arcade games show their logo.** Every arcade game now gets its wheel

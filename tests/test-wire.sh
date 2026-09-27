@@ -130,7 +130,7 @@ sendmeta "tmnt"
 out="$(captured)"
 ok "still one command line" "$(sync_capture; wc -l < "${CAPTURE}")" "1"
 ok "eleven fields" "$(printf '%s' "${out}" | tr -cd '|' | wc -c)" "11"
-contains "eight paired, two pinned" "${out}" "CMDMETA,1,12,2,8,"
+contains "nine paired, two pinned" "${out}" "CMDMETA,1,12,2,9,"
 contains "players"  "${out}" "|Players=4"
 contains "controls" "${out}" "|Controls=8-way"
 contains "buttons"  "${out}" "|Buttons=Attack/Jump"
@@ -1053,11 +1053,71 @@ contains "in the shipped order Year is the first field under System" \
 METADATA_FIELDS=""
 SCRAPE_DIR="${TMP}/no-such-dir"
 
-# An arcade game has no description to send.
+# ---------------------------------------------------------------------------
+section "scraped metadata: arcade, keyed on the .mra or the set"
+# ---------------------------------------------------------------------------
+# An arcade game no gamelist describes has no description to send, and its
+# card is the MRA's alone.
 reset_capture
 printf '%s\n' "${FIX}/mra/dkong.mra" > "${TMP}/STARTPATH"
 sendmeta "dkong"
-ok "arcade sends none" "$(captured | grep -c 'CMDDESC')" "0"
+out="$(captured)"
+contains "arcade with nothing imported sends its card" "${out}" "CMDMETA,1,"
+ok "arcade with nothing imported sends no description" "$(printf '%s' "${out}" | grep -c 'CMDDESC')" "0"
+ok "and none of the gamelist's fields" "$(printf '%s' "${out}" | grep -c 'Developr=\|Rating=')" "0"
+
+SCRAPE_DIR="${TMP}/scraped"
+arcade_game() {  # arcade_game <mra>
+  reset_capture
+  printf '%s\n' "${1}" > "${TMP}/STARTPATH"
+}
+# From games/mame/gamelist.xml, so keyed by the set - dkong.mra's <setname>.
+ADESC="Climb the girders, jump the barrels, save the girl."
+printf '%s\n' \
+  "dkong||ok|Donkey Kong|1981-07-09|2|18|Platform, Climbing|Nintendo R&D1, Ikegami|Nintendo|Donkey Kong|${ADESC}" \
+  > "${SCRAPE_DIR}/Arcade.txt"
+arcade_game "${FIX}/mra/dkong.mra"
+sendmeta "dkong"
+out="$(captured)"
+line="$(printf '%s' "${out}" | head -n1)"
+contains "the MRA's title stays"            "${line}" ",Donkey Kong (US set 1)|"
+# Players, Rating and Developer are short fields, paired after the pinned row:
+# nine of them now, where the MRA alone had six.
+contains "the MRA's year and maker win, and the gamelist's short fields follow" \
+  "${line}" "CMDMETA,1,12,2,9,Donkey Kong (US set 1)|Year=1981|Manufctr=Nintendo of America|Players=2|Rating=9/10|Developr=Nintendo R&D1 Ikegami|Orient="
+ok "the description follows the line" \
+   "$(printf '%s' "${out}" | sed -n 2p | tr -d '\r')" "CMDDESC,${#ADESC}"
+ok "and then exactly its bytes" \
+   "$(sync_capture; tail -c "${#ADESC}" "${CAPTURE}")" "${ADESC}"
+
+# An .mra's own name is not a key: nothing imports _Arcade.
+sed -i 's/^dkong|/Donkey Kong (US set 1)|/' "${SCRAPE_DIR}/Arcade.txt"
+arcade_game "${FIX}/mra/dkong.mra"
+sendmeta "dkong"
+ok "a line keyed by the .mra's name is no hit" "$(captured | grep -c 'CMDDESC')" "0"
+sed -i 's/^Donkey Kong (US set 1)|/dkong|/' "${SCRAPE_DIR}/Arcade.txt"
+
+arcade_game "${FIX}/mra/dkong.mra"
+SHOW_DESCRIPTION="no"
+sendmeta "dkong"
+out="$(captured)"
+ok "SHOW_DESCRIPTION=no sends an arcade game none either" "$(printf '%s' "${out}" | grep -c 'CMDDESC')" "0"
+contains "but still the fields" "${out}" "|Developr="
+unset SHOW_DESCRIPTION
+
+# The next set, which no gamelist lists, must not inherit this one's.
+arcade_game "${FIX}/mra/sf2.mra"
+sendmeta "sf2"
+out="$(captured)"
+contains "the next set sends its card" "${out}" "CMDMETA,1,"
+ok "and none of the last one's" \
+   "$(printf '%s' "${out}" | grep -c 'CMDDESC\|Developr=')" "0"
+SCRAPE_DIR="${TMP}/no-such-dir"
+
+ok "the shipped short list has players, rating and developer after the pinned row" \
+   "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${ARCADE_FIELDS}")" "Year Manufacturer Players Rating Developer Region Orientation Core Author Set MAME"
+ok "and the wide list only what needs a row" \
+   "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${ARCADE_FIELDS_WIDE}")" "Controls Buttons"
 
 # ---------------------------------------------------------------------------
 section "scroll speeds: pixels a second, sent once at startup"

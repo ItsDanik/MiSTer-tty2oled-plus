@@ -40,15 +40,22 @@ title, the Mega Drive icon beside it](docs/img/console-description.png)
 logo again. The card's top half is the console layout's, across the whole
 width: "Now playing", the title — scrolling when it is too long — and a corner
 that says Arcade. Below it, the details from the core's `.mra`, two to a row,
-and the long ones, like the button names, on a row each.
+and the long ones, like the button names, on a row each. A game that
+[Scrape metadata](#scrape-metadata) imported gets its developer and rating
+there too, and its description as the card's last page, scrolling up under
+the title as a console's does; when the last line has gone, the logo comes
+back.
 
 ![NBA Jam's wheel logo](docs/img/arcade-art.png)
 
-![Card page one: year, manufacturer, region, orientation, core, author, set and
-MAME version](docs/img/arcade-card-1.png)
+![Card page one: year, manufacturer, players, rating, developer, region,
+orientation and core](docs/img/arcade-card-1.png)
 
-![Card page two: players, controls and button names, under the pinned
+![The wide page: controls and button names, under the pinned
 row](docs/img/arcade-card-2.png)
+
+![The card's description page: NBA Jam's description scrolling under its
+title](docs/img/arcade-description.png)
 
 **Computer cores** show the core's artwork full-screen, and nothing else, yet.  
 Computer metadata support coming in the future.
@@ -199,13 +206,18 @@ folder, beside the games it describes —
 ```
 /media/fat/games/NES/gamelist.xml
 /media/usb0/games/SNES/gamelist.xml
+/media/fat/games/mame/gamelist.xml
 ```
 
 — then tick the systems and **Import**. **Select all** and **Select none**
 are the buttons beside it, and the choice is remembered for next time. No
 account, no network: the scraping was done elsewhere, this only reads what it
-wrote. Only systems with a console icon are offered, since the description
-page is part of the console layout.
+wrote. Of the consoles, only those with an icon are offered, since their
+description page is part of the split layout. **Arcade** is always offered:
+its gamelist is the one in `games/mame`, beside the zips, and games are
+matched by MAME set name, the `<setname>` in each `.mra`. The `.mra`'s own
+year, maker and players win over the gamelist's; the gamelist adds the
+developer, the rating and the description.
 
 Games are matched by file name, so the gamelist has to come from the same
 ROMs, not renamed since. An import replaces what was there for the games it
@@ -234,7 +246,7 @@ Over SSH:
 
 ```sh
 /media/fat/tty2oledplus/tty2oledplus_scrape.py --list-systems
-/media/fat/tty2oledplus/tty2oledplus_scrape.py --systems NES,SNES
+/media/fat/tty2oledplus/tty2oledplus_scrape.py --systems NES,SNES,Arcade
 /media/fat/tty2oledplus/tty2oledplus_scrape.py --systems all
 ```
 
@@ -294,15 +306,15 @@ sent over when it restarts, so nothing needs reflashing.
 |---|---|---|
 | `SHOW_METADATA` | `yes` | Master switch. `no` shows core artwork only. |
 | `core_bootscreen_time` | `3000` | A console core launched with its game already chosen holds its own full-screen artwork this long, in ms, before the game's details replace it. `0` goes straight to the details. A game loaded into a running core is unaffected. |
-| `METADATA_INTERVAL` | `12` | Seconds per page, console and arcade. Arcade: artwork, each card page in turn, then the artwork again. Console: each page of fields in turn; the description page stays until its text has scrolled through. `0` never turns a page. |
+| `METADATA_INTERVAL` | `12` | Seconds per page, console and arcade. Arcade: artwork, each card page in turn, then the artwork again. Console: each page of fields in turn. Either way a description page stays until its text has scrolled through. `0` never turns a page. |
 | `METADATA_FIELDS` | `System Year Genre Region Format Players Rating Released Series` | Which console fields show, and in what order. Four fit at once; the rest take turns, a page every `METADATA_INTERVAL`. Available: System Region Year Company Genre Developer Format Players Rating Released Series — the last four only for games Scrape metadata imported. |
 | `METADATA_PINNED` | `System` | Fields that stay put while the rest page under them. The title is always there. |
 | `COMPACT_YEAR_COMPANY` | `yes` | Fold the publisher into the year: `1989, Acclaim` on one row. |
-| `SHOW_DESCRIPTION` | `yes` | The description page, for games Scrape metadata imported a description for. |
+| `SHOW_DESCRIPTION` | `yes` | The description page, for games Scrape metadata imported a description for — console and arcade. |
 | `HSCROLL_SPEED` | `25` | How fast a title too long for the screen scrolls sideways, in pixels a second. Bigger is faster. |
 | `VSCROLL_SPEED` | `6` | How fast a description scrolls up, in pixels a second. |
-| `ARCADE_FIELDS` | `Year Manufacturer Region Orientation Core Author Set MAME` | Short arcade fields, paired two to a row. |
-| `ARCADE_FIELDS_WIDE` | `Players Controls Buttons` | Arcade fields whose values need a row of their own. |
+| `ARCADE_FIELDS` | `Year Manufacturer Players Rating Developer Region Orientation Core Author Set MAME` | Short arcade fields, paired two to a row. Developer, Publisher, Rating, Released and Series come from an imported gamelist. |
+| `ARCADE_FIELDS_WIDE` | `Controls Buttons` | Arcade fields whose values need a row of their own. |
 | `ARCADE_PINNED` | `Year Manufacturer` | The grid row repeated above each wide page. |
 | `CONTRAST` | `255` | Panel brightness, `0`–`255`. |
 | `CONTRAST_FADE_MS` | `800` | How long a brightness change takes to fade, `0`–`4000` ms. `0` jumps. |

@@ -172,7 +172,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 2041 checks, no hardware needed. |
+| `tests/` | 2096 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation **and MiSTer**: three backends, the third being a PNG reader built on the standard library, which is what the MiSTer has. |
@@ -458,15 +458,23 @@ the page, not the row:
 
 ```
 page 0   Year     1993          Manufctr  Midway
-         Region   World         Orient    Horizontal
-         Core     blahmid_tunit Author    rejectedcoins
-         Set      nbajam        MAME      0289
+         Players  4             Rating    8/10
+         Developr Midway        Region    World
+         Orient   Horizontal    Core      blahmid_tunit
 
-page 1   Year     1993          Manufctr  Midway
-         Players  4
+page 1   Author   rejectedcoins Set       nbajam
+         MAME     0289
+
+page 2   Year     1993          Manufctr  Midway
          Controls 8-way
          Buttons  Turbo/Shoot / Block/Pass / Steal
+
+page 3   the description, when a gamelist gave one
 ```
+
+Rating and Developer are there only for a set an imported gamelist
+describes. Without them the grid closes up: nine fields, with Players, is
+page 0 full and MAME alone on page 1.
 
 The grid pages pair the leading `metaCompact` fields two to a row, reading
 **across**; the wide pages give a row each to the rest, under a repeat of the
@@ -484,7 +492,10 @@ script that sends no counts gets.
 
 The alternation runs **artwork, page 0, page 1, artwork**: `meta_tick` moves to
 the next page while the card is up and only returns to the artwork after the
-last one. Each step is a transition effect like any other.
+last one - which is the description, when an imported gamelist gave the game
+one, and stays up until it has scrolled through rather than for an interval
+(see [Scrape metadata](#scrape-metadata-and-the-description-page)). Each step
+is a transition effect like any other.
 
 **The card marquees, like the console layout.** A title wider than the panel
 scrolls, and so does a wide row's value that will not fit its row - a
@@ -755,7 +766,7 @@ session. These are the fork's additions, all ESP32-only:
 | `CMDBUSY,<0\|1>[,<label>[,<effect>]]` | one line; 1 runs the boot sweep in the bottom band, 0 lets it finish its cycle and stop. A label blacks the panel above the band and writes it there, so the message is all that shows; the same label again is ignored, a different one redraws and rewinds the sweep. With an effect the label screen is transitioned to rather than drawn. Any drawing command stops it at once |
 | `CMDMSG,<effect>,<text>` | one line; a centred message, transitioned to like a picture. The text is the rest of the line, so commas in it are safe |
 | `CMDFLIP,<seconds>` | one line; 0 disables and returns to the normal side |
-| `CMDDESC,<bytes>` | followed by exactly that many raw bytes: the description page's text, printable ASCII, up to 1024 kept. Sent after `CMDMETA`, which clears it |
+| `CMDDESC,<bytes>` | followed by exactly that many raw bytes: the description page's text, printable ASCII, up to 1024 kept. Sent after `CMDMETA`, which clears it, for console and arcade kinds |
 | `CMDSCROLL,<h>,<v>` | one line; the title marquee's and the description's speeds, pixels per second, 1..200 and 1..100 |
 | `CMDWRBOOT` | followed by exactly 6912 raw bytes (256x54, 4bpp) |
 | `CMDCLRBOOT` | none - forget the stored boot image |
@@ -957,13 +968,28 @@ Python because it is XML; standard library only because Python 3.9 bare is
 what a MiSTer has. It is named for what the user is doing, not for what the
 code does.
 
-**Only systems with a console icon are offered**, one per system: `SYSTEMS` in
-the importer is keyed by icon name and carries the `games/` folders and the
-extensions. `Genesis` and `NEOGEO` are icons too, and `ICON_ALIASES` keeps
+**Only consoles with an icon are offered, and Arcade always**, one per
+system: `SYSTEMS` in the importer is keyed by icon name and carries the
+`games/` folders and the extensions. `Genesis` and `NEOGEO` are icons too, and `ICON_ALIASES` keeps
 each system in the menu once. The first folder is the system's own and its
 gamelist is taken whole - it may name an `.m3u` where MiSTer loads the
 `.cue`, and the base name is the same. A later folder is shared - the Game Boy
 Color's games in `GAMEBOY` - and only that system's extensions come from it.
+
+**Arcade is `ARCADE`, outside that list**, because the card needs no icon.
+Its gamelist is `games/mame/gamelist.xml`, beside the zips, which names sets
+(`./dkong.zip`); `games/hbmame` is a shared folder, zips only. **`_Arcade` is
+deliberately not searched** - that is where the `.mra` files are, not where a
+scraper writes. The daemon's `arcade_lookup_scraped` looks up `MRA_SETNAME`,
+then the core name, in `scraped/Arcade.txt`, and resets `SCR_*` first - an
+arcade change that looked nothing up would otherwise show the previous
+game's. The MRA wins everything the two share (Year, Manufacturer, Genre,
+Players) because it describes this very set; the gamelist adds Developer,
+Publisher, Rating, Released, Series and the description. `Developr` and
+`Publishr` are eight letters like `Manufctr`, because the card's value column
+is measured off its widest label and a ninth would move every value on it.
+`_nocomma` folds a gamelist's `", "` to one space before `metasanitize` would
+make it two.
 
 **Keyed on the file name without its extension**, which `<path>` names and
 `CURRENTPATH` carries; the daemon's `lookup_scraped` tries `CURRENTPATH` with
@@ -996,6 +1022,19 @@ gone past `DESC_TOP`. A turn to or from it fades the whole area, since the
 pinned rows are on one side of it only. The text is drawn first and the rows
 above `DESC_TOP` blacked out before the header and title go on - u8g2 has no
 clipping.
+
+**The arcade card has the same page, last, before the artwork comes back**:
+artwork, the field pages, the description, artwork. It spans the card's full
+width (`meta_descX`/`meta_descW` pick the column by kind, so the wrap follows
+the kind as it follows the side swap), keeps the header, the cell and the
+title, and `meta_drawDesc` is the one renderer for both layouts. It does not
+dwell either: the arcade branch of `meta_tick` scrolls it and calls
+`meta_showPicture` when the travel is done, ignoring `metaInterval` while it
+is up. The turn to it fades the whole field area (`meta_cardPagedRect`'s
+`whole`), and its hold is started by `meta_descRewind` - from the page fade's
+redraw, or from `meta_cardScrollTick`'s arming when the card lands straight on
+it, which is what a card with a description and no fields does:
+`meta_cardFieldPageCount` is 0 then, not an empty page in front of the text.
 
 `CMDDESC` is a length-prefixed transfer rather than a field in `CMDMETA`: a
 kilobyte of line could overflow the 256-byte serial buffer while the firmware

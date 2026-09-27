@@ -3114,6 +3114,139 @@ int main() {
         tfFadeMs = keepFade;
     }
 
+    section("the arcade card: the description is a page after the fields");
+    {
+        meta_parse("CMDMETA,1,10,2,8,NBA Jam"
+                   "|Year=1993|Manufctr=Midway|Region=World|Orient=Horizontal"
+                   "|Core=blahmid_tunit|Author=rejectedcoins|Set=nbajam|MAME=0289"
+                   "|Players=4|Controls=8-way|Buttons=Turbo/Shoot");
+        okInt ("a grid page and a wide page", meta_cardPageCount(), 2);
+        meta_setDesc("Two on two basketball.", 22);
+        okInt ("the description adds one",   meta_cardPageCount(), 3);
+        okBool("after the fields",           meta_cardIsDescPage(2), true);
+        okBool("page 0 is still the grid",   meta_cardIsDescPage(0), false);
+        okInt ("and it has no wide fields",  (cardPage = 2, meta_cardWideFirst()), -1);
+        cardPage = 0;
+
+        // Wrapped across the whole card, which has no icon to share it with.
+        std::string text;
+        for (int i = 0; i < 20; i++) text += "wordy ";
+        meta_setDesc(text.c_str(), text.size());
+        meta_descEnsureWrapped();
+        okInt ("wrapped to the card's width", descWrapW, CARD_FULL_W);
+        okInt ("drawn from the card's margin", meta_descX(), CARD_MARGIN_X);
+
+        // A card that is nothing but a description is not an empty page and
+        // then the text.
+        meta_parse("CMDMETA,1,10,Game");
+        meta_setDesc("Only words.", 11);
+        okInt ("no fields and a description: one page", meta_cardPageCount(), 1);
+        okBool("which is the description",              meta_cardIsDescPage(0), true);
+        meta_reset();
+    }
+
+    section("the arcade description page: header, title and cell, then the text");
+    {
+        meta_parse("CMDMETA,1,10,2,2,Pac-Man|Year=1980|Manufctr=Namco");
+        std::string text;
+        for (int i = 0; i < 12; i++) { char w[16]; snprintf(w, sizeof w, "line%02d ", i); text += w; text += "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx "; }
+        meta_setDesc(text.c_str(), text.size());
+        cardPage    = meta_cardFieldPageCount();
+        descScrollY = 0;
+        u8g2.resetProbe();
+        oled.resetProbe();
+        meta_renderCard();
+        okBool("the header is still there", u8g2.find(CON_HEADER_TEXT) != nullptr, true);
+        okBool("and the cell",              u8g2.find(CARD_CELL_TEXT) != nullptr, true);
+        okBool("and the title",             u8g2.find("Pac-Man") != nullptr, true);
+        okBool("but not the pinned row",    u8g2.find("Year") == nullptr, true);
+        const FakeU8g2::Draw *first = u8g2.find("line00");
+        okBool("the first line sits where the first row would, at the margin",
+               first && first->y == CARD_FIELD_Y0 && first->x == CARD_MARGIN_X, true);
+        int lines = 0;
+        for (size_t i = 0; i < u8g2.draws.size(); i++)
+            if (u8g2.draws[i].text.rfind("line", 0) == 0 || u8g2.draws[i].text.rfind("xxx", 0) == 0) lines++;
+        okInt ("as many lines as the area holds", lines, CARD_FIELD_ROWS);
+        okBool("nothing wider than the panel", u8g2.maxRight <= (int)DispWidth, true);
+
+        descScrollY = CARD_FIELD_PITCH + 3;
+        u8g2.resetProbe();
+        oled.resetProbe();
+        meta_renderCard();
+        bool above = false;
+        for (size_t i = 0; i < u8g2.draws.size(); i++)
+            if (u8g2.draws[i].y < DESC_TOP && u8g2.draws[i].text.rfind("xxx", 0) == 0) above = true;
+        okBool("scrolled, no line is drawn above the area", above, false);
+        okBool("and the title is drawn after the text",
+               u8g2.find("Pac-Man") != nullptr, true);
+        cardPage = 0;
+        descScrollY = 0;
+        meta_reset();
+    }
+
+    section("arcade: artwork, the fields, the description scrolled through, artwork");
+    {
+        uint16_t keepFade = tfFadeMs;
+        tfFadeMs = 0;
+        meta_parseScroll("CMDSCROLL,25,6");
+        meta_parse("CMDMETA,1,10,2,4,Pong|Year=1972|Manufctr=Atari"
+                   "|Region=World|Orient=Horizontal");
+        std::string text = "One two three four five six seven eight nine ten eleven twelve "
+                           "thirteen fourteen fifteen sixteen seventeen eighteen nineteen "
+                           "twenty twentyone twentytwo twentythree twentyfour twentyfive "
+                           "twentysix twentyseven twentyeight twentynine thirty.";
+        text = text + " " + text;
+        meta_setDesc(text.c_str(), text.size());
+        okInt("one grid page and the description", meta_cardPageCount(), 2);
+
+        g_fakeMillis    = 900000;
+        metaLastSwap    = g_fakeMillis;
+        metaShowingCard = false;
+        cardPage        = 0;
+
+        g_fakeMillis += 11000;
+        okBool("artwork -> the grid", meta_tick(), true);
+        okInt ("on the grid page",    cardPage, 0);
+        meta_tick();                               // the card has landed
+
+        g_fakeMillis += 11000;
+        okBool("grid -> the description", meta_tick(), true);
+        int x, w, y0, y1;
+        meta_cardPagedRect(&x, &w, &y0, &y1, true);
+        okBool("a turn to it fades the whole area, pinned row included",
+               y0 == DESC_TOP && x == 0 && w == (int)DispWidth, true);
+        settlePageFade();
+        okInt ("on the description",      cardPage, 1);
+        okInt ("from its first line",     descScrollY, 0);
+
+        g_fakeMillis += DESC_HOLD_MS - 50;
+        meta_tick();
+        okInt ("it holds before moving",  descScrollY, 0);
+        g_fakeMillis += 60;
+        meta_tick();
+        okInt ("then moves a pixel",      descScrollY, 1);
+
+        // The interval that turns field pages does not apply: however long
+        // the text is, it all goes past before the artwork comes back.
+        const long travel = meta_descTravel();
+        okBool("a travel longer than an interval's worth of pixels",
+               travel * (long)DESC_STEP_MS > 10000L, true);
+        int guard = 0;
+        while (metaShowingCard && guard++ < 10000) {
+            g_fakeMillis += DESC_STEP_MS;
+            meta_tick();
+        }
+        okInt ("back to the artwork after exactly the travel", guard, (int)travel - 1);
+        okBool("drawn from logoBin",                          lastSrcAtDraw == logoBin, true);
+        okInt ("rewound to the first page",                   cardPage, 0);
+
+        g_fakeMillis += 11000;
+        okBool("and round again", meta_tick(), true);
+        okInt ("from the grid",   cardPage, 0);
+        tfFadeMs = keepFade;
+        meta_reset();
+    }
+
     section("a description arriving for a layout already up redraws it");
     {
         meta_parse("CMDMETA,2,0,Sonic|System=Mega Drive");
