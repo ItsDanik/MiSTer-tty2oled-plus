@@ -172,7 +172,7 @@ with scrolling text and an icon panel.
 | `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
 | `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
 | `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 2096 checks, no hardware needed. |
+| `tests/` | 2176 checks, no hardware needed. |
 | `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
 | `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
 | `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation **and MiSTer**: three backends, the third being a PNG reader built on the standard library, which is what the MiSTer has. |
@@ -197,6 +197,7 @@ with scrolling text and an icon panel.
 | `tools/tty2oledplus_settings.sh` | The `dialog` settings editor for `tty2oled-user.ini`. Lives in the install folder. **On the MiSTer**. |
 | `tools/tty2oledplus_scrape.sh` | Scrape metadata's menu: which systems to import. Lives in the install folder; the launcher's third entry. **On the MiSTer**. |
 | `tools/tty2oledplus_scrape.py` | The importer: each system's `games/<folder>/gamelist.xml` into `scraped/<system>.txt`. Standard library only. **On the MiSTer**. |
+| `tools/history2gamelist.py` | MAME's `history.xml` -> a `gamelist.xml` of arcade descriptions for the sets in a ROM folder, plus `2048.txt`, the ones it shortened to fit the firmware. No scraper, no quota. Workstation. See [Arcade descriptions from history.xml](#arcade-descriptions-from-historyxml). |
 | `tools/tty2oledplus_install.sh` | The starter users drop in `/media/fat/Scripts`: fetches the latest installer, checks it, runs it, removes itself. **On the MiSTer**. |
 | `tools/tty2oledplus_update.sh` | Installs/updates from a GitHub release. Lives in the install folder; the launcher's **Update**. **On the MiSTer**. |
 | `.github/workflows/ci.yml` | Tests and firmware on every push; the release on a `v*` tag. |
@@ -391,7 +392,7 @@ top row is one past the last blank one - that `+1` is easy to leave out, and
 leaving it out silently closes the gap rather than breaking anything.
 
 ```
-row  0..11  "Now playing"        baseline CON_HEADER_Y   pips at the right
+row  0..11  "Now playing"        baseline CON_HEADER_Y   pips at the right, blinking
 row 12      blank                         CON_GAP_HEADER
 row 13      rule                          CON_RULE_Y
 row 14      blank                         CON_GAP_RULE
@@ -474,7 +475,31 @@ page 3   the description, when a gamelist gave one
 
 Rating and Developer are there only for a set an imported gamelist
 describes. Without them the grid closes up: nine fields, with Players, is
-page 0 full and MAME alone on page 1.
+page 0 full and MAME alone on page 1 - which was a page turn, and eight
+seconds, spent on one field. So **a grid page that would hold a single field
+does not exist**: the field moves to the first wide page, on the right half
+of the first wide field's row, and that field gives up the half it was not
+using.
+
+```
+page 0   Year     1993          Manufctr  Midway
+         Players  4             Region    World
+         Orient   Horizontal    Core      blahmid_tunit
+         Author   rejectedcoins Set       nbajam
+
+page 1   Year     1993          Manufctr  Midway
+         Controls 8-way         MAME      0289
+         Buttons  Turbo/Shoot / Block/Pass / Steal
+```
+
+`meta_cardMerged` decides, once per `CMDMETA` (`cardMerge`, since it
+measures text and so selects the field font), and only when the wide value
+fits half a row as it is - a halved row that then had to scroll would trade a
+wasted page for an unreadable one. Only one field (two are a row, not a
+waste), only past page 0, never a pinned one, and only with a wide field to
+join. `meta_cardGridPages` counts the page away, so every paging function
+agrees without knowing; the renderer and `meta_cardValueWrap` are the two
+that draw or measure the shared row.
 
 The grid pages pair the leading `metaCompact` fields two to a row, reading
 **across**; the wide pages give a row each to the rest, under a repeat of the
@@ -540,15 +565,36 @@ column starts at an even x and the icon sits beyond its right edge.
 
 It borrows `fadeBin` from `fadetransition.h` rather than carrying 8KB of its
 own; the two cannot run together, and `pf_start` gives way to a picture fade
-in progress instead of sharing it. `meta_tick` returns early while one runs,
-because the marquee redraws the whole frame and would undo the steps between
-them. Anything that takes the panel - a new picture through
+in progress instead of sharing it.
+
+**The title keeps scrolling through a page turn**, and the pips keep
+blinking. Both are above the rectangle, so while a fade runs `meta_tick`
+still advances the marquee (`meta_titleAdvance`, shared with both layouts'
+own ticks) and the blink, composes the whole frame, and then `pf_reshow`
+writes the rectangle back at the step the fade has reached before anything
+is shown - so the render never undoes a step and nothing reaches the panel
+undarkened. The values inside the rectangle do not move meanwhile; they are
+fading. It used to return early for the whole fade, which stopped the title
+dead for most of a second on every page turn. Anything that takes the panel - a new picture through
 `oled_transition`, `meta_reset` - cancels it, and a cancel
 mid-fade-out still performs the redraw it was asked for, so the page it was
 turning to is not lost. Half its length, capped at 400ms, because the console
 pager turns every `METADATA_INTERVAL` - a second, if someone sets it so - and a
 fade still running when the next page is due
 would be a fade nobody asked for.
+
+## The page pips blink
+
+The current page's pip goes dark and lit again every `PIP_BLINK_MS` (500ms),
+on both layouts, whenever there is more than one page: the panel is showing
+a running game, not a still. `pipLit` is what the renderers ask; the
+`meta_pipTick` calls in `meta_tick` flip it and redraw - the console's
+redraw, the card's while it is up (not over the artwork, and only once it has
+landed), and through `pf_reshow` during a page fade. A page turn relights it
+(`meta_redrawConsolePage`/`meta_redrawCardPage`), as do `CMDMETA` and
+`meta_showCard`, so the new page's pip is seen at once rather than whenever
+the blink comes round. It is drawn, not a command: it is not activity, and
+does not keep the panel from dimming.
 
 ## Pinned fields
 
@@ -766,7 +812,7 @@ session. These are the fork's additions, all ESP32-only:
 | `CMDBUSY,<0\|1>[,<label>[,<effect>]]` | one line; 1 runs the boot sweep in the bottom band, 0 lets it finish its cycle and stop. A label blacks the panel above the band and writes it there, so the message is all that shows; the same label again is ignored, a different one redraws and rewinds the sweep. With an effect the label screen is transitioned to rather than drawn. Any drawing command stops it at once |
 | `CMDMSG,<effect>,<text>` | one line; a centred message, transitioned to like a picture. The text is the rest of the line, so commas in it are safe |
 | `CMDFLIP,<seconds>` | one line; 0 disables and returns to the normal side |
-| `CMDDESC,<bytes>` | followed by exactly that many raw bytes: the description page's text, printable ASCII, up to 1024 kept. Sent after `CMDMETA`, which clears it, for console and arcade kinds |
+| `CMDDESC,<bytes>` | followed by exactly that many raw bytes: the description page's text, printable ASCII, up to 2048 kept (`DESC_MAX`; the daemon and the importer cut to the same number, and `test-scrape.py` fails if the three differ). More is read and discarded, so a daemon sending more than an older firmware keeps loses only the end. Sent after `CMDMETA`, which clears it, for console and arcade kinds |
 | `CMDSCROLL,<h>,<v>` | one line; the title marquee's and the description's speeds, pixels per second, 1..200 and 1..100 |
 | `CMDWRBOOT` | followed by exactly 6912 raw bytes (256x54, 4bpp) |
 | `CMDCLRBOOT` | none - forget the stored boot image |
@@ -1036,8 +1082,8 @@ redraw, or from `meta_cardScrollTick`'s arming when the card lands straight on
 it, which is what a card with a description and no fields does:
 `meta_cardFieldPageCount` is 0 then, not an empty page in front of the text.
 
-`CMDDESC` is a length-prefixed transfer rather than a field in `CMDMETA`: a
-kilobyte of line could overflow the 256-byte serial buffer while the firmware
+`CMDDESC` is a length-prefixed transfer rather than a field in `CMDMETA`: two
+kilobytes of line could overflow the 256-byte serial buffer while the firmware
 is animating, where `serial_readTicking` cannot. `CMDMETA` clears it, so the
 daemon's "unchanged, not resending" check includes it; and it redraws a
 layout already on the panel, by the icon's rules, because its page adds a pip.
@@ -1047,15 +1093,107 @@ faster, which a period is not - and periods in the firmware, because that is
 what a tick compares. 25 is the old 40ms marquee; 6 is a pixel every 166ms,
 which replaced 5 (one every 200ms) as the default as being a shade too slow.
 
+## Arcade descriptions from history.xml
+
+**`tools/history2gamelist.py` makes the arcade gamelist without a scraper.**
+ScreenScraper's daily quota is 20000 requests and a full MAME set is ~15000
+zips at several requests each, and Skraper's cache is encrypted and lives
+three days by default - so a whole arcade library does not get scraped. MAME's
+own `history.xml` (Arcade-History, a free download) is keyed by set name, the
+key the daemon looks a description up by, and covers ~1300 of the ~1700 sets
+the MiSTer's MRAs name. The tool enumerates a ROM folder - the MiSTer's
+`games/mame` over a share - and writes a `gamelist.xml` for exactly the sets
+in it, which the importer takes unchanged, and `2048.txt` - named for
+`DESC_MAX` - `set|bytes|kept|ends at|title` for each description it had to
+shorten. Lengths are the importer's own `fold()` and `clip_desc()`, imported
+from `tty2oledplus_scrape.py` rather than copied, so what the file says is
+kept is what reaches the panel.
+
+**A description too long for the firmware is shortened here, not cut.**
+Here is the last place its paragraphs exist - `fold()` makes one line of it.
+Whole paragraphs while they fit, since that is where the text pauses; if that
+keeps under two thirds of `DESC_MAX` (`FILL`), whole sentences of the next
+paragraph. It never ends on a paragraph that does not end a sentence - a
+"*CAST OF CHARACTERS*" heading over what was left out - nor on a list, whose
+items have no full stops and so read as one long sentence (`pdrift` ended
+mid-list of courses). Over the MiSTer's library: 145 over 2048, 128 ending at
+a paragraph, 17 at a sentence, none at a word. History's first paragraph is
+usually the synopsis; what goes is flyer text and stage-by-stage detail.
+
+**Why 2048 and not more.** At 1024, 615 descriptions were cut; at 2048, 145;
+at 4096, 22. RAM is not the limit - two copies of the text and a line table,
+~5KB at 2048 against ~57KB of static DRAM in use. Reading time is: the page
+scrolls a line of 8 pixels at `VSCROLL_SPEED` (6px/s), 45-50 characters a
+line on the card, so 2048 is about a minute and the longest entry, `simon` at
+8895, would be four and a half - with the wheel logo not coming back until it
+is done.
+
+**The importer cuts at a sentence too, now**, for any gamelist: `clip_desc`
+keeps whole sentences when one ends in the second half of `DESC_MAX`, and
+only otherwise cuts at a word with `...`. "Dr. Mario" and "Vs." are not
+sentence ends (`_NOT_AN_END`).
+
+**It is not shipped, and neither is its output.** The file's header asks that
+it be used with MAME or a frontend and not republished; each user converts
+their own download.
+
+**An entry is a whole article** - a "published 45 years ago:" line (dropped,
+it goes stale), the `(c)` title line, the description, then `- TECHNICAL -`,
+`- TRIVIA -` and the rest, which are cut. Half the MRA sets' entries are a
+clone's: "Export release. Game developed in Japan. For more information about
+the game itself, please see the original Japanese release entry; "1941 -
+Counter Attack [B-Board 89625B-1]"." Shown as it is, that is a description
+page telling the player to go and read another one. The rules that turn those
+into the original's description, each found by a set that came out wrong:
+
+- **A pointer is an entry made of nothing but release notes and "see the
+  original" sentences** (`NOTE`, `SEE`), or one whose first paragraph is only
+  that and which then lists how this release differs. "see", "visit" and
+  "refer to" all occur; so do "Export releases.", "Re-Edition.", "3-Screen
+  ver." and "Bootleg made for the Ambush hardware.". A sentence does not end
+  at the full stop of "Dr. Mario" in quotes, nor at "VS. arcade version".
+- **The target is the quoted title, else the entry's own**, matched against
+  every entry's title and the romanisation a Japanese one gives on its own
+  line ("(Seishun Scandal)").
+- **A machine leads only to a machine of its own kind**, compared on the
+  header's first two words ("Arcade Video game kit" is "Arcade Video"):
+  PlayChoice's Tennis matched a tabletop VFD Tennis on title alone.
+- **A cartridge only when the pointer names its platform or its model ID.**
+  PlayChoice and Vs. sets point at "the original NES version", which is a
+  software-list entry, so those have to be searchable - but "Tennis" is also
+  an Atari 2600 cartridge, a VideoBrain cassette and a dozen more, and "Dr.
+  Mario" an Uzebox homebrew.
+- **Then a description beats a pointer, a machine beats a cartridge, and the
+  longest wins.** The bracket's model ID narrows first, but an arcade model
+  ID turns up in the Famicom port's trivia too, which is why a machine beats
+  a cartridge: `hcastle` got the Famicom Akumajou Dracula. Longest, because
+  same-titled entries are mostly the one real description and its release
+  notes.
+- **Pointers are followed a few hops**: Vs. set -> NES stub -> Famicom.
+- **An original with no description** leaves the clone its own note when a
+  sentence of it has six words or more ("Coin-op pirate version of the Mega
+  Drive game."), and nothing when it is "North American release." alone.
+
+**A set with no description is left out, not written empty.** The importer
+replaces a game's whole line, so an empty `<desc>` would wipe a Skraper
+import of the same set. That is also why importing this after a Skraper
+gamelist replaces Skraper's Developer and Rating for every set both describe:
+the two are not merged.
+
+Over the MiSTer's 15345 zips: 4552 described, 145 over 2048 bytes, 8772 whose
+entry genuinely has no description (fruit machines, computers, pinballs, and
+arcade entries that are a title and a trivia section). Over the ~1450 MRA sets
+present, 1143.
+
 ## Running the tests
 
 ```bash
 ./tests/run-all.sh
 ```
 
-Thirteen suites: metadata extraction, wire protocol, title index, versioning,
-daemon lifecycle, deploy, settings editor, png2gsc, scraper, installer,
-flashing, firmware parser, firmware layout. CI runs
+Fourteen suites: metadata extraction, wire protocol, title index, versioning,
+daemon lifecycle, deploy, settings editor, png2gsc, scraper, history2gamelist,
+installer, flashing, firmware parser, firmware layout. CI runs
 all of them on every push (`.github/workflows/ci.yml`), with inotify-tools and
 ImageMagick installed so nothing is skipped there.
 

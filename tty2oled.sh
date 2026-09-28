@@ -444,12 +444,12 @@ sendbuiltmeta() {
 # The description page's text, for a console or arcade game an imported
 # gamelist described.
 #
-# CMDDESC,<bytes> and then exactly that many bytes, like an icon: at up to a
-# kilobyte it is longer than the rest of the metadata put together, and a
+# CMDDESC,<bytes> and then exactly that many bytes, like an icon: at up to
+# two kilobytes it is longer than the rest of the metadata put together, and a
 # line that long could overflow the firmware's 256-byte serial buffer while
 # it is busy animating. Printable ASCII only - the importer already folds
 # accents away, and the firmware counts a byte as a character when it wraps.
-DESC_MAX_BYTES=1024
+DESC_MAX_BYTES=2048   # the firmware's DESC_MAX, and the importer's
 senddesc() {
   local text=""
   case "${META_KIND}" in console|arcade) ;; *) return 1 ;; esac

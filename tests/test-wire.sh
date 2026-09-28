@@ -1034,12 +1034,12 @@ contains "but still the fields" "${out}" "|Players=1|"
 unset SHOW_DESCRIPTION
 
 # Only printable ASCII reaches the panel, and never more than it keeps.
-LONG="$(printf 'word%.0s ' $(seq 1 400))"
+LONG="$(printf 'word%.0s ' $(seq 1 600))"
 printf 'Long (USA)|x|ok|Long||||||||%s\tafter a tab\n' "${LONG}" >> "${SCRAPE_DIR}/GAMEBOY.txt"
 scraped_game "Long (USA).gb"
 sendmeta "GAMEBOY"
-ok "cut to the firmware's 1024 bytes" \
-   "$(captured | sed -n 2p | tr -d '\r')" "CMDDESC,1024"
+ok "cut to the firmware's 2048 bytes" \
+   "$(captured | sed -n 2p | tr -d '\r')" "CMDDESC,2048"
 SCRAPE_DIR="${TMP}/no-such-dir"
 
 # In the shipped field order, Year is the first field under the one pinned,

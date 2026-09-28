@@ -118,6 +118,16 @@ void pf_start(int x, int w, int y0, int y1, void (*redraw)(void)) {
   oled.display();
 }
 
+// The rectangle again, at the step the fade has reached, after something
+// composed the whole frame around it - the title's marquee, the blinking pip -
+// and so put a full-brightness page inside it. Shows the result.
+void pf_reshow(void) {
+#ifdef TF_PALETTE
+  if (pfState == PF_IDLE) return;
+  pf_showDarkened(pfState == PF_OUT ? pfStep : (uint8_t)(TF_STEPS - pfStep));
+#endif
+}
+
 // Stop where it is and leave the page drawn in full: something else is taking
 // the panel, and a rectangle frozen half dark would stay that way.
 void pf_cancel(void) {

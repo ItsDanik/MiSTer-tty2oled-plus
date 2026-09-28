@@ -29,7 +29,7 @@ import sys
 import unicodedata
 import xml.etree.ElementTree as ET
 
-DESC_MAX = 1024   # the firmware keeps this much
+DESC_MAX = 2048   # the firmware keeps this much (DESC_MAX in metadisplay.h)
 
 # ---------------------------------------------------------------------------
 # The systems: one per console icon in pics/icon, since a console's
@@ -180,9 +180,29 @@ def fold(text):
     return re.sub(r"\s+", " ", s).strip()
 
 
+# A sentence ends at a full stop, "!" or "?" - and a closing quote or bracket
+# after it - followed by a space and what can start the next one. "Dr. Mario"
+# and "Vs. Excitebike" do not end one.
+_SENTENCE_END = re.compile(r"[.!?][\"')\]]?(?= [A-Z0-9\"'(])")
+_NOT_AN_END = {"dr", "mr", "mrs", "ms", "st", "mt", "vs", "jr", "sr", "no", "vol"}
+
+
 def clip_desc(text):
+    """A description the firmware can keep: whole sentences up to DESC_MAX,
+    so the page stops rather than trailing off, when a sentence ends in the
+    second half; otherwise cut at a word, with "..."."""
     if len(text) <= DESC_MAX:
         return text
+    end = 0
+    for m in _SENTENCE_END.finditer(text, 0, DESC_MAX + 2):
+        if m.end() > DESC_MAX:
+            break
+        word = text[:m.start()].rsplit(" ", 1)[-1].lower()
+        if text[m.start()] == "." and word in _NOT_AN_END:
+            continue
+        end = m.end()
+    if end > DESC_MAX // 2:
+        return text[:end]
     cut = text[:DESC_MAX - 3]
     sp = cut.rfind(" ")
     if sp > DESC_MAX // 2:

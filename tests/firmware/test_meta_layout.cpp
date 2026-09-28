@@ -1120,7 +1120,7 @@ int main() {
         g_fakeMillis += meta_pageDwellMs() + 1;
         okBool("the pager starts a fade", meta_tick() && pf_active(), true);
         okInt ("with the page it is turning to held back", fieldPage, 0);
-        okBool("and the marquee held while it runs", pf_active(), true);
+        okBool("and still running a tick later", pf_active(), true);
         settlePageFade();
         okInt ("the page turns when the fade reaches black", fieldPage, 1);
 
@@ -1176,6 +1176,186 @@ int main() {
         okBool("the last page goes back to the artwork", meta_tick(), true);
         okBool("with the picture transition", lastSrcAtDraw == logoBin, true);
         okBool("and no page fade", pf_active(), false);
+    }
+
+    section("the title keeps scrolling while the page fades");
+    {
+        // A title that overflows, and more fields than one page holds.
+        meta_parse("CMDMETA,2,12,1,An Extremely Long Game Title That Overflows The Column"
+                   "|System=NES|Year=1987|Genre=Action|Region=USA|Company=N|Format=nes");
+        metaFlipped = false;
+        meta_tick();
+        settlePageFade();
+        lastPageTick = g_fakeMillis;
+        g_fakeMillis += SCROLL_PAUSE_MS + 1;          // past the pause at the start
+        meta_tick();
+
+        lastPageTick = g_fakeMillis - meta_pageDwellMs() - 1;
+        okBool("a page fade starts", meta_tick() && pf_active(), true);
+        // Paint what the fade steps from, so a step undone shows: the render
+        // clears the frame, and only pf_reshow puts the rectangle back.
+        memset(fadeBin, 0xFF, 8192);
+        const long before = titleScrollX;
+        bool rectKept = true, sawOut = false;
+        for (int i = 0; i < 6 && pfState == PF_OUT; i++) {
+            g_fakeMillis += SCROLL_STEP_MS + 1;
+            meta_tick();
+            if (pfState != PF_OUT) break;
+            sawOut = true;
+            const uint8_t lvl = (uint8_t)(pfStep >= 15 ? 0 : 15 - pfStep);   // white, pfStep down
+            const uint8_t want = (uint8_t)((lvl << 4) | lvl);
+            if (oled.getBuffer()[pfY0 * (DispWidth / 2) + pfX0] != want) rectKept = false;
+        }
+        okBool("the fade was still going out", sawOut, true);
+        okBool("the title moved meanwhile", titleScrollX > before, true);
+        okBool("without undoing the fade's step in its rectangle", rectKept, true);
+        settlePageFade();
+        okInt ("and the page turned as before", fieldPage, 1);
+    }
+
+    section("the current page's pip blinks");
+    {
+        meta_parse("CMDMETA,2,12,1,Game|System=NES|Year=1987|Genre=Action|Region=USA|Company=N");
+        metaFlipped = false;
+        meta_tick();
+        settlePageFade();
+        okBool("more than one page, so pips", meta_pageCount() > 1, true);
+
+        struct Lit { static int count(void) {
+            oled.resetProbe(); meta_renderConsole();
+            int n = 0;
+            for (size_t i = 0; i < oled.rects.size(); i++)
+                if (oled.rects[i].color == SSD1322_WHITE) n++;
+            return n;
+        } };
+        lastPageTick = g_fakeMillis;
+        pipLastBlink = g_fakeMillis;
+        okInt ("lit to begin with", Lit::count(), 1);
+        g_fakeMillis += PIP_BLINK_MS - 1;
+        okBool("not before its time", meta_tick(), false);
+        g_fakeMillis += 1;
+        okBool("then the panel is redrawn", meta_tick(), true);
+        okInt ("with the pip dark", Lit::count(), 0);
+        g_fakeMillis += PIP_BLINK_MS;
+        meta_tick();
+        okInt ("and lit again", Lit::count(), 1);
+        g_fakeMillis += PIP_BLINK_MS;
+        meta_tick();
+        okInt ("dark", Lit::count(), 0);
+
+        // A page turn lights the new page's pip at once.
+        lastPageTick = g_fakeMillis - meta_pageDwellMs() - 1;
+        meta_tick();
+        settlePageFade();
+        okInt ("on the next page", fieldPage, 1);
+        okBool("its pip lit from the start", pipLit, true);
+
+        // One page has no pips, and nothing to blink.
+        meta_parse("CMDMETA,2,12,1,Game|System=NES");
+        meta_tick();
+        settlePageFade();
+        lastPageTick = g_fakeMillis;
+        g_fakeMillis += 3 * PIP_BLINK_MS;
+        okBool("a single page is not redrawn for it", meta_tick(), false);
+    }
+
+    section("the card's pip blinks while the card is up, not over the artwork");
+    {
+        meta_parse("CMDMETA,1,10,2,8,NBA Jam"
+                   "|Year=1993|Manufctr=Midway|Region=World|Orient=Horizontal"
+                   "|Core=blahmid_tunit|Author=rejectedcoins|Set=nbajam|MAME=0289"
+                   "|Players=4|Controls=8-way|Buttons=Turbo/Shoot");
+        g_fakeMillis   += 1;
+        metaShowingCard = false;
+        metaLastSwap    = g_fakeMillis;
+        g_fakeMillis   += 3 * PIP_BLINK_MS;
+        const bool litBefore = pipLit;
+        meta_tick();
+        okBool("over the artwork nothing blinks", pipLit == litBefore, true);
+
+        meta_showCard(0);
+        metaLastSwap = g_fakeMillis;
+        meta_tick();                                  // lands: arms the marquees
+        g_fakeMillis += PIP_BLINK_MS;
+        okBool("on the card it redraws", meta_tick(), true);
+        okBool("with the pip dark", pipLit, false);
+        cardPage = 0;
+        metaShowingCard = false;
+    }
+
+    section("a grid field left alone on a page goes beside the first wide field");
+    {
+        // Nine grid fields: eight fill page 0 and MAME would be alone on the
+        // next. It joins Controls on the wide page instead.
+        const char *nine = "CMDMETA,1,12,2,9,NBA Jam"
+                           "|Year=1993|Manufctr=Midway|Players=4|Rating=8/10|Developr=Midway"
+                           "|Region=World|Orient=Horizontal|Core=blahmid_tunit|MAME=0289"
+                           "|Controls=8-way|Buttons=Turbo/Shoot / Block/Pass / Steal";
+        meta_parse(nine);
+        okInt ("one grid page, not two", meta_cardGridPages(), 1);
+        okInt ("two pages in all",       meta_cardPageCount(), 2);
+
+        struct At { static int y(const char *t) {
+            for (size_t i = 0; i < u8g2.draws.size(); i++)
+                if (u8g2.draws[i].text == t) return u8g2.draws[i].y;
+            return -1;
+        } };
+        cardPage = 0;
+        u8g2.resetProbe();
+        meta_renderCard();
+        okBool("page 0 has not got MAME", u8g2.printLog.find("MAME") == std::string::npos, true);
+
+        cardPage = 1;
+        u8g2.resetProbe();
+        meta_renderCard();
+        okInt ("Controls on the left half",  u8g2.xOf("Controls"), meta_cardColX(0));
+        okInt ("MAME on the right",          u8g2.xOf("MAME"),     meta_cardColX(1));
+        okInt ("on one row",                 At::y("MAME"),        At::y("Controls"));
+        okInt ("the row under the pinned one", At::y("Controls"),
+               CARD_FIELD_Y0 + CARD_FIELD_PITCH);
+        okInt ("Buttons keeps a whole row below", u8g2.xOf("Buttons"), CARD_MARGIN_X);
+        okInt ("on the next",                At::y("Buttons"), At::y("Controls") + CARD_FIELD_PITCH);
+        okBool("Controls' value in its half", u8g2.maxRight <= (int)DispWidth, true);
+
+        // A wide value that would not fit half a row keeps its row, and MAME
+        // its page: halving it would make it scroll.
+        meta_parse("CMDMETA,1,12,2,9,NBA Jam"
+                   "|Year=1993|Manufctr=Midway|Players=4|Rating=8/10|Developr=Midway"
+                   "|Region=World|Orient=Horizontal|Core=blahmid_tunit|MAME=0289"
+                   "|Controls=8-way joystick with a very long name|Buttons=Shoot");
+        okInt ("a long Controls keeps two grid pages", meta_cardGridPages(), 2);
+        okInt ("three pages in all",                   meta_cardPageCount(), 3);
+
+        // Two fields on the last grid page are a row, not a waste of one.
+        meta_parse("CMDMETA,1,12,2,10,NBA Jam"
+                   "|Year=1993|Manufctr=Midway|Players=4|Rating=8/10|Developr=Midway"
+                   "|Region=World|Orient=Horizontal|Core=blahmid_tunit|Set=nbajam|MAME=0289"
+                   "|Controls=8-way|Buttons=Shoot");
+        okInt ("two left over stay a page", meta_cardGridPages(), 2);
+
+        // Nothing wide to join: the lone field keeps its page.
+        meta_parse("CMDMETA,1,12,2,9,NBA Jam"
+                   "|Year=1993|Manufctr=Midway|Players=4|Rating=8/10|Developr=Midway"
+                   "|Region=World|Orient=Horizontal|Core=blahmid_tunit|MAME=0289");
+        okInt ("no wide field, no merge", meta_cardGridPages(), 2);
+
+        // Across the pages of the merged card, every field exactly once.
+        meta_parse(nine);
+        std::string all;
+        for (cardPage = 0; cardPage < meta_cardPageCount(); cardPage++) {
+            u8g2.resetProbe();
+            meta_renderCard();
+            all += u8g2.printLog;
+        }
+        const char *labels[] = { "Players", "Rating", "Developr", "Region", "Orient",
+                                 "Core", "MAME", "Controls", "Buttons" };
+        bool once = true;
+        for (const char *l : labels) {
+            size_t a = all.find(l);
+            if (a == std::string::npos || all.find(l, a + 1) != std::string::npos) once = false;
+        }
+        okBool("every field appears exactly once", once, true);
+        cardPage = 0;
     }
 
     section("the region fade darkens its rectangle and nothing else");
@@ -3012,6 +3192,19 @@ int main() {
         okBool("re-wrapped for the other side", descWrapW != before && descWrapW == meta_textW(), true);
         metaFlipped = false;
         meta_descEnsureWrapped();
+
+        // The line table has room for the most lines a full description can
+        // make - one-letter words, the narrow console column - so raising
+        // DESC_MAX without DESC_MAX_LINES cannot quietly drop its end.
+        std::string worst;
+        while (worst.size() + 2 <= DESC_MAX) worst += "a ";
+        meta_setDesc(worst.c_str(), worst.size());
+        meta_descEnsureWrapped();
+        const int last = descLineCount - 1;
+        okInt ("a full description of one-letter words is kept whole", (int)worst.size(), DESC_MAX);
+        okBool("and every line of it has a place in the table",
+               last >= 0 && last < DESC_MAX_LINES - 1 &&
+               descLineStart[last] + descLineLen[last] >= (int)worst.size() - 1, true);
     }
 
     section("the description page: header, title and icon, then the text");

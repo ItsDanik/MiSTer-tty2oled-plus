@@ -251,9 +251,34 @@ spec.loader.exec_module(scrape)
 ok("folding: accents, typography, separators",
    scrape.fold("Pøkémon—“Red” | Blue…"), 'Pokemon-"Red" / Blue...')
 ok("folding: HTML entities", scrape.fold("Tom &amp; Jerry"), "Tom & Jerry")
-long = ("word " * 400).strip()
-ok("a long description is cut at a word, within the firmware's 1024",
-   (len(scrape.clip_desc(long)) <= 1024, scrape.clip_desc(long).endswith("word...")), (True, True))
+long = ("word " * 600).strip()
+ok("a long description with no sentence to end at is cut at a word, within 2048",
+   (len(scrape.clip_desc(long)) <= 2048, scrape.clip_desc(long).endswith("word...")), (True, True))
+said = ("It is a game. " * 200).strip()
+ok("one with sentences stops at the last that fits, with no '...'",
+   (len(scrape.clip_desc(said)) <= 2048, scrape.clip_desc(said).endswith("a game.")), (True, True))
+dr = "x" * 1500 + ". Then " + "y" * 20 + " and Dr. Mario " + "z " * 400
+ok("'Dr.' does not end a sentence",
+   scrape.clip_desc(dr).endswith("x."), True)
+short = "A short one. It fits."
+ok("a description that fits is left alone", scrape.clip_desc(short), short)
+
+
+# One limit, in three files that cannot read each other: the firmware's
+# buffer, the daemon's cut and the importer's. A daemon sending more than the
+# firmware keeps loses the end mid-word; an importer keeping more than the
+# daemon sends has its sentence end cut off.
+def const(path, pattern):
+    import re
+    with open(os.path.join(ROOT, path)) as f:
+        m = re.search(pattern, f.read(), re.M)
+    return int(m.group(1)) if m else None
+
+
+ok("the firmware, the daemon and the importer keep the same length",
+   (const("MiSTer_SSD1322_USB/metadisplay.h", r"^#define DESC_MAX\s+(\d+)"),
+    const("tty2oled.sh", r"^DESC_MAX_BYTES=(\d+)")),
+   (scrape.DESC_MAX, scrape.DESC_MAX))
 ok("dates: full, month, year, none",
    [scrape.gl_date(d) for d in ("19850913T000000", "19850900T000000", "19850000T000000",
                                 "1991-06-23", "", "00000000T000000")],

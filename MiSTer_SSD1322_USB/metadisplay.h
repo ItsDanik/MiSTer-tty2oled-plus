@@ -126,6 +126,7 @@
 #define CON_PIP_H        3
 #define CON_PIP_STRIDE   5
 #define CON_PIP_MAX      8
+#define PIP_BLINK_MS     500            // the current page's pip: lit, dark, lit...
 
 // ---------------------------------------------------------------------------
 // Arcade card layout rows
@@ -196,8 +197,8 @@
 // a description is longer than the rest of a CMDMETA line put together and
 // the serial port's buffer is 256 bytes: a length-prefixed payload read with
 // serial_readTicking cannot overflow it, where a 1KB line might.
-#define DESC_MAX          1024  // bytes kept; the daemon cuts to this
-#define DESC_MAX_LINES    160   // one-character words at the narrowest column
+#define DESC_MAX          2048  // bytes kept; the daemon and the importer cut to this
+#define DESC_MAX_LINES    320   // one-character words at the narrowest column
 #define DESC_TOP          (CON_FIELD_Y0 - CON_FIELD_ASCENT)  // the field area's top row
 #define VSCROLL_SPEED_DEFAULT 6 // pixels a second, until CMDSCROLL says
 #define DESC_STEP_MS      (1000 / VSCROLL_SPEED_DEFAULT)   // 166ms a pixel
@@ -348,6 +349,14 @@ unsigned long descHoldUntil   = 0;
 unsigned long lastDescTick    = 0;
 int           fieldPage      = 0;
 unsigned long lastPageTick   = 0;
+// The current page's pip blinks - a game is running, not a still - and is
+// lit again the moment a page turns, so the new one is seen at once.
+bool          pipLit         = true;
+unsigned long pipLastBlink   = 0;
+// Whether the card's last grid page, holding a single field, has been folded
+// into the first wide page (meta_cardMerged): -1 until worked out for these
+// fields, since it needs the field font to measure with.
+int           cardMerge      = -1;
 
 // Buffers. metaBin holds the composed metadata card so it can be fed to the
 // existing transition effects; iconBin holds the 86x64 console icon.
@@ -400,6 +409,8 @@ void meta_reset(void) {
   cardScrollArmed = false;
   fieldPage = 0;
   cardPage = 0;
+  cardMerge = -1;
+  pipLit = true;
   metaDesc[0] = 0;
   metaDescLen = 0;
   descWrapW = -1;
@@ -520,6 +531,9 @@ bool meta_parse(const char *cmd) {
   valueScrollX    = 0;
   cardScrollArmed = false;
   fieldPage       = 0;
+  cardMerge       = -1;
+  pipLit          = true;
+  pipLastBlink    = millis();
   // A new game's description follows its CMDMETA, if it has one; the last
   // game's must not stand in for it meanwhile.
   metaDesc[0]     = 0;
@@ -853,6 +867,15 @@ static void meta_drawField(int i, int x, int y, int w, int valueOff,
 //            Controls 8-way
 //            Buttons  Turbo/Shoot / Block/Pass / Steal
 //
+// A grid that runs one field onto a page of its own - nine, with Rating and
+// Developer from an imported gamelist, leave MAME alone on page 1 - does not
+// get that page: the field moves to the first wide page instead, beside the
+// first wide field, which gives up half its row for it (meta_cardMerged).
+//
+//   page 1   Year     1993          Manufctr  Midway
+//            Controls 8-way         MAME      0289
+//            Buttons  Turbo/Shoot / Block/Pass / Steal
+//
 // Every count below derives from those two numbers, and the renderer and the
 // alternation tick both ask here, so they cannot disagree about which page
 // comes next - the console pair made exactly that mistake once.
@@ -883,11 +906,41 @@ static int meta_cardPinned(void) {
 // Rows needed to hold n fields two to a row.
 static int meta_cardPairRows(int n) { return (n + 1) / 2; }
 
-static int meta_cardGridPages(void) {
+static int meta_cardGridPagesUnmerged(void) {
   int grid = meta_cardGridCount();
   if (grid <= 0) return 0;
   int perPage = CARD_FIELD_ROWS * 2;
   return (grid + perPage - 1) / perPage;
+}
+
+// ---------------------------------------------------------------------------
+// meta_cardMerged - whether the last grid page's one field goes beside the
+// first wide field instead, saving a page that held nothing else.
+//
+// Only a single field, only past page 0, only one that is not pinned (a pinned
+// field is on the wide page already), and only when the wide field's value
+// fits half a row as it is: halving a value that then has to scroll would
+// trade a wasted page for an unreadable row. Worked out once per CMDMETA and
+// kept, because it measures text and so selects the field font.
+// ---------------------------------------------------------------------------
+static bool meta_cardMerged(void) {
+  if (cardMerge >= 0) return cardMerge == 1;
+  cardMerge = 0;
+  const int grid = meta_cardGridCount();
+  if (meta_cardGridPagesUnmerged() >= 2 && grid % (CARD_FIELD_ROWS * 2) == 1 &&
+      grid - 1 >= meta_cardPinned() && metaFieldCount > grid) {
+    oled_setfont(CARD_FIELD_FONT);
+    const int valueOff = meta_valueOffsetFor(CARD_COL_W);
+    if (meta_fieldValueX(grid, valueOff) + meta_textWidth(metaFields[grid].value)
+        <= CARD_COL_W) {
+      cardMerge = 1;
+    }
+  }
+  return cardMerge == 1;
+}
+
+static int meta_cardGridPages(void) {
+  return meta_cardGridPagesUnmerged() - (meta_cardMerged() ? 1 : 0);
 }
 
 static int meta_cardWideSlots(void) {
@@ -948,6 +1001,7 @@ static int meta_cardValueWrap(void) {
   const int valueOff = meta_cardValueOffset();
   int wrap = 0;
   for (int i = first; i < metaFieldCount && i < first + meta_cardWideSlots(); i++) {
+    if (i == meta_cardGridCount() && meta_cardMerged()) continue;   // fits half a row
     int win = CARD_FULL_W - meta_fieldValueX(i, valueOff);
     int w   = meta_textWidth(metaFields[i].value);
     if (w > win && w + SCROLL_GAP > wrap) wrap = w + SCROLL_GAP;
@@ -994,7 +1048,7 @@ static void meta_renderCard(void) {
 
   for (int p = 0; p < pipCount; p++) {
     oled.fillRect(pipLeft + p * CON_PIP_STRIDE, CON_PIP_Y, CON_PIP_W, CON_PIP_H,
-                  (p == cardPage) ? SSD1322_WHITE : 4);
+                  (p == cardPage && pipLit) ? SSD1322_WHITE : 4);
   }
 
   // The rule under the header, and the cell's, mid-grey so they read as
@@ -1028,10 +1082,12 @@ static void meta_renderCard(void) {
   if (descPage) {
     // The whole area is the description's, pinned row included.
   } else if (cardPage < gridPages) {
-    // A grid page: this page's share of the paired fields.
+    // A grid page: this page's share of the paired fields - all but the one
+    // that moved to the wide page, if one did.
+    const int gridEnd = meta_cardMerged() ? grid - 1 : grid;
     int first = cardPage * CARD_FIELD_ROWS * 2;
     int last  = first + CARD_FIELD_ROWS * 2;
-    if (last > grid) last = grid;
+    if (last > gridEnd) last = gridEnd;
     for (int i = first; i < last; i += 2) {
       meta_drawField(i, meta_cardColX(0), y, CARD_COL_W, valueOff);
       if (i + 1 < last) {
@@ -1055,7 +1111,13 @@ static void meta_renderCard(void) {
     const int slots = meta_cardWideSlots();
     const int first = meta_cardWideFirst();
     for (int i = first; i < metaFieldCount && i < first + slots; i++) {
-      meta_drawField(i, CARD_MARGIN_X, y, CARD_FULL_W, valueOff, valueScrollX);
+      if (i == grid && meta_cardMerged()) {
+        // The first wide field on the left half, the grid's last on the right.
+        meta_drawField(i,        meta_cardColX(0), y, CARD_COL_W, valueOff);
+        meta_drawField(grid - 1, meta_cardColX(1), y, CARD_COL_W, valueOff);
+      } else {
+        meta_drawField(i, CARD_MARGIN_X, y, CARD_FULL_W, valueOff, valueScrollX);
+      }
       y += CARD_FIELD_PITCH;
     }
   }
@@ -1130,7 +1192,7 @@ static void meta_renderConsole(void) {
   for (int p = 0; p < pipCount; p++) {
     oled.fillRect(tx + tw - pipBlock + 2 + p * CON_PIP_STRIDE, CON_PIP_Y,
                   CON_PIP_W, CON_PIP_H,
-                  (p == fieldPage) ? SSD1322_WHITE : 4);
+                  (p == fieldPage && pipLit) ? SSD1322_WHITE : 4);
   }
 
   oled.drawFastHLine(tx - 2, CON_RULE_Y, tw + 2, 6);
@@ -1318,6 +1380,8 @@ void meta_showCard(int effect) {
   valueScrollX    = 0;
   cardScrollArmed = false;
   descScrollY     = 0;              // held until the card lands, as the title is
+  pipLit          = true;
+  pipLastBlink    = millis();
   meta_renderCard();
   meta_snapshot();
 
@@ -1573,16 +1637,49 @@ extern int tEffect;
 static int  pfNextPage = 0;
 static void meta_redrawConsolePage(void) {
   fieldPage = pfNextPage;
+  pipLit       = true;              // the new page's pip, lit from the start
+  pipLastBlink = millis();
   if (meta_onDescPage()) meta_descRewind(millis());
   meta_renderConsole();
   metaNeedsDraw = false;            // as meta_showConsole would have done
 }
 static void meta_redrawCardPage(void) {
   cardPage       = pfNextPage;
+  pipLit         = true;
+  pipLastBlink   = millis();
   valueScrollX   = 0;               // a new page's values start from their start
   valueHoldUntil = millis() + SCROLL_PAUSE_MS;
   if (meta_cardIsDescPage(cardPage)) meta_descRewind(millis());
   meta_renderCard();
+}
+
+// ---------------------------------------------------------------------------
+// meta_titleAdvance - one pixel of the title's marquee, for either layout,
+// when the title overflows its window and the pause at the start is over.
+// The caller keeps the step's clock. Returns true when it moved.
+// ---------------------------------------------------------------------------
+static bool meta_titleAdvance(unsigned long now) {
+  oled_setfont(CON_TITLE_FONT);
+  const int win = (metaKind == MKIND_ARCADE) ? CARD_FULL_W : TEXT_W - CON_TITLE_X;
+  const int tw  = meta_textWidth(metaTitle);
+  if (tw <= win || now < scrollHoldUntil) return false;
+  if (++titleScrollX >= tw + SCROLL_GAP) {
+    titleScrollX    = 0;
+    scrollHoldUntil = now + SCROLL_PAUSE_MS;     // pause before starting over
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// meta_pipTick - blink the current page's pip, every PIP_BLINK_MS, on a
+// layout that has pips. Returns true when it changed and the header needs
+// drawing again.
+// ---------------------------------------------------------------------------
+static bool meta_pipTick(unsigned long now, int pages) {
+  if (pages < 2 || now - pipLastBlink < PIP_BLINK_MS) return false;
+  pipLit       = !pipLit;
+  pipLastBlink = now;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1606,17 +1703,7 @@ static bool meta_cardScrollTick(unsigned long now) {
   }
   if (now - lastScrollTick < metaHStepMs) return false;
 
-  bool moved = false;
-
-  oled_setfont(CON_TITLE_FONT);
-  const int tw = meta_textWidth(metaTitle);
-  if (tw > CARD_FULL_W && now >= scrollHoldUntil) {
-    if (++titleScrollX >= tw + SCROLL_GAP) {
-      titleScrollX    = 0;
-      scrollHoldUntil = now + SCROLL_PAUSE_MS;   // pause before starting over
-    }
-    moved = true;
-  }
+  bool moved = meta_titleAdvance(now);
 
   const int wrap = meta_cardValueWrap();
   if (wrap > 0 && now >= valueHoldUntil) {
@@ -1636,9 +1723,27 @@ bool meta_tick(void) {
 
   meta_dimTick(now);
 
-  // A page fade owns the panel while it runs: the marquee would redraw the
-  // whole frame between its steps and undo them.
-  if (pf_active()) { pf_tick(); return true; }
+  // A page fade owns its rectangle - the rows below the title - and nothing
+  // else. The title's marquee and the pips above it carry on: the frame is
+  // composed again around the rectangle and the rectangle put back as the
+  // fade has it, so a step is never undone and the title never stops for a
+  // page turn. The values in the rectangle wait, as they are fading anyway.
+  if (pf_active()) {
+    pf_tick();
+    if (!pf_active()) return true;
+    const bool card = (metaKind == MKIND_ARCADE);
+    bool moved = false;
+    if (now - lastScrollTick >= metaHStepMs && meta_titleAdvance(now)) {
+      lastScrollTick = now;
+      moved = true;
+    }
+    if (meta_pipTick(now, card ? meta_cardPageCount() : meta_pageCount())) moved = true;
+    if (moved) {
+      if (card) meta_renderCard(); else meta_renderConsole();
+      pf_reshow();
+    }
+    return true;
+  }
 
   // A picture transition owns it the same way, and for the same reason: it
   // animates from a copy towards a copy, so anything drawn into the
@@ -1681,6 +1786,7 @@ bool meta_tick(void) {
     // artwork comes back. The title marquee carries on above it.
     if (metaShowingCard && meta_cardIsDescPage(cardPage)) {
       bool moved = meta_cardScrollTick(now);     // arms the hold on landing
+      if (cardScrollArmed && meta_pipTick(now, meta_cardPageCount())) moved = true;
       if (cardScrollArmed && now >= descHoldUntil &&
           now - lastDescTick >= metaVStepMs) {
         lastDescTick = now;
@@ -1716,12 +1822,16 @@ bool meta_tick(void) {
       }
       return true;
     }
-    // The card's marquees, while it is the picture on the panel. The same
-    // compose-and-push the console's marquee does.
-    if (metaShowingCard && meta_cardScrollTick(now)) {
-      meta_renderCard();
-      oled.display();
-      return true;
+    // The card's marquees and its blinking pip, while it is the picture on
+    // the panel. The same compose-and-push the console's marquee does.
+    if (metaShowingCard) {
+      bool moved = meta_cardScrollTick(now);
+      if (cardScrollArmed && meta_pipTick(now, meta_cardPageCount())) moved = true;
+      if (moved) {
+        meta_renderCard();
+        oled.display();
+        return true;
+      }
     }
     return false;
   }
@@ -1791,19 +1901,12 @@ bool meta_tick(void) {
     // Title marquee. Only runs when the title actually overflows. The window
     // is the text column minus the title indent, measured in the same font the
     // renderer uses, so the scroll and the draw agree on when it overflows.
-    oled_setfont(CON_TITLE_FONT);
-    const int titleWin = TEXT_W - CON_TITLE_X;
-    int tw = meta_textWidth(metaTitle);
-    if (tw > titleWin && now >= scrollHoldUntil && now - lastScrollTick >= metaHStepMs) {
+    if (now - lastScrollTick >= metaHStepMs && meta_titleAdvance(now)) {
       lastScrollTick = now;
-      titleScrollX++;
-      int wrapAt = tw + SCROLL_GAP;
-      if (titleScrollX >= wrapAt) {
-        titleScrollX    = 0;
-        scrollHoldUntil = now + SCROLL_PAUSE_MS;   // pause before starting over
-      }
       dirty = true;
     }
+
+    if (meta_pipTick(now, pages)) dirty = true;
 
     if (dirty) meta_showConsole();
     return dirty;

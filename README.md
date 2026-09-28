@@ -17,7 +17,7 @@ system's icon beside them](docs/img/console-nes.png)
 with an icon for the system beside them. A title too wide for the column
 scrolls; more fields than rows and they take turns, a page every
 `METADATA_INTERVAL` seconds (12 unless you change it), the pips by the header
-counting the pages.
+counting the pages - the current one blinking.
 
 ![Five fields on four rows: System pinned, Year, Company and Region on the
 first page, Format on the next](docs/img/console-paging.png)
@@ -241,6 +241,25 @@ ln -s "/run/user/1000/gvfs/smb-share:server=192.168.1.206,share=sdcard" ~/mister
 ```
 
 and then `Z:\home\<you>\mister-sd\games` in Skraper.
+
+**Arcade descriptions without scraping.** A full MAME set is more than
+ScreenScraper's daily quota. MAME's own `history.xml` from
+[Arcade-History](https://www.arcade-history.com/index.php?page=download) has
+descriptions for most arcade games, offline, and a tool in this repository
+turns it into the arcade `gamelist.xml` - on a PC, with Python 3.9 or newer,
+for exactly the sets in the folder you point it at:
+
+```sh
+./tools/history2gamelist.py history.xml /path/to/games/mame -o out
+```
+
+Copy `out/gamelist.xml` to `games/mame` on the MiSTer and import **Arcade**.
+Clones and export releases get the original game's description rather than
+"see the original entry". A description longer than the display keeps (2048
+characters, about a minute of scrolling) is shortened to end at a paragraph or
+a sentence, and `out/2048.txt` lists those games and how much of each is kept.
+Importing it replaces what an earlier Skraper import said about the same
+games, developer and rating included.
 
 Over SSH:
 

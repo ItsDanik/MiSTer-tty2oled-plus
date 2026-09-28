@@ -4,6 +4,31 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.6.9b — 2026-09-28
+
+- **Descriptions twice as long.** The description page now keeps up to 2048
+  characters, where it kept 1024 - about a minute of scrolling. One that is
+  still longer ends at the last whole sentence that fits instead of stopping
+  mid-word with "...". Import your gamelists again (**Scrape metadata**) to
+  get the longer text: what was imported before was cut at 1024. Needs the
+  new firmware, which the update flashes.
+- **The title keeps scrolling while the details turn a page.** A long title
+  used to stop for the page change and pick up again after; now only the
+  rows that change fade, and the title carries on above them.
+- **The current page's pip blinks**, lit and dark every half second, so the
+  screen reads as a game running rather than a still.
+- **No more arcade page with one detail on it.** When the arcade card's
+  details ran one over a page - MAME alone on page 2, typically - that page
+  is gone: the field sits beside Controls on the next page instead, when
+  Controls is short enough to share its row.
+- **Arcade descriptions without a scraper**, for anyone building from the
+  repository: `tools/history2gamelist.py` turns MAME's own `history.xml`
+  (a free download from Arcade-History) into the arcade `gamelist.xml`, for
+  exactly the games in your `games/mame` folder - no ScreenScraper account
+  and no daily quota. Clones and export releases get the original game's
+  description rather than "see the original entry". See the README's
+  **Scrape metadata** section.
+
 ## 0.6.8b — 2026-09-27
 
 - **Arcade games get a description, too.** **Scrape metadata** now offers
