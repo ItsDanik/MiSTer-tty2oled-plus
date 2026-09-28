@@ -954,33 +954,85 @@ frontend_core() {
   return 1
 }
 
-# The notice is "a newer release is out". The daemon asks GitHub for the
-# latest release's VERSION when it starts - at boot - and every
-# UPDATE_CHECK_MINUTES after that, and writes a newer one to UPDATE_FLAG. From
-# then on it stops asking: the flag stays until the updater, having installed
-# a release, removes it, and the next check - the restarted daemon's first -
-# decides again. A flag naming this version or an older one is left over from
-# an update made some other way, and is dropped.
+# The notice says an update is waiting: a newer tty2oled+ release, a system
+# update (update_all would update something installed), or both. Each has its
+# own switch, UPDATE_CHECK_TTY2OLED and UPDATE_CHECK_SYSTEM, and both are
+# looked for when the daemon starts - at boot - and every
+# UPDATE_CHECK_MINUTES after that. Once one is found it is not looked for
+# again until it has been dealt with.
 #
-# The download runs in the background - offline, curl can take its whole
-# connect timeout, and the loop cannot stop drawing for that - and each pass
-# collects it once it has finished. A check that fails is tried again after
-# UC_RETRY_SECS rather than a whole interval: the first one runs at boot, often
-# before the network is up.
+# tty2oled+: GitHub's latest release VERSION, and a newer one goes to
+# UPDATE_FLAG. The flag stays until the updater, having installed a release,
+# removes it, and the next check - the restarted daemon's first - decides
+# again. A flag naming this version or an older one is left over from an
+# update made some other way, and is dropped.
+#
+# System: tty2oledplus_syscheck.py compares update_all's databases with what
+# its downloader installed (see its header). Kept in memory, not a file:
+# nothing else answers it but update_all, which the daemon sees running, and
+# once it has exited the flag goes and the check runs again at once - so
+# the menu you come back to is clear unless something is still waiting. Never
+# started while update_all runs; a result from a check that overlapped a run
+# is thrown away.
+#
+# Both run in the background (bg_start): a check can take its whole timeout
+# offline, and the loop cannot stop drawing for that. Each pass collects
+# whatever has finished. A check that fails is tried again after
+# UC_RETRY_SECS rather than a whole interval: the first one runs at boot,
+# often before the network is up.
 #
 # CMDNOTE carries the text to the firmware (0.7.1b and later), which keeps it
 # and shows it in the band of every frontend picture: faded in where one is up,
 # arriving with the next one where one is not. Only a change is sent.
 UPDATE_URL="${UPDATE_URL:-https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/VERSION}"
 UPDATE_CACERT="${UPDATE_CACERT:-/etc/ssl/certs/cacert.pem}"   # MiSTer's curl finds none itself
+SYSCHECK="${SYSCHECK:-${TTY2OLED_PATH:-/media/fat/tty2oledplus}/tty2oledplus_syscheck.py}"
 UC_RETRY_SECS=300
-UC_GIVEUP_SECS=120  # a check still going this long is stopped; curl's own limit is 60
 UC_OUT="/tmp/.tty2oledplus-check.$$"
-UC_PID=""           # the check under way
-UC_STARTED=""
+SC_CACHE="${SC_CACHE:-/tmp/.tty2oledplus-check.etags}"   # the databases' ETags, between checks
+declare -A BG_PID=() BG_STARTED=()
+BG_GIVEUP_uc=120    # stop a check still going after this; curl's own limit is 60
+BG_GIVEUP_sc=300    # the system check's own is 20s a database, six at once
 UC_NEXT=""          # when the next may start; empty is now
+SC_NEXT=""
+SC_FLAGGED=""       # a system update is waiting: what, from the checker
+SC_UA="no"          # update_all has been seen running since the last check
+SC_EPOCH=0          # bumped when update_all finishes; a check from before is stale
+SC_JOB_EPOCH=0
 NOTE_SENT="?"       # what the firmware was last told; "?" is nothing yet
 NOTE_COLS=51        # the band's width in 5x7
+
+# Run a check in the background: its first line of output and its exit code
+# land in files, and bg_collect picks them up once it has finished.
+bg_start() {  # bg_start <name> <now> <command...>
+  local n="${1}" now="${2}" out="${UC_OUT}.${1}"
+  shift 2
+  rm -f "${out}" "${out}.rc"
+  ( "$@" </dev/null >"${out}" 2>/dev/null; echo "$?" >"${out}.rc" ) &
+  BG_PID[${n}]=$!
+  BG_STARTED[${n}]="${now}"
+}
+
+bg_running() { [ -n "${BG_PID[${1}]:-}" ]; }
+
+# A finished check into BG_RC and BG_LINE; 1 while it is still going. One that
+# has run past its BG_GIVEUP_<name> is stopped, and has no exit code.
+bg_collect() {  # bg_collect <name> <now>
+  local n="${1}" now="${2}" out="${UC_OUT}.${1}" giveup
+  BG_RC=""; BG_LINE=""
+  bg_running "${n}" || return 1
+  if ! [ -e "${out}.rc" ]; then
+    giveup="BG_GIVEUP_${n}"
+    [ $(( now - ${BG_STARTED[${n}]} )) -lt "${!giveup:-120}" ] && return 1
+    kill "${BG_PID[${n}]}" 2>/dev/null
+  fi
+  wait "${BG_PID[${n}]}" 2>/dev/null
+  [ -r "${out}.rc" ] && IFS= read -r BG_RC <"${out}.rc"
+  [ -r "${out}" ] && IFS= read -r BG_LINE <"${out}"
+  rm -f "${out}" "${out}.rc"
+  BG_PID[${n}]=""
+  return 0
+}
 
 # Is release $1 newer than version $2? N.N.N and letters, as VERSION has them;
 # anything else is not newer. A release without the beta "b" is newer than
@@ -1004,6 +1056,26 @@ update_check_minutes() {
   printf '%s' "$((10#${m}))"
 }
 
+# Is this check wanted? Its switch, and an interval to run it at.
+update_check_on() {  # update_check_on <TTY2OLED|SYSTEM>
+  local on="yes"
+  case "${1}" in
+    TTY2OLED) on="${UPDATE_CHECK_TTY2OLED:-yes}" ;;
+    SYSTEM)   on="${UPDATE_CHECK_SYSTEM:-yes}" ;;
+  esac
+  [ "${on}" = "yes" ] && [ "$(update_check_minutes)" -gt 0 ]
+}
+
+# When the next check is due after one that ended: an interval, or
+# UC_RETRY_SECS if that is sooner and it failed.
+next_after() {  # next_after <now> <failed: yes|no>
+  local secs=$(( $(update_check_minutes) * 60 ))
+  [ "${2}" = "yes" ] && [ "${secs}" -gt "${UC_RETRY_SECS}" ] && secs="${UC_RETRY_SECS}"
+  printf '%s' "$(( ${1} + secs ))"
+}
+
+due() { [ -z "${1}" ] || [ "${2}" -ge "${1}" ]; }   # due <next> <now>
+
 # The flagged release, if it is still newer than this one; a stale flag goes.
 update_flagged() {
   local v=""
@@ -1016,46 +1088,91 @@ update_flagged() {
   return 1
 }
 
-updatecheck_start() {  # updatecheck_start <now>
+# The release's VERSION, on stdout. Run in the background.
+uc_fetch() {
   local ca=()
-  command -v curl >/dev/null 2>&1 || { UC_NEXT=$(( ${1} + UC_RETRY_SECS )); return 1; }
   [ -r "${UPDATE_CACERT}" ] && ca=(--cacert "${UPDATE_CACERT}")
-  rm -f "${UC_OUT}" "${UC_OUT}.rc"
-  dbug "Looking for a newer tty2oled+ at ${UPDATE_URL}"
-  ( curl -fsSL --connect-timeout 15 --max-time 60 "${ca[@]}" -o "${UC_OUT}" "${UPDATE_URL}" \
-      </dev/null >/dev/null 2>&1
-    echo "$?" >"${UC_OUT}.rc" ) &
-  UC_PID=$!
-  UC_STARTED="${1}"
+  curl -fsSL --connect-timeout 15 --max-time 60 "${ca[@]}" "${UPDATE_URL}"
 }
 
-# Collect a finished check: flag a newer release, and say when the next is due.
-updatecheck_collect() {  # updatecheck_collect <now>
-  local now="${1}" rc="" v="" mins
-  [ -n "${UC_PID}" ] || return 0
-  if ! [ -e "${UC_OUT}.rc" ]; then
-    [ $(( now - UC_STARTED )) -lt "${UC_GIVEUP_SECS}" ] && return 0
-    kill "${UC_PID}" 2>/dev/null
+# tty2oled+: collect a finished check, start one that is due.
+uc_pass() {  # uc_pass <now>
+  local now="${1}" v
+  if bg_collect uc "${now}"; then
+    v="${BG_LINE//[[:space:]]/}"
+    if [ "${BG_RC}" != "0" ] || [ -z "${v}" ]; then
+      dbug "The release check failed (curl ${BG_RC:-stopped}); again in ${UC_RETRY_SECS}s"
+      UC_NEXT="$(next_after "${now}" yes)"
+    else
+      UC_NEXT="$(next_after "${now}" no)"
+      if version_newer "${v}" "${TTY2OLED_VERSION:-}"; then
+        printf '%s\n' "${v}" >"${UPDATE_FLAG}"
+        echo "tty2oled: tty2oled+ ${v} is out (this is ${TTY2OLED_VERSION:-unknown}) - Update in the tty2oledplus Scripts entry installs it."
+      else
+        dbug "The latest release is ${v}; this is ${TTY2OLED_VERSION:-}"
+      fi
+    fi
   fi
-  wait "${UC_PID}" 2>/dev/null
-  [ -r "${UC_OUT}.rc" ] && IFS= read -r rc <"${UC_OUT}.rc"
-  [ "${rc}" = "0" ] && [ -r "${UC_OUT}" ] && IFS= read -r v <"${UC_OUT}"
-  v="${v//[[:space:]]/}"
-  rm -f "${UC_OUT}" "${UC_OUT}.rc"
-  UC_PID=""
-  mins="$(update_check_minutes)"
-  if [ "${rc}" != "0" ] || [ -z "${v}" ]; then
-    dbug "The release check failed (curl ${rc:-killed}); again in ${UC_RETRY_SECS}s"
-    UC_NEXT=$(( now + (mins * 60 < UC_RETRY_SECS ? mins * 60 : UC_RETRY_SECS) ))
-    return 0
+  update_check_on TTY2OLED || return 0
+  update_flagged && return 0
+  bg_running uc && return 0
+  due "${UC_NEXT}" "${now}" || return 0
+  command -v curl >/dev/null 2>&1 || { UC_NEXT="$(next_after "${now}" yes)"; return 0; }
+  dbug "Looking for a newer tty2oled+ at ${UPDATE_URL}"
+  bg_start uc "${now}" uc_fetch
+}
+
+# Is update_all running, whatever UPDATE_ALL_SCREEN says?
+updateall_process() {
+  grep -qsa -e '[u]pdate_all' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null
+}
+
+# System: the same, with update_all as what answers it.
+sc_pass() {  # sc_pass <now>
+  local now="${1}"
+  if update_check_on SYSTEM || [ -n "${SC_FLAGGED}" ] || bg_running sc; then
+    if updateall_process; then
+      SC_UA="yes"
+    elif [ "${SC_UA}" = "yes" ]; then
+      # update_all has run: whatever was waiting may not be any more.
+      SC_UA="no"; SC_FLAGGED=""; SC_NEXT=""
+      SC_EPOCH=$(( SC_EPOCH + 1 ))
+      dbug "update_all finished - looking for system updates again"
+    fi
   fi
-  UC_NEXT=$(( now + mins * 60 ))
-  if version_newer "${v}" "${TTY2OLED_VERSION:-}"; then
-    printf '%s\n' "${v}" >"${UPDATE_FLAG}"
-    echo "tty2oled: tty2oled+ ${v} is out (this is ${TTY2OLED_VERSION:-unknown}) - Update in the tty2oledplus Scripts entry installs it."
-  else
-    dbug "The latest release is ${v}; this is ${TTY2OLED_VERSION:-}"
+  if bg_collect sc "${now}"; then
+    if [ "${SC_JOB_EPOCH}" != "${SC_EPOCH}" ] || [ "${SC_UA}" = "yes" ]; then
+      dbug "The system check overlapped update_all - discarded"
+      SC_NEXT=""
+    else
+      case "${BG_LINE}" in
+        yes*)
+          SC_FLAGGED="${BG_LINE#yes }"
+          SC_NEXT="$(next_after "${now}" no)"
+          echo "tty2oled: a system update is waiting (${SC_FLAGGED}) - update_all installs it." ;;
+        no)
+          dbug "No system update waiting"
+          SC_NEXT="$(next_after "${now}" no)" ;;
+        nostate)
+          dbug "No update_all state to check against - it has not run yet"
+          SC_NEXT="$(next_after "${now}" no)" ;;
+        *)
+          dbug "The system check failed (${BG_LINE:-exit ${BG_RC:-stopped}}); again in ${UC_RETRY_SECS}s"
+          SC_NEXT="$(next_after "${now}" yes)" ;;
+      esac
+    fi
   fi
+  update_check_on SYSTEM || return 0
+  [ -z "${SC_FLAGGED}" ] || return 0
+  [ "${SC_UA}" = "no" ] || return 0
+  bg_running sc && return 0
+  due "${SC_NEXT}" "${now}" || return 0
+  if ! [ -r "${SYSCHECK}" ] || ! command -v python3 >/dev/null 2>&1; then
+    SC_NEXT="$(next_after "${now}" no)"; return 0
+  fi
+  dbug "Looking for a system update (${SYSCHECK})"
+  SC_JOB_EPOCH="${SC_EPOCH}"
+  bg_start sc "${now}" nice -n 19 python3 "${SYSCHECK}" --cache "${SC_CACHE}"
 }
 
 # Tell the firmware what the band says, if that changed and it can show it.
@@ -1071,18 +1188,24 @@ sendnote() {
   NOTE_SENT="${text}"
 }
 
+# The notice for what is waiting: one, the other, both, or none.
+update_note() {
+  local t="no" y="no"
+  update_check_on TTY2OLED && update_flagged && t="yes"
+  update_check_on SYSTEM && [ -n "${SC_FLAGGED}" ] && y="yes"
+  case "${t}${y}" in
+    yesyes) printf '%s' "${UPDATE_NOTE_BOTH_TEXT:-TTY2OLED+ & System Update Available}" ;;
+    yesno)  printf '%s' "${UPDATE_NOTE_TEXT:-TTY2OLED+ Update Available}" ;;
+    noyes)  printf '%s' "${UPDATE_NOTE_SYSTEM_TEXT:-System Update Available}" ;;
+  esac
+}
+
 # Once a pass, whatever else the pass does: never blocks.
 updatenote_pass() {
-  local now="${EPOCHSECONDS:-$(date +%s)}" want=""
-  updatecheck_collect "${now}"
-  if [ "$(update_check_minutes)" -gt 0 ]; then
-    if update_flagged; then
-      want="${UPDATE_NOTE_TEXT:-TTY2OLED+ update available}"
-    elif [ -z "${UC_PID}" ] && { [ -z "${UC_NEXT}" ] || [ "${now}" -ge "${UC_NEXT}" ]; }; then
-      updatecheck_start "${now}"
-    fi
-  fi
-  sendnote "${want}"
+  local now="${EPOCHSECONDS:-$(date +%s)}"
+  uc_pass "${now}"
+  sc_pass "${now}"
+  sendnote "$(update_note)"
 }
 
 # ---------------------------------------------------------------------------
@@ -1097,7 +1220,7 @@ updatenote_pass() {
 # line, which holds the pattern, from matching it.
 updateall_running() {
   [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] || return 1
-  grep -qsa -e '[u]pdate_all' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null
+  updateall_process
 }
 
 # Is update_all's downloader running - the update itself, as opposed to the
@@ -1537,7 +1660,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
             # the wait as it always did.
             upwait=""
             { [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] || [ "${SELF_UPDATE_SCREEN:-yes}" = "yes" ] || degauss_possible \
-              || [ "$(update_check_minutes)" -gt 0 ]; } \
+              || update_check_on TTY2OLED || update_check_on SYSTEM; } \
               && upwait="-t ${UPDATE_ALL_POLL:-2}"
             while true; do
               if [ "${debug}" = "false" ]; then

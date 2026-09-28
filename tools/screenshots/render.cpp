@@ -376,8 +376,8 @@ int main(int argc, char **argv) {
   // Power-on: the built-in logo, the version, and the comet mid-run.
   scene_boot("boot", nullptr, 150);
 
-  // The menu, when an update is out: the notice in the band under it.
-  scene_menu("menu-update", "TTY2OLED+ update available");
+  // The menu, when updates are waiting: the notice in the band under it.
+  scene_menu("menu-update", "TTY2OLED+ & System Update Available");
 
   // update_all: the message owns the panel, the bar says it is working.
   scene_busy("busy", "Updating System ...", "_Arcade/cores/Arcade-NamcoS2_SG_20260927.rbf", 150);

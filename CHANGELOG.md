@@ -4,6 +4,27 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.7.2b — 2026-09-28
+
+- **The menu says when update_all has something for you, too.** `System
+  Update Available` appears under the picture of the menu, MisterZine and
+  Degauss when running update_all would update something you have: a new
+  build of a core you use, a changed file, a new Linux. It is worked out from
+  update_all's own records - every database it uses is compared with the one
+  it last applied, and one that changed with what it installed on your
+  MiSTer - so a new build of a core your filter leaves out, or a brand-new
+  core, does not count. Once found it is not looked for again until update_all
+  has run, and the message goes as soon as update_all finishes (unless
+  something is still waiting). With a new tty2oled+ as well, the menu says
+  `TTY2OLED+ & System Update Available`.
+- Both checks run at boot and every 30 minutes, in the background, and never
+  hold the display up. The system check fetches update_all's database files -
+  about a megabyte and a half the first time, next to nothing after, since
+  GitHub says which have not changed.
+- **Both can be switched off**, in Settings under **While updates run**:
+  `UPDATE_CHECK_TTY2OLED` and `UPDATE_CHECK_SYSTEM`. The three messages are
+  there too. The tty2oled+ one now reads `TTY2OLED+ Update Available`.
+
 ## 0.7.1b — 2026-09-28
 
 - **The menu says when a new tty2oled+ is out.** The daemon asks GitHub for

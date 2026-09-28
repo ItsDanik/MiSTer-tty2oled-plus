@@ -71,12 +71,22 @@ bar](docs/img/boot.png)
 
 **On the menu** - and on MisterZine and Degauss - the picture keeps to the
 top 54 rows, like the boot screen, and the ten rows under it are for the
-display's own messages. When a newer tty2oled+ is out, that is where it says
-so, small and grey, until **Update** has installed it. It looks once at boot
-and every half hour after (`UPDATE_CHECK_MINUTES`), and stops looking once it
-has found one.
+display's own messages. That is where it says, small and grey, that an update
+is waiting:
 
-![The menu's picture with "TTY2OLED+ update available" under
+- **TTY2OLED+ Update Available** - a newer tty2oled+ is out. Gone once
+  **Update** has installed it.
+- **System Update Available** - `update_all` would update something you
+  have: a new build of a core you use, a changed file, a new Linux. Worked out
+  from `update_all`'s own records of what each of its databases installed, so
+  a new build of a core your filter leaves out does not count. Gone once
+  `update_all` has run.
+- **TTY2OLED+ & System Update Available** - both.
+
+Both are looked for at boot and every half hour after, in the background, and
+each stops being looked for once found. Each can be switched off.
+
+![The menu's picture with "TTY2OLED+ & System Update Available" under
 it](docs/img/menu-update.png)
 
 **While an update runs** the panel says so instead of leaving stale artwork up,
@@ -374,8 +384,12 @@ sent over when it restarts, so nothing needs reflashing.
 | `UPDATE_FAILED_TEXT` | `Update Failed` | ...or when it reported errors. |
 | `UPDATE_DONE_SECS` | `3` | The least time that stays up before the core comes back. `0` skips it. |
 | `SELF_UPDATE_SCREEN` | `yes` | The same, while tty2oled+ updates itself. |
-| `UPDATE_CHECK_MINUTES` | `30` | How often to look for a newer tty2oled+, besides once at boot. `0` never looks. |
-| `UPDATE_NOTE_TEXT` | `TTY2OLED+ update available` | What the menu, MisterZine and Degauss say under their picture when there is one. |
+| `UPDATE_CHECK_TTY2OLED` | `yes` | Look for a newer tty2oled+ release. |
+| `UPDATE_CHECK_SYSTEM` | `yes` | Look for something `update_all` would update. |
+| `UPDATE_CHECK_MINUTES` | `30` | How often to look for both, besides once at boot. `0` never looks. |
+| `UPDATE_NOTE_TEXT` | `TTY2OLED+ Update Available` | What the menu, MisterZine and Degauss say under their picture when a newer tty2oled+ is out. |
+| `UPDATE_NOTE_SYSTEM_TEXT` | `System Update Available` | ...when `update_all` has something to update. |
+| `UPDATE_NOTE_BOTH_TEXT` | `TTY2OLED+ & System Update Available` | ...when both are waiting. |
 | `ROTATE` | `no` | Turn the whole display 180°. |
 | `USE_NAMES_TXT` | `yes` | Name cores as your MiSTer menu names them. |
 | `PRIORITIZE_USER_BANNERS` | `yes` | Look in `pics/user` before the shipped banners and arcade logos, so a picture you put there replaces the shipped one. `no` searches the shipped artwork first. |

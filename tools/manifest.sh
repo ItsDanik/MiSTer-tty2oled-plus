@@ -24,10 +24,11 @@ MANIFEST_FILES="tty2oled.sh tty2oled-meta.sh tty2oled-system.ini
 # turns pics/boot.png into the stored boot screen on the MiSTer itself, and
 # its standard-library PNG backend is there so that needs nothing installed.
 # tty2oledplus_scrape.py is Scrape metadata's worker, which the menu below
-# drives and which runs on its own over SSH.
+# drives and which runs on its own over SSH. tty2oledplus_syscheck.py is the
+# daemon's system update check, run in the background.
 MANIFEST_TOOLS="tools/tty2oled-diag.sh tools/flash-mister.sh tools/fw-segments.py
                 tools/tty2oled-capture.sh tools/tty2oled-bootimg.sh tools/tty2oled-boothook.sh
-                tools/png2gsc.py tools/tty2oledplus_scrape.py"
+                tools/png2gsc.py tools/tty2oledplus_scrape.py tools/tty2oledplus_syscheck.py"
 
 # What the launcher opens: the updater, the settings editor, the
 # uninstaller and the scraper's menu. They live in the install folder, not in the Scripts menu -

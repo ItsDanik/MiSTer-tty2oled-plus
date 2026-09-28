@@ -135,7 +135,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `.../bootoutro.h`, `busybar.h` | Boot screen as menu picture + power-on outro; the sweep as a busy bar. |
 | `.../bandnote.h` | Frontends' 54-row picture + band; `CMDNOTE` fading in/out there. |
 | `.../MiSTer_SSD1322_USB.ino` | Includes the headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | ~2450 checks, no hardware. |
+| `tests/` | ~2500 checks, no hardware. |
 | `tools/build-title-index.sh`, `dat2index.awk`, `index-emit.awk`, `mamexml2index.awk` | CRC32 title index from libretro-database (+ MAME XML for Neo Geo). W. |
 | `tools/png2gsc.py` | PNG -> 4bpp `.gsc`. W **and** M: Pillow, ImageMagick, or a stdlib PNG decoder. |
 | `tools/wheels2gsc.py`, `tools/gscpack.py` | Wheel PNGs -> 256x64 `.gsc` (`--nodupes`); pack into `.bin`+`.idx`. W. |
@@ -150,6 +150,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `tools/make-release.sh` | Release assets into `dist/`. CI runs it on a tag. |
 | `tools/tty2oledplus.sh` | The launcher, the one Scripts entry: Settings / Update / Scrape metadata / Uninstall. M. |
 | `tools/tty2oledplus_{settings,scrape,update,uninstall}.sh`, `_scrape.py` | The launcher's entries, in the install folder. M. |
+| `tools/tty2oledplus_syscheck.py` | Would update_all update something installed? The daemon runs it in the background. M. |
 | `tools/tty2oledplus_install.sh` | The starter users drop in Scripts. M. |
 | `tools/flash-mister.sh`, `tools/fw-segments.py` | Flashes firmware, writing only segments with data. M. |
 | `tools/tty2oled-bootimg.sh` | Sets/clears/queries the stored boot image. M. |
@@ -240,19 +241,47 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   The menu's `CMDBOOTPIC` is always one. `band_showPicture` composes picture
   + notice into `metaBin` (render hook for a Fade) and transitions to it;
   `bandShown` is cleared by any non-quiet command (`band_noteCommand`).
-- **Release check** (`updatenote_pass`, first thing every pass the daemon
-  owns the port, and on the upstream path's wait timeouts; never blocks):
-  curl of `releases/latest/download/VERSION` in a background subshell
-  (`UC_OUT`, `.rc` marks done), at start and every `UPDATE_CHECK_MINUTES`,
-  `UC_RETRY_SECS` after a failure, killed after `UC_GIVEUP_SECS`. A newer
-  release (`version_newer`: no `b` beats the same number with one) goes to
-  `UPDATE_FLAG` in `/tmp`; **while flagged it never polls**. A flag not newer
-  than `TTY2OLED_VERSION` is stale and removed. The flag's existence -> `sendnote
-  UPDATE_NOTE_TEXT` (`CMDNOTE`, only on change, `fw_atleast 0.7.1`);
-  `NOTE_SENT="?"` after a display reset or sleep mode. The updater
-  (`update_answered`, latest only, not `--version`, not a failed flash)
-  removes the flag **and** sends `CMDNOTE,` itself - the restarted daemon's
-  first menu picture goes out before it knows the firmware version.
+- **Update checks** (`updatenote_pass`, first thing every pass the daemon
+  owns the port, and on the upstream path's wait timeouts; never blocks). Two
+  background jobs (`bg_start`/`bg_collect`, a subshell per job writing
+  `UC_OUT.<name>` + `.rc`, killed after `BG_GIVEUP_<name>`), each at start
+  and every `UPDATE_CHECK_MINUTES`, `UC_RETRY_SECS` after a failure, each
+  behind its switch (`UPDATE_CHECK_TTY2OLED`, `UPDATE_CHECK_SYSTEM`; named
+  literally in `update_check_on` - the settings test greps for consumers).
+  **While flagged, neither polls.** `update_note` picks one of three texts;
+  `sendnote` sends it as `CMDNOTE` only on change, `fw_atleast 0.7.1`;
+  `NOTE_SENT="?"` after a display reset or sleep mode.
+  - **tty2oled+** (`uc_pass`): curl of `releases/latest/download/VERSION`;
+    a newer one (`version_newer`: no `b` beats the same number with one) to
+    `UPDATE_FLAG` in `/tmp`; a flag not newer than `TTY2OLED_VERSION` is
+    stale and removed. The updater (`update_answered`, latest only, not
+    `--version`, not a failed flash) removes the flag **and** sends
+    `CMDNOTE,` itself - the restarted daemon's first menu picture goes out
+    before it knows the firmware version.
+  - **System** (`sc_pass`, `SC_FLAGGED` in memory): `nice python3
+    tty2oledplus_syscheck.py --cache` -> `yes <db>: <what>` / `no` /
+    `nostate` / `error`. Not started while update_all runs
+    (`updateall_process`, whatever `UPDATE_ALL_SCREEN` says); when it exits
+    the flag is cleared and a check runs at once; a check that overlapped a
+    run (`SC_EPOCH`) is discarded.
+- **What the system check reads** (all internal to update_all's downloader,
+  found on a real MiSTer - verify before trusting after an update_all
+  upgrade): database URLs from `/media/fat/downloader.ini` +
+  `downloader_*.ini` (update_all's drop-ins; sections lower-cased, `[mister]`
+  is options); `Scripts/.config/downloader/downloader_fingerprints.json`,
+  `{db: {hash, size}}` = **md5 and size of the database file as
+  downloaded** (checked byte for byte); `downloader.json` `dbs.<id>.files`
+  `{path: {hash}}` and `.zips.<id>.summary_file.hash`; `/MiSTer.version`.
+  Level 1: fingerprint differs. Level 2, only then: an installed file's hash
+  changed; an installed dated file (`_YYYYMMDD.ext`) the db dropped for
+  another date of the same name; an installed archive's summary (remote
+  `archives`, or `zips`); `linux.version` != `/MiSTer.version`. **A path two
+  databases install is skipped** - the downloader keeps one copy and the
+  other's store entry stays stale for ever (kuzecores + mister_ongo). New
+  files are not counted (the filter is the downloader's business).
+  `--all` forces level 2: an up-to-date MiSTer must say `no`. ETags cached
+  only while the md5 seen equals the fingerprint; a 304 is "same". ~12s of
+  CPU (TLS), 65 databases, about 1.6MB cold.
 - **The notice in the firmware** (`bandnote.h`): kept across pictures; on a
   shown frontend it steps 0..`BNOTE_GREY` (8) over `BNOTE_FADE_MS`, a changed
   text fades out first; it waits for `TF_IDLE`, the boot outro (`boActive`),
@@ -498,7 +527,7 @@ on MiSTer's `ini_settings.sh`.
   equal to its default is **removed**. `ini_put` changes one line or appends
   under its own header; never rewrites the file. The ini is **parsed, not
   sourced** (runs as root; tested with a value that would touch a file).
-- Covers every user setting (45, seven categories). `test-settings.sh` checks
+- Covers every user setting (49, seven categories). `test-settings.sh` checks
   both ways: every offered key exists in the ini *and* is read by `tty2oled.sh`
   or `tty2oled-meta.sh`; every user key is offered or on the exclusion list
   (`BAUDRATE`, `TTYPARAM`, `NAMES_TXT`, `TITLE_INDEX`, `TITLE_INDEX_DIR`),
@@ -583,9 +612,9 @@ own `fold()`/`clip_desc()`.
 
 ## Tests
 
-`./tests/run-all.sh` - fourteen suites (metadata, wire, index, version,
-daemon, deploy, settings, png2gsc, scrape, history2gamelist, installer, flash,
-firmware parser, firmware layout). CI runs all with inotify-tools and
+`./tests/run-all.sh` - fifteen suites (metadata, wire, index, version,
+daemon, deploy, settings, png2gsc, scrape, syscheck, history2gamelist,
+installer, flash, firmware parser, firmware layout). CI runs all with inotify-tools and
 ImageMagick. No shellcheck in `run-all.sh`.
 
 - Installer: builds a real release from the working copy, serves it via
