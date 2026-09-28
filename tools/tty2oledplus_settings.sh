@@ -143,6 +143,8 @@ UPDATE_FAILED_TEXT|text||When it has failed|What it becomes instead when the upd
 UPDATE_DONE_SECS|int|0 60|Keep that up (seconds)|The least time the finished message stays before the display goes back to the core. 0 skips it.
 SELF_UPDATE_SCREEN|bool||Say so while tty2oled+ updates|The same, for this display's own updater.
 SELF_UPDATE_TEXT|text||What that says|The message shown while an Update runs.
+UPDATE_CHECK_MINUTES|int|0 1440|Look for a new tty2oled+ (minutes)|How often to ask GitHub whether a newer tty2oled+ is out, besides once at boot. Once one is, the menu says so and the asking stops until Update has installed it. 0 never asks.
+UPDATE_NOTE_TEXT|text|51|What the menu says then|Shown small and grey under the picture of the menu, MisterZine and Degauss while a newer tty2oled+ is waiting to be installed.
 UPDATE_ALL_POLL|int|1 60|How often to look (seconds)|How often to check whether update_all is running. Lower notices sooner and costs a little more.
 EOS
     ;;

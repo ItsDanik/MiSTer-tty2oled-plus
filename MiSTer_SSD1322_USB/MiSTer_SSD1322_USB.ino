@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.7.0b"
+#define BuildVersion "0.7.1b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -288,6 +288,7 @@ const uint8_t minEffect=1, maxEffect=23;      // Min/Max Effects for Random
 #include "metadisplay.h"                      // Arcade card / console split layout
 #include "bootoutro.h"                        // The boot screen as the menu picture, and its outro
 #include "busybar.h"                          // The boot sweep as a busy bar (update_all)
+#include "bandnote.h"                         // The frontends' band, and the update notice in it
 
 // Blinker 500ms Interval
 const long interval = 500;                    // Interval for Blink (milliseconds)
@@ -594,6 +595,7 @@ void loop(void) {
   transition_tick();                                              // ...and a Fade transition
   boot_outroTick();                                               // ...and the power-on screen's outro
   busy_tick();                                                    // ...and the busy bar
+  band_tick();                                                    // ...and the frontends' notice
 
   // Tilt Sensor/Auto-Rotation
   RotationDebouncer.update();                                     // Update the Bounce instance
@@ -673,12 +675,15 @@ void loop(void) {
 #ifdef HAS_METADISPLAY
   // A command arriving is activity: the MiSTer is being used even if this
   // particular command draws nothing, so wake the panel before handling it.
-  if (updateDisplay) meta_activity();
+  // Not the notice: it can arrive at any time, from a timer, and nobody is
+  // any more at the MiSTer for it.
+  if (updateDisplay && !newCommand.startsWith("CMDNOTE,")) meta_activity();
 #endif
 
   if (updateDisplay) {                                                                                 // Proceed only if it's allowed because of new data from serial
     boot_noteCommand(newCommand.c_str());                                                              // Does this one draw over the boot screen?
     busy_noteCommand(newCommand.c_str());                                                              // ...or over the busy bar?
+    band_noteCommand(newCommand.c_str());                                                              // ...or over a frontend's picture?
     if (startScreenActive && newCommand.startsWith("CMD") && !newCommand.startsWith("CMDTZONE")) {     // If any Command is processed the StartScreen isn't shown any more
       startScreenActive=false;                                                                         // This variable should prevent "side effects" with Commands and is used to disable automatic drawings
     }
@@ -804,6 +809,10 @@ void loop(void) {
         }
         else
 #endif
+        if (picBand && actPicType == GSC) {                                 // A frontend's: 54 rows, and the band under it
+          band_showPicture(tEffect);
+        }
+        else
         oled_transition(tEffect);                                           // -2 fade, -1 random, else that effect ("CMDCOR,llander,15")
       }
     }
@@ -907,6 +916,10 @@ void loop(void) {
 
     else if (newCommand.startsWith("CMDBOOTPIC")) {                         // The boot image as this core's picture
       oled_readbootpic();
+    }
+
+    else if (newCommand.startsWith("CMDNOTE,")) {                           // The frontends' notice, in the band
+      band_noteParse(newCommand.c_str());
     }
 
     else if (newCommand.startsWith("CMDMSG,")) {                            // A centred message, arriving like a picture
@@ -1770,6 +1783,7 @@ int oled_readlogo() {
 #endif
 
   TextIn=newCommand.substring(7);                    // Get Command String
+  band_parsePicture(newCommand.c_str());             // ",band" after the effect: a frontend's picture
   d1 = TextIn.indexOf(',');                          // Search String for ","
   if (d1==-1) {                                      // No "," found = no Effect Parameter given
     actCorename=TextIn;                              // Get Corename

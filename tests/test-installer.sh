@@ -167,6 +167,10 @@ echo "flash $(basename "$1") chip=${CHIP_OVERRIDE:-} port=${port}" >> "${FAKE_CA
 FAKE
 chmod +x "${TMP}/fake-init" "${TMP}/fake-flash"
 export FAKE_CALLS="${CALLS}" FAKE_STATE="${STATE}"
+# The daemon's "newer release" flag, which an install removes. Here rather
+# than the ini's /tmp path, so the tests never touch this machine's.
+FLAG="${TMP}/update-flag"
+export T2OP_UPDATE_FLAG="${FLAG}"
 
 fresh_mister() {
   rm -rf "${FAT}"; mkdir -p "${FAT}/linux" "${FAT}/Scripts"
@@ -385,7 +389,7 @@ timed_install "HWLOLIN32;0.7.0T;" "HWLOLIN32;${VERSION};"
 ok "an update with a flash succeeds" "${RC}" "0"
 ok "and the shell complained about nothing" "$(shell_errors)" ""
 ok "the panel is told each step, the flash before it happens, then the finish" "$(panel)" \
-   "CMDMETAOFF|CMDBUSY,1,Updating TTY2OLED+...,-2|CMDBUSYLINE,Downloading tty2oled+ ${VERSION}|CMDBUSYLINE,Downloading the lolin32 firmware|CMDBUSYLINE,Installing the scripts|CMDBUSYLINE,Flashing firmware - the display will restart|CMDBUSY,0,Update Complete,-2|CMDBUSYLINE,tty2oled+ ${VERSION} installed|"
+   "CMDMETAOFF|CMDBUSY,1,Updating TTY2OLED+...,-2|CMDBUSYLINE,Downloading tty2oled+ ${VERSION}|CMDBUSYLINE,Downloading the lolin32 firmware|CMDBUSYLINE,Installing the scripts|CMDBUSYLINE,Flashing firmware - the display will restart|CMDNOTE,|CMDBUSY,0,Update Complete,-2|CMDBUSYLINE,tty2oled+ ${VERSION} installed|"
 ok "it was flashed" "$(flashed)" "tty2oledplus-lolin32.bin chip=esp32 port=free"
 ok "the finish is held UPDATE_DONE_SECS before the daemon takes over" "$(( $(held) >= 10 ))" "1"
 ok "and the daemon does take over" "$(running)" "running"
@@ -396,7 +400,7 @@ ok "the daemon is started after the hold, last" "$(tail -n1 "${CALLS}")" "init s
 set_installed_version "0.0.1b"
 timed_install "HWLOLIN32;0.6.9b;" "HWLOLIN32;${VERSION};"
 ok "old firmware is sent nothing; the new one gets the finish" "$(panel)" \
-   "CMDBUSY,0,Update Complete,-2|CMDBUSYLINE,tty2oled+ ${VERSION} installed|"
+   "CMDNOTE,|CMDBUSY,0,Update Complete,-2|CMDBUSYLINE,tty2oled+ ${VERSION} installed|"
 set_installed_version "0.0.1b"
 timed_install "HWLOLIN32;0.6.9b;" "HWLOLIN32;0.6.9b;"
 ok "and if it is still old after the flash, nothing at all" "$(panel)" ""
@@ -462,6 +466,47 @@ set_installed_version "0.0.1b"
 timed_install "HWLOLIN32;0.7.0T;" "" --no-firmware
 ok "UPDATE_DONE_SECS=0: steps, no finish" "$(panel | grep -c 'CMDBUSY,0')" "0"
 cp "${TMP}/user-ini.pristine" "${USER_INI}"
+
+section "installer: an installed release answers the menu's notice"
+
+# The daemon writes the newer release it found to UPDATE_FLAG, and the menu
+# says an update is available until an install removes it. The display is
+# told too, from 0.7.1b on: the restarted daemon puts the menu up before it
+# has asked the display anything, and the notice is in the display's memory.
+set_installed_version "0.0.1b"
+printf '%s\n' "${VERSION}" > "${FLAG}"
+timed_install "HWLOLIN32;${VERSION};" "" --no-firmware
+ok "an update removes the flag" "$(yesno test -e "${FLAG}")" "no"
+ok "and takes the notice off the display, before the finish" \
+   "$(grep -o '^CMDNOTE,$\|^CMDBUSY,0,[^,]*' "${PANEL_FILE}" | tr '\n' '|')" "CMDNOTE,|CMDBUSY,0,Update Complete|"
+
+printf '%s\n' "${VERSION}" > "${FLAG}"
+timed_install "HWLOLIN32;${VERSION};" "" --no-firmware
+ok "so does finding it up to date" "$(yesno test -e "${FLAG}")" "no"
+ok "the display told the same" "$(grep -c '^CMDNOTE,$' "${PANEL_FILE}")" "1"
+
+printf '%s\n' "${VERSION}" > "${FLAG}"
+set_installed_version "0.0.1b"
+timed_install "HWLOLIN32;0.7.0b;" "" --no-firmware
+ok "firmware older than the notice is not told about it" "$(grep -c '^CMDNOTE' "${PANEL_FILE}")" "0"
+ok "though the flag goes all the same" "$(yesno test -e "${FLAG}")" "no"
+
+printf '%s\n' "${VERSION}" > "${FLAG}"
+set_installed_version "0.0.1b"
+timed_install "HWLOLIN32;${VERSION};" "" --no-firmware --version "${VERSION}"
+ok "a release picked with --version leaves it: it may be an older one" "$(yesno test -e "${FLAG}")" "yes"
+
+: > "${PANEL_FILE}"; : > "${CALLS}"
+set_installed_version "0.0.1b"
+T2OP_FAT="${FAT}" T2OP_URL="file://${REL}" T2OP_INIT="${TMP}/fake-init" \
+T2OP_FLASH="${TMP}/fake-flash-fails" T2OP_PANEL="${PANEL_FILE}" \
+T2OP_HWINF="HWLOLIN32;0.7.0T;" \
+  bash "${ROOT}/tools/tty2oledplus_update.sh" > "${TMP}/out" 2>&1 </dev/null
+ok "as does an update whose flash failed" "$(yesno test -e "${FLAG}")" "yes"
+rm -f "${FLAG}"
+ok "with no ini to read, the updater falls back to the shipped ini's flag" \
+   "$(sed -n 's/^UPDATE_FLAG="\([^"]*\)".*/\1/p' "${ROOT}/tty2oled-system.ini")" \
+   "$(T2OP_UPDATE_FLAG= INSTALL="${TMP}/nowhere" T2OP_LIB=yes bash -c '. "$1"; update_flag_path' _ "${ROOT}/tools/tty2oledplus_update.sh")"
 
 section "installer: when it must change nothing"
 

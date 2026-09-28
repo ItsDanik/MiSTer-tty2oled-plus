@@ -69,6 +69,16 @@ if you have stored one.
 ![The boot screen: the MiSTer wordmark, the build version, and the sweep
 bar](docs/img/boot.png)
 
+**On the menu** - and on MisterZine and Degauss - the picture keeps to the
+top 54 rows, like the boot screen, and the ten rows under it are for the
+display's own messages. When a newer tty2oled+ is out, that is where it says
+so, small and grey, until **Update** has installed it. It looks once at boot
+and every half hour after (`UPDATE_CHECK_MINUTES`), and stops looking once it
+has found one.
+
+![The menu's picture with "TTY2OLED+ update available" under
+it](docs/img/menu-update.png)
+
 **While an update runs** the panel says so instead of leaving stale artwork up,
 whether it is `update_all` or tty2oled+ updating itself. Under the message, in
 small grey letters, is what the update is doing right now - for `update_all`
@@ -364,6 +374,8 @@ sent over when it restarts, so nothing needs reflashing.
 | `UPDATE_FAILED_TEXT` | `Update Failed` | ...or when it reported errors. |
 | `UPDATE_DONE_SECS` | `3` | The least time that stays up before the core comes back. `0` skips it. |
 | `SELF_UPDATE_SCREEN` | `yes` | The same, while tty2oled+ updates itself. |
+| `UPDATE_CHECK_MINUTES` | `30` | How often to look for a newer tty2oled+, besides once at boot. `0` never looks. |
+| `UPDATE_NOTE_TEXT` | `TTY2OLED+ update available` | What the menu, MisterZine and Degauss say under their picture when there is one. |
 | `ROTATE` | `no` | Turn the whole display 180°. |
 | `USE_NAMES_TXT` | `yes` | Name cores as your MiSTer menu names them. |
 | `PRIORITIZE_USER_BANNERS` | `yes` | Look in `pics/user` before the shipped banners and arcade logos, so a picture you put there replaces the shipped one. `no` searches the shipped artwork first. |
@@ -415,7 +427,7 @@ All of it lives under `/media/fat/tty2oledplus/pics/`, one kind per folder:
 
 | folder | what | size |
 |---|---|---|
-| `pics/banner` | console and computer core banners — the full-screen picture | 256x64 |
+| `pics/banner` | console and computer core banners — the full-screen picture; the menu's, MisterZine's and Degauss's are 256x54 | 256x64 |
 | `pics/icon` | the console icons, for the split layout | 86x64 |
 | `pics/arcade` | the arcade games' wheel logos, packed: `wheels.bin` and `wheels.idx` | 256x64 |
 | `pics/user` | **yours** | 256x64 |
@@ -426,7 +438,9 @@ is yours and no update ever touches it — which is what makes it the place to
 put a picture of your own, rather than editing `pics/banner` and having the
 next release undo it. A file there named after the core — or, for an arcade
 game, after its MAME set, `sf2.gsc` — replaces the shipped one
-(`PRIORITIZE_USER_BANNERS`, on by default).
+(`PRIORITIZE_USER_BANNERS`, on by default). A picture for the menu,
+MisterZine or Degauss is 256x54 — their bottom ten rows are the display's —
+and a 256x64 one is shown with those rows cut off.
 
 An arcade game is shown by its wheel logo, found by the set name in its
 `.mra`: 12235 MAME sets, whose clones and bootlegs share their parent's logo.

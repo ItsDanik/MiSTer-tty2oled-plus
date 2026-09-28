@@ -104,6 +104,7 @@ char BuildVersionStr[32] = "0.0.0";
 #include "../../MiSTer_SSD1322_USB/metadisplay.h"
 #include "../../MiSTer_SSD1322_USB/bootoutro.h"
 #include "../../MiSTer_SSD1322_USB/busybar.h"
+#include "../../MiSTer_SSD1322_USB/bandnote.h"
 
 // The sketch's font table, verbatim.
 void oled_setfont(int font) {
@@ -294,6 +295,15 @@ static void scene_busy(const char *name, const char *label, const char *line, in
   save(name);
 }
 
+// A frontend's picture - the menu's, the boot image - with the notice the
+// band carries when a newer tty2oled+ is out.
+static void scene_menu(const char *name, const char *note) {
+  boot_compose(logoBin);
+  snprintf(noteText, sizeof(noteText), "%s", note);
+  band_render();
+  save(name);
+}
+
 int main(int argc, char **argv) {
   if (argc > 1) outDir  = argv[1];
   if (argc > 2) repoRoot = argv[2];
@@ -365,6 +375,9 @@ int main(int argc, char **argv) {
 
   // Power-on: the built-in logo, the version, and the comet mid-run.
   scene_boot("boot", nullptr, 150);
+
+  // The menu, when an update is out: the notice in the band under it.
+  scene_menu("menu-update", "TTY2OLED+ update available");
 
   // update_all: the message owns the panel, the bar says it is working.
   scene_busy("busy", "Updating System ...", "_Arcade/cores/Arcade-NamcoS2_SG_20260927.rbf", 150);

@@ -877,7 +877,7 @@ rm -rf "${PROC_ROOT}/500" "${PROC_ROOT}/700"
 SELFUPDATE_SHOWN="no"
 
 ok "the daemon's wait times out for it even with the update_all screen off" \
-   "$(grep -c 'SELF_UPDATE_SCREEN:-yes}" = "yes" \] || degauss_possible; }' "${ROOT}/tty2oled.sh")" "1"
+   "$(grep -c 'SELF_UPDATE_SCREEN:-yes}" = "yes" \] || degauss_possible' "${ROOT}/tty2oled.sh")" "1"
 
 # ---------------------------------------------------------------------------
 section "Degauss: a frontend over the menu core, found by its process"
@@ -916,6 +916,120 @@ rm -rf "${PROC_ROOT}/800" "${PROC_ROOT}/801" "${PROC_ROOT}/802"
 printf 'NES' > "${corenamefile}"
 
 TTYDEV="/dev/null"; unset PROC_ROOT
+
+# ---------------------------------------------------------------------------
+section "a newer tty2oled+: found in the background, flagged, then left alone"
+# ---------------------------------------------------------------------------
+# GitHub is a fake curl on PATH: it answers FAKE_LATEST (or fails with
+# FAKE_CURL_RC), after FAKE_CURL_SLEEP seconds, and logs each call.
+FAKEBIN="${TMP}/fakebin"; mkdir -p "${FAKEBIN}"
+cat >"${FAKEBIN}/curl" <<'FAKE'
+#!/bin/bash
+echo "curl $*" >>"${FAKE_CURL_LOG}"
+out=""
+while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done
+sleep "${FAKE_CURL_SLEEP:-0}"
+[ "${FAKE_CURL_RC:-0}" = "0" ] || exit "${FAKE_CURL_RC}"
+printf '%s\n' "${FAKE_LATEST}" >"${out}"
+FAKE
+chmod +x "${FAKEBIN}/curl"
+export FAKE_CURL_LOG="${TMP}/curl.log" FAKE_LATEST="" FAKE_CURL_RC=0 FAKE_CURL_SLEEP=0
+KEEP_PATH="${PATH}"; PATH="${FAKEBIN}:${PATH}"
+UPDATE_FLAG="${TMP}/update-flag"; rm -f "${UPDATE_FLAG}"
+UC_OUT="${TMP}/check"
+TTY2OLED_VERSION="0.7.1b"; FW_VERSION="0.7.1b"
+UPDATE_CHECK_MINUTES="30"; unset UPDATE_NOTE_TEXT
+NOTEWIRE="${TMP}/notewire"; TTYDEV="${NOTEWIRE}"
+calls() { wc -l <"${FAKE_CURL_LOG}" 2>/dev/null | tr -d ' ' || echo 0; }
+wire() { tr '\n' '|' <"${NOTEWIRE}" 2>/dev/null; }
+settle() { local i; for i in $(seq 50); do [ -z "${UC_PID}" ] || [ -e "${UC_OUT}.rc" ] && break; sleep 0.1; done; }
+fresh() { : >"${FAKE_CURL_LOG}"; : >"${NOTEWIRE}"; }
+yesno_e() { [ -e "${1}" ] && echo yes || echo no; }
+
+for pair in "0.7.2b 0.7.1b yes" "0.7.10b 0.7.9b yes" "0.8.0b 0.7.99b yes" "1.0.0 0.9.9b yes" \
+            "0.7.1 0.7.1b yes" "0.7.1b 0.7.1b no" "0.7.1b 0.7.1 no" "0.7.0b 0.7.1b no" \
+            "garbage 0.7.1b no" " 0.7.1b no" "0.7.2b unknown no"; do
+  set -- ${pair}
+  [ $# -eq 2 ] && set -- "" "$1" "$2"
+  version_newer "$1" "$2" && r=yes || r=no
+  ok "release '$1' newer than '$2': $3" "${r}" "$3"
+done
+
+UC_PID=""; UC_NEXT=""; NOTE_SENT="?"; fresh
+FAKE_LATEST="0.7.2b"
+T0="$(tenths)"; updatenote_pass; T1="$(tenths)"
+ok "the first pass - boot - starts a check" "$(calls)" "1"
+ok "at the release's VERSION" "$(grep -c 'releases/latest/download/VERSION' "${FAKE_CURL_LOG}")" "1"
+ok "and tells the display there is no notice yet" "$(wire)" "CMDNOTE,|"
+FAKE_CURL_SLEEP=3; UC_PID=""; UC_NEXT=""; : >"${FAKE_CURL_LOG}"
+T0="$(tenths)"; updatenote_pass; T1="$(tenths)"
+ok "without waiting for it: a slow network never holds up the display" "$(( T1 - T0 < 10 ))" "1"
+kill "${UC_PID}" 2>/dev/null; wait "${UC_PID}" 2>/dev/null; UC_PID=""; FAKE_CURL_SLEEP=0
+
+UC_NEXT=""; fresh; updatenote_pass; settle
+updatenote_pass
+ok "a newer release is flagged when the check comes back" "$(cat "${UPDATE_FLAG}" 2>/dev/null)" "0.7.2b"
+ok "and the display told, in the same pass" "$(wire)" "CMDNOTE,TTY2OLED+ update available|"
+UC_NEXT=0; fresh
+for i in 1 2 3; do updatenote_pass; done
+ok "flagged, it stops asking, however long it has been" "$(calls)" "0"
+ok "and says nothing more" "$(wire)" ""
+
+# The updater installed it: the flag goes, and the next check - due at once
+# here, as it is when the daemon it restarts first runs - finds nothing newer.
+rm -f "${UPDATE_FLAG}"; FAKE_LATEST="0.7.1b"; UC_NEXT=0; fresh
+updatenote_pass; settle; updatenote_pass
+ok "once installed, it asks again" "$(calls)" "1"
+ok "finds nothing newer, flags nothing" "$(yesno_e "${UPDATE_FLAG}")" "no"
+ok "and the notice goes" "$(wire)" "CMDNOTE,|"
+ok "the next check is an interval away" "$(( UC_NEXT - $(date +%s) > 29 * 60 ))" "1"
+
+# A flag naming this version or older: an update made some other way.
+printf '0.7.1b\n' >"${UPDATE_FLAG}"; UC_NEXT=$(( $(date +%s) + 999 )); fresh
+updatenote_pass
+ok "a flag that is not newer than this is dropped" "$(yesno_e "${UPDATE_FLAG}")" "no"
+ok "and shown nowhere" "$(wire)" ""
+
+# Offline: tried again after UC_RETRY_SECS, not a whole interval.
+FAKE_CURL_RC=6; UC_NEXT=""; fresh
+updatenote_pass; settle; updatenote_pass
+ok "a failed check flags nothing" "$(yesno_e "${UPDATE_FLAG}")" "no"
+ok "and tries again in five minutes" "$(( UC_NEXT - $(date +%s) ))" "${UC_RETRY_SECS}"
+FAKE_CURL_RC=0
+
+# One that never finishes is given up on, and counts as a failure.
+FAKE_CURL_SLEEP=30; UC_NEXT=""; fresh
+updatenote_pass; STUCK="${UC_PID}"
+UC_STARTED=$(( $(date +%s) - UC_GIVEUP_SECS - 1 ))
+updatenote_pass
+ok "a check stuck past UC_GIVEUP_SECS is stopped" "$(kill -0 "${STUCK}" 2>/dev/null && echo alive || echo gone)" "gone"
+ok "and retried like a failure" "$(( UC_NEXT - $(date +%s) ))" "${UC_RETRY_SECS}"
+FAKE_CURL_SLEEP=0
+
+# Off: never asks, and a flag already there shows nothing.
+printf '0.7.2b\n' >"${UPDATE_FLAG}"; NOTE_SENT="TTY2OLED+ update available"
+UPDATE_CHECK_MINUTES="0"; UC_NEXT=""; fresh
+updatenote_pass
+ok "UPDATE_CHECK_MINUTES=0 never asks" "$(calls)" "0"
+ok "and takes the notice down" "$(wire)" "CMDNOTE,|"
+UPDATE_CHECK_MINUTES="30"
+UPDATE_NOTE_TEXT="New display software"; fresh
+updatenote_pass
+ok "UPDATE_NOTE_TEXT is what it says" "$(wire)" "CMDNOTE,New display software|"
+unset UPDATE_NOTE_TEXT; rm -f "${UPDATE_FLAG}"
+
+# The loop runs it on every pass that owns the port, and the upstream path's
+# wait polls for it.
+ok "the main loop runs it first thing after sleep mode" \
+   "$(grep -A2 'if ! sleepmode_pass; then' "${ROOT}/tty2oled.sh" | grep -c '^ *updatenote_pass$')" "1"
+ok "and the upstream path's wait on every timeout" \
+   "$(grep -A1 '\[ "\$?" -eq 2 \] || break' "${ROOT}/tty2oled.sh" | grep -c '^ *updatenote_pass$')" "1"
+ok "which times out for it" "$(grep -c '|| \[ "$(update_check_minutes)" -gt 0 \]; }' "${ROOT}/tty2oled.sh")" "1"
+ok "a display that comes back is told again" "$(sed -n '/^serialready()/,/^}/p' "${ROOT}/tty2oled.sh" | grep -c 'NOTE_SENT="?"')" "1"
+ok "and so is one handed back by sleep mode" "$(sed -n '/^sleepmode_pass()/,/^}/p' "${ROOT}/tty2oled.sh" | grep -c 'NOTE_SENT="?"')" "1"
+ok "the shipped ini checks every 30 minutes" "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${UPDATE_CHECK_MINUTES}")" "30"
+
+PATH="${KEEP_PATH}"; TTYDEV="/dev/null"; UC_PID=""; NOTE_SENT="?"; FW_VERSION=""
 
 # ---------------------------------------------------------------------------
 section "sleep mode: the display belongs to something else"

@@ -342,7 +342,8 @@ main() {
   # well be its own, and is not ours to delete. /run is a tmpfs in any case.
   gone ${PIDFILE:+"${PIDFILE}"} /run/tty2oledplus*.pid \
        "${DAEMONLOG:-/tmp/tty2oled-daemon.log}" "${debugfile:-/tmp/tty2oled}" \
-       /tmp/tty2oled_sleep
+       /tmp/tty2oled_sleep "${UPDATE_FLAG:-/tmp/tty2oledplus_update}" \
+       /tmp/.tty2oledplus-check.*
 
   say "Done."
   note "The firmware stays on the display - it is the display's own flash, and"

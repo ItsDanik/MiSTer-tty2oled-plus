@@ -4,6 +4,28 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.7.1b — 2026-09-28
+
+- **The menu says when a new tty2oled+ is out.** The daemon asks GitHub for
+  the latest release when it starts and every 30 minutes after, in the
+  background. When there is a newer one, the menu - and MisterZine and
+  Degauss - show `TTY2OLED+ update available` in small grey letters under
+  their picture. If the menu is on screen it fades in there; if you are in a
+  game it waits, and arrives with the menu's picture when you go back. Once
+  it has found one it stops asking. Update in the tty2oledplus Scripts entry
+  takes the message away as soon as it has installed the release, so the
+  menu you come back to is clear. How often it looks and what it says are in
+  Settings, under **While updates run**; `0` minutes never looks. Offline, it
+  tries again every 5 minutes, and never delays the display.
+- **The menu, MisterZine and Degauss keep the bottom 10 rows.** Their picture
+  is 256x54 now, like the boot screen, and the band under it is for the
+  display's own messages. A 256x64 picture of theirs - in `pics/banner` or
+  your `pics/user` - is shown with its bottom 10 rows cut off until it is
+  redrawn at 256x54; a 256x54 `.gsc` is shown as it is.
+- The message needs the new firmware, which Update flashes. **The update to
+  0.7.1b itself is run by the updater you already have**, and the next
+  release is the first the menu can tell you about.
+
 ## 0.7.0b — 2026-09-28
 
 - **update_all says what it is doing.** Under "Updating System ..." the

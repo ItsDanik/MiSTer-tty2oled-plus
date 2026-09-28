@@ -168,6 +168,28 @@ display_claimed() {
   [ -f "$(sleepfile_path)" ]
 }
 
+# The daemon's "a newer release is out" flag, which an install answers.
+# Parsed out of the ini as SLEEPFILE is; the literal for a first install.
+update_flag_path() {
+  local p=""
+  [ -n "${T2OP_UPDATE_FLAG:-}" ] && { printf '%s' "${T2OP_UPDATE_FLAG}"; return; }
+  p="$(sed -n 's/^UPDATE_FLAG="\([^"]*\)".*/\1/p' "${INSTALL}/tty2oled-system.ini" 2>/dev/null | tail -n1)"
+  printf '%s' "${p:-/tmp/tty2oledplus_update}"
+}
+
+# This is the latest release now, so the menu stops saying there is a newer
+# one: the flag goes, and so does the notice the display is holding - the
+# restarted daemon puts the menu up before it has asked the display anything,
+# and a notice still in the display's memory would come up with it.
+update_answered() {
+  rm -f "$(update_flag_path)"
+  # Whether or not the progress screens are wanted (panel_send): this one is
+  # not progress, and a stale notice would outlive them.
+  [ -n "${PANEL_TTY}" ] && version_atleast "${HW_VERSION}" 0.7.1 \
+    && printf 'CMDNOTE,\n' >>"${PANEL_TTY}" 2>/dev/null && sleep 0.05
+  return 0
+}
+
 installed_version() {
   sed -n 's/^TTY2OLED_VERSION="\([^"]*\)".*/\1/p' "${INSTALL}/tty2oled-system.ini" 2>/dev/null
 }
@@ -503,6 +525,7 @@ main() {
 
   if [ "${scripts}" = "no" ] && [ "${flash}" = "no" ] && [ "${pics}" = "no" ]; then
     say "tty2oled+ ${version} is already installed - nothing to do."
+    [ -z "${want}" ] && update_answered
     panel_finish uptodate "tty2oled+ ${version} is installed"
     return 0
   fi
@@ -599,6 +622,8 @@ main() {
 
   # Nothing left that can fail: the rest is quick, and runs under the finish.
   if [ "${flashed}" = "yes" ]; then
+    # The latest, not a --version picked by hand: that may be an older one.
+    [ -z "${want}" ] && update_answered
     panel_finish done "tty2oled+ ${version} installed"
   else
     panel_finish failed "The firmware flash did not complete"

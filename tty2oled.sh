@@ -303,11 +303,20 @@ senddata() {
     echo "CMDBOOTPIC,${newcore},${TRANSITION}" >${TTYDEV}
     cmdwait
   elif findpicture "${newcore}"; then
-    dbug "Sending: ${picdraw},${1},${TRANSITION} (${PICFILE:-wheel ${PICFRAME}})"
-    echo "${picdraw},${1},${TRANSITION}" >${TTYDEV}  # Send CORECHANGE" Command and Corename
+    # A frontend's picture is 54 rows with the band under it (frontend_core).
+    local band=""
+    [ -n "${PICFILE}" ] && frontend_core "${newcore}" && band=",band"
+    dbug "Sending: ${picdraw},${1},${TRANSITION}${band} (${PICFILE:-wheel ${PICFRAME}})"
+    echo "${picdraw},${1},${TRANSITION}${band}" >${TTYDEV}  # Send CORECHANGE" Command and Corename
     sleep ${WAITSECS}                              # sleep needed here ?!
     if [ -n "${PICFRAME}" ]; then                  # A wheel: its 8192 bytes, cut out of the pack
       dd if="${wheelpack}" bs=8192 skip="${PICFRAME}" count=1 2>/dev/null >${TTYDEV}
+    elif [ -n "${band}" ]; then
+      # The top 54 rows, whether the file is 256x54 or a 256x64 banner, and
+      # the band's 1280 bytes black - as one stream, so the firmware reads
+      # exactly 8192 bytes. A 256x54 file sent as it is would be 6912, and
+      # the firmware would wait out its timeout for the rest.
+      { tail -n +4 "${PICFILE}" | xxd -r -p | head -c 6912; head -c 1280 /dev/zero; } >${TTYDEV}
     else
       tail -n +4 "${PICFILE}" | xxd -r -p >${TTYDEV} # The Magic, send the Picture-Data up from Line 4 and process
     fi
@@ -748,6 +757,7 @@ serialready() {
   DEFERRED_DONE="no"
   UPDATEALL_SHOWN="no"
   UPDATEALL_BUSY="no"
+  NOTE_SENT="?"
   return 1
 }
 
@@ -874,6 +884,7 @@ sleepmode_pass() {
   oldcore=""
   META_WIRE_LAST=""
   DEFERRED_DONE="no"
+  NOTE_SENT="?"
   return 1
 }
 
@@ -924,6 +935,154 @@ readcore() {
 # time out every UPDATE_ALL_POLL seconds to look again.
 degauss_possible() {
   [ "${oldcore}" = "MENU" ] || [ "${oldcore}" = "${DEGAUSS_CORE}" ]
+}
+
+# ---------------------------------------------------------------------------
+# The frontends, and a newer tty2oled+ in their band
+# ---------------------------------------------------------------------------
+#
+# The menu, MisterZine and Degauss are where a game is chosen, and they are
+# shown the way the boot screen is: a picture 54 rows tall, and the 10 rows
+# under it kept for the display's own notices. Their picture goes out marked
+# ",band" (senddata) - the menu's CMDBOOTPIC always is one - with its bottom
+# ten rows black, so a 256x64 banner is shown cut down until it is redrawn.
+# Names as CORENAME has them, or readcore for Degauss; case does not matter.
+FRONTEND_CORES="menu misterzine ${DEGAUSS_CORE}"
+frontend_core() {
+  [ -n "${1}" ] || return 1
+  case " ${FRONTEND_CORES} " in *" ${1,,} "*) return 0 ;; esac
+  return 1
+}
+
+# The notice is "a newer release is out". The daemon asks GitHub for the
+# latest release's VERSION when it starts - at boot - and every
+# UPDATE_CHECK_MINUTES after that, and writes a newer one to UPDATE_FLAG. From
+# then on it stops asking: the flag stays until the updater, having installed
+# a release, removes it, and the next check - the restarted daemon's first -
+# decides again. A flag naming this version or an older one is left over from
+# an update made some other way, and is dropped.
+#
+# The download runs in the background - offline, curl can take its whole
+# connect timeout, and the loop cannot stop drawing for that - and each pass
+# collects it once it has finished. A check that fails is tried again after
+# UC_RETRY_SECS rather than a whole interval: the first one runs at boot, often
+# before the network is up.
+#
+# CMDNOTE carries the text to the firmware (0.7.1b and later), which keeps it
+# and shows it in the band of every frontend picture: faded in where one is up,
+# arriving with the next one where one is not. Only a change is sent.
+UPDATE_URL="${UPDATE_URL:-https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/VERSION}"
+UPDATE_CACERT="${UPDATE_CACERT:-/etc/ssl/certs/cacert.pem}"   # MiSTer's curl finds none itself
+UC_RETRY_SECS=300
+UC_GIVEUP_SECS=120  # a check still going this long is stopped; curl's own limit is 60
+UC_OUT="/tmp/.tty2oledplus-check.$$"
+UC_PID=""           # the check under way
+UC_STARTED=""
+UC_NEXT=""          # when the next may start; empty is now
+NOTE_SENT="?"       # what the firmware was last told; "?" is nothing yet
+NOTE_COLS=51        # the band's width in 5x7
+
+# Is release $1 newer than version $2? N.N.N and letters, as VERSION has them;
+# anything else is not newer. A release without the beta "b" is newer than
+# the beta of the same number.
+version_newer() {
+  local a=() b=() i
+  [[ "${1}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([A-Za-z]*)$ ]] || return 1
+  a=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}")
+  [[ "${2}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([A-Za-z]*)$ ]] || return 1
+  b=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}")
+  for i in 0 1 2; do
+    [ "$((10#${a[i]}))" -gt "$((10#${b[i]}))" ] && return 0
+    [ "$((10#${a[i]}))" -lt "$((10#${b[i]}))" ] && return 1
+  done
+  [ -z "${a[3]}" ] && [ -n "${b[3]}" ]
+}
+
+update_check_minutes() {
+  local m="${UPDATE_CHECK_MINUTES:-30}"
+  case "${m}" in ''|*[!0-9]*) m=0 ;; esac
+  printf '%s' "$((10#${m}))"
+}
+
+# The flagged release, if it is still newer than this one; a stale flag goes.
+update_flagged() {
+  local v=""
+  [ -r "${UPDATE_FLAG}" ] || return 1
+  IFS= read -r v <"${UPDATE_FLAG}"
+  v="${v//[[:space:]]/}"
+  version_newer "${v}" "${TTY2OLED_VERSION:-}" && return 0
+  dbug "${UPDATE_FLAG} names ${v:-nothing}, not newer than ${TTY2OLED_VERSION:-} - removing it"
+  rm -f "${UPDATE_FLAG}"
+  return 1
+}
+
+updatecheck_start() {  # updatecheck_start <now>
+  local ca=()
+  command -v curl >/dev/null 2>&1 || { UC_NEXT=$(( ${1} + UC_RETRY_SECS )); return 1; }
+  [ -r "${UPDATE_CACERT}" ] && ca=(--cacert "${UPDATE_CACERT}")
+  rm -f "${UC_OUT}" "${UC_OUT}.rc"
+  dbug "Looking for a newer tty2oled+ at ${UPDATE_URL}"
+  ( curl -fsSL --connect-timeout 15 --max-time 60 "${ca[@]}" -o "${UC_OUT}" "${UPDATE_URL}" \
+      </dev/null >/dev/null 2>&1
+    echo "$?" >"${UC_OUT}.rc" ) &
+  UC_PID=$!
+  UC_STARTED="${1}"
+}
+
+# Collect a finished check: flag a newer release, and say when the next is due.
+updatecheck_collect() {  # updatecheck_collect <now>
+  local now="${1}" rc="" v="" mins
+  [ -n "${UC_PID}" ] || return 0
+  if ! [ -e "${UC_OUT}.rc" ]; then
+    [ $(( now - UC_STARTED )) -lt "${UC_GIVEUP_SECS}" ] && return 0
+    kill "${UC_PID}" 2>/dev/null
+  fi
+  wait "${UC_PID}" 2>/dev/null
+  [ -r "${UC_OUT}.rc" ] && IFS= read -r rc <"${UC_OUT}.rc"
+  [ "${rc}" = "0" ] && [ -r "${UC_OUT}" ] && IFS= read -r v <"${UC_OUT}"
+  v="${v//[[:space:]]/}"
+  rm -f "${UC_OUT}" "${UC_OUT}.rc"
+  UC_PID=""
+  mins="$(update_check_minutes)"
+  if [ "${rc}" != "0" ] || [ -z "${v}" ]; then
+    dbug "The release check failed (curl ${rc:-killed}); again in ${UC_RETRY_SECS}s"
+    UC_NEXT=$(( now + (mins * 60 < UC_RETRY_SECS ? mins * 60 : UC_RETRY_SECS) ))
+    return 0
+  fi
+  UC_NEXT=$(( now + mins * 60 ))
+  if version_newer "${v}" "${TTY2OLED_VERSION:-}"; then
+    printf '%s\n' "${v}" >"${UPDATE_FLAG}"
+    echo "tty2oled: tty2oled+ ${v} is out (this is ${TTY2OLED_VERSION:-unknown}) - Update in the tty2oledplus Scripts entry installs it."
+  else
+    dbug "The latest release is ${v}; this is ${TTY2OLED_VERSION:-}"
+  fi
+}
+
+# Tell the firmware what the band says, if that changed and it can show it.
+sendnote() {
+  local text="${1}"
+  text="$(printf '%s' "${text}" | tr -d '\000-\037\177')"
+  text="${text:0:${NOTE_COLS}}"
+  [ "${text}" = "${NOTE_SENT}" ] && return 0
+  fw_atleast 0.7.1 || return 0
+  dbug "Sending: CMDNOTE,${text}"
+  echo "CMDNOTE,${text}" >${TTYDEV}
+  cmdwait
+  NOTE_SENT="${text}"
+}
+
+# Once a pass, whatever else the pass does: never blocks.
+updatenote_pass() {
+  local now="${EPOCHSECONDS:-$(date +%s)}" want=""
+  updatecheck_collect "${now}"
+  if [ "$(update_check_minutes)" -gt 0 ]; then
+    if update_flagged; then
+      want="${UPDATE_NOTE_TEXT:-TTY2OLED+ update available}"
+    elif [ -z "${UC_PID}" ] && { [ -z "${UC_NEXT}" ] || [ "${now}" -ge "${UC_NEXT}" ]; }; then
+      updatecheck_start "${now}"
+    fi
+  fi
+  sendnote "${want}"
 }
 
 # ---------------------------------------------------------------------------
@@ -1326,6 +1485,8 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
       # Sleep mode: the display belongs to something else - see sleepmode_pass.
       # Nothing below this may write to the port while it is held.
       if ! sleepmode_pass; then
+        # A newer release, and the notice for it: never blocks.
+        updatenote_pass
         # update_all takes the screen over whatever core is loaded, and our
         # own updater over that - it is about to stop this daemon.
         selfupdate_pass && { deferred_setup; continue; }
@@ -1375,7 +1536,8 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
             # Anything but a timeout (an event, or inotifywait failing) ends
             # the wait as it always did.
             upwait=""
-            { [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] || [ "${SELF_UPDATE_SCREEN:-yes}" = "yes" ] || degauss_possible; } \
+            { [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] || [ "${SELF_UPDATE_SCREEN:-yes}" = "yes" ] || degauss_possible \
+              || [ "$(update_check_minutes)" -gt 0 ]; } \
               && upwait="-t ${UPDATE_ALL_POLL:-2}"
             while true; do
               if [ "${debug}" = "false" ]; then
@@ -1384,6 +1546,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
                 inotifywait ${upwait} -e modify "${corenamefile}"      # but not -qq when debugging
               fi
               [ "$?" -eq 2 ] || break
+              updatenote_pass
               updateall_running && break
               selfupdate_running && break
               if degauss_possible; then

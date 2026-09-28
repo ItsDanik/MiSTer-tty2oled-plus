@@ -133,8 +133,9 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `.../pagefade.h` | A page turn fades only the rows that change. |
 | `.../fadetransition.h` | `TRANSITION=-2` fade; `30`-`39` sliding fades. |
 | `.../bootoutro.h`, `busybar.h` | Boot screen as menu picture + power-on outro; the sweep as a busy bar. |
+| `.../bandnote.h` | Frontends' 54-row picture + band; `CMDNOTE` fading in/out there. |
 | `.../MiSTer_SSD1322_USB.ino` | Includes the headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | ~2176 checks, no hardware. |
+| `tests/` | ~2450 checks, no hardware. |
 | `tools/build-title-index.sh`, `dat2index.awk`, `index-emit.awk`, `mamexml2index.awk` | CRC32 title index from libretro-database (+ MAME XML for Neo Geo). W. |
 | `tools/png2gsc.py` | PNG -> 4bpp `.gsc`. W **and** M: Pillow, ImageMagick, or a stdlib PNG decoder. |
 | `tools/wheels2gsc.py`, `tools/gscpack.py` | Wheel PNGs -> 256x64 `.gsc` (`--nodupes`); pack into `.bin`+`.idx`. W. |
@@ -232,6 +233,34 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   (update_all's log viewer can outlast it). A verdict printed just before
   exit is read on the exit pass; with no print log, `update_all.log` if it is
   newer than the run.
+- **Frontends keep the band.** `frontend_core` (MENU, misterzine, degauss,
+  any case) pictures go out `CMDCOR,<core>,<effect>,band` as the file's top
+  6912 bytes + 1280 zeros - so a 256x54 `.gsc` works (sent raw it would be a
+  short 8192 read) and a 256x64 one is cut; the firmware blacks the band too.
+  The menu's `CMDBOOTPIC` is always one. `band_showPicture` composes picture
+  + notice into `metaBin` (render hook for a Fade) and transitions to it;
+  `bandShown` is cleared by any non-quiet command (`band_noteCommand`).
+- **Release check** (`updatenote_pass`, first thing every pass the daemon
+  owns the port, and on the upstream path's wait timeouts; never blocks):
+  curl of `releases/latest/download/VERSION` in a background subshell
+  (`UC_OUT`, `.rc` marks done), at start and every `UPDATE_CHECK_MINUTES`,
+  `UC_RETRY_SECS` after a failure, killed after `UC_GIVEUP_SECS`. A newer
+  release (`version_newer`: no `b` beats the same number with one) goes to
+  `UPDATE_FLAG` in `/tmp`; **while flagged it never polls**. A flag not newer
+  than `TTY2OLED_VERSION` is stale and removed. The flag's existence -> `sendnote
+  UPDATE_NOTE_TEXT` (`CMDNOTE`, only on change, `fw_atleast 0.7.1`);
+  `NOTE_SENT="?"` after a display reset or sleep mode. The updater
+  (`update_answered`, latest only, not `--version`, not a failed flash)
+  removes the flag **and** sends `CMDNOTE,` itself - the restarted daemon's
+  first menu picture goes out before it knows the firmware version.
+- **The notice in the firmware** (`bandnote.h`): kept across pictures; on a
+  shown frontend it steps 0..`BNOTE_GREY` (8) over `BNOTE_FADE_MS`, a changed
+  text fades out first; it waits for `TF_IDLE`, the boot outro (`boActive`),
+  the busy bar, a page fade. Elsewhere it waits and is composed into the next
+  frontend picture. At power-on (`bootHolding`) `band_heldUnder` leaves the
+  band to the outro, then fades in. `CMDNOTE` is quiet and not activity (no
+  wake from dim). 5x7, baseline `BNOTE_Y` 62: **u8g2 draws a glyph on the rows
+  above its baseline and the descent on it** (measured with the real library).
 - **Degauss** is a Scripts entry over the menu core (`CORENAME` stays
   `MENU`; MisterZine, by contrast, is an `.mgl` and a real `CORENAME`).
   `readcore` swaps `MENU` for `degauss` while `degauss_running` finds its
@@ -422,6 +451,8 @@ send them). Additions, ESP32 only:
 | `CMDBUSY,<0\|1>[,<label>[,<effect>]]` | sweep in the band; 0 finishes the cycle. A label blacks the panel above and shows alone; same label ignored, new one redraws. `0` with a new label (0.7.0b) swaps it in above the band without the line - the finish - or, with no busy screen up, draws it whole with no bar. Any drawing command stops it |
 | `CMDBUSYLINE,<text>` | the busy screen's status line (5x7, grey, 51 columns), rest of the line; empty removes it; ignored with no label up; waits out a transition (`busyTextDirty`). Quiet for the bar |
 | `CMDMSG,<effect>,<text>` | centred message, transitioned; text is the rest of the line |
+| `CMDCOR,<core>,<effect>,band` | a frontend's picture: 54 rows, band blacked, the notice composed in. Older firmware reads past `,band` (`toInt()`) |
+| `CMDNOTE,<text>` | the frontends' band notice, rest of the line, 51 columns; empty removes. Quiet; kept until changed (0.7.1b) |
 | `CMDFLIP,<s>` | side swap period; 0 disables |
 | `CMDDESC,<bytes>` | + that many raw bytes, printable ASCII, 2048 kept (`DESC_MAX`, same in daemon and importer - `test-scrape.py`), excess discarded. After `CMDMETA`, which clears it |
 | `CMDSCROLL,<h>,<v>` | marquee / description speeds, px/s, 1..200 / 1..100 |
@@ -467,7 +498,7 @@ on MiSTer's `ini_settings.sh`.
   equal to its default is **removed**. `ini_put` changes one line or appends
   under its own header; never rewrites the file. The ini is **parsed, not
   sourced** (runs as root; tested with a value that would touch a file).
-- Covers every user setting (35, seven categories). `test-settings.sh` checks
+- Covers every user setting (45, seven categories). `test-settings.sh` checks
   both ways: every offered key exists in the ini *and* is read by `tty2oled.sh`
   or `tty2oled-meta.sh`; every user key is offered or on the exclusion list
   (`BAUDRATE`, `TTYPARAM`, `NAMES_TXT`, `TITLE_INDEX`, `TITLE_INDEX_DIR`),

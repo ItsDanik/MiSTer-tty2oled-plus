@@ -40,6 +40,8 @@
 #define BOOT_VERFADE_MS  1000        // the version fades out over this long
 
 void boot_printVersion(void);         // the sketch's: font, cursor, BuildVersion
+void band_showPicture(int effect);    // bandnote.h: a frontend's picture, notice and all
+void band_heldUnder(void);            // ...or the power-on screen standing in for it
 
 bool          bootHolding = false;    // the power-on screen is still on the panel
 
@@ -105,7 +107,7 @@ bool boot_quietCommand(const char *cmd) {
     "CMDFADE", "CMDTFADE", "CMDCON", "CMDDIM", "CMDFLIP", "CMDSCROLL", "CMDSAVER",
     "CMDSWSAVER",
     "CMDSETTIME", "CMDHWINF", "CMDMETAOFF", "CMDBOOTPIC", "CMDBOOTINF",
-    "CMDTZONE", "CMDNULL",
+    "CMDTZONE", "CMDNULL", "CMDNOTE",
   };
   size_t n = strlen(cmd);
   if (n >= 6 && strcmp(cmd + n - 6, "QWERTZ") == 0) return true;   // the warm-up line
@@ -207,11 +209,15 @@ void boot_outroTick(void) {
 // picture later - CMDSPIC, the tilt sensor's re-show - shows it too.
 // If the power-on screen is still up, that is already what the panel shows:
 // there is nothing to transition.
+//
+// The menu is a frontend, so its band is the notice's (bandnote.h): shown
+// with the picture when it transitions in, faded in once the outro has
+// emptied the band when it is the power-on screen.
 void boot_showAsCore(int effect) {
   boot_compose(logoBin);
   actPicType = GSC;
-  if (bootHolding) return;
-  oled_transition(effect);
+  if (bootHolding) { band_heldUnder(); return; }
+  band_showPicture(effect);
 }
 
 #endif  // BOOTOUTRO_H

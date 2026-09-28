@@ -52,6 +52,7 @@ static int   lastFontSet  = -1;
 #include "../../MiSTer_SSD1322_USB/metadisplay.h"
 #include "../../MiSTer_SSD1322_USB/bootoutro.h"
 #include "../../MiSTer_SSD1322_USB/busybar.h"
+#include "../../MiSTer_SSD1322_USB/bandnote.h"
 
 // The sketch's version line, as the outro redraws it at each grey.
 void boot_printVersion(void) { u8g2.setCursor(BOOT_VER_X, BOOT_VER_Y); u8g2.print("0.4.0b"); }
@@ -2345,7 +2346,9 @@ int main() {
         bootHolding = false;
         boot_showAsCore(5);
         okInt("back to the menu later, it transitions like any picture", lastEffect, 5);
-        okBool("from the boot image", lastSrcAtDraw == logoBin, true);
+        // Composed first, so the band's notice can come with it.
+        okBool("from the boot image, composed", lastSrcAtDraw == metaBin
+               && memcmp(metaBin, bootlogo_bits, BOOTIMG_BYTES) == 0, true);
         boot_showAsCore(EFFECT_FADE);
         okBool("the Fade included", tfState == TF_OUT, true);
         transition_cancel();
@@ -3609,6 +3612,237 @@ int main() {
         okInt ("no fields",     metaFieldCount, 0);
         okBool("icon dropped",  metaHasIcon, false);
         okBool("tick inert",    meta_tick(), false);
+    }
+
+    // --- The frontends' band and its notice (bandnote.h) --------------------
+    auto bandReset = []() {
+        transition_cancel();
+        bandShown = false; picBand = false;
+        noteText[0] = noteDrawn[0] = '\0'; noteLevel = 0; noteLast = 0;
+        boActive = false; busyActive = false; bootHolding = false;
+        oled.resetProbe(); u8g2.resetProbe();
+    };
+    auto bandTick = [](unsigned long ms) {
+        g_fakeMillis += ms;
+        contrast_tick(); transition_tick(); boot_outroTick(); busy_tick(); band_tick();
+    };
+    // The grey of each drawing of `text`, in order: how the notice faded.
+    auto noteGreys = [](const char *text) {
+        std::string out;
+        for (const auto &d : u8g2.draws)
+            if (d.text == text) out += std::to_string(d.fg) + " ";
+        return out;
+    };
+    const char *NOTE = "TTY2OLED+ update available";
+
+    section("band: the notice's rows are inside the band, under a blank row");
+    {
+        okInt ("the band is the boot screen's ten rows", BOOT_BAND_H, 10);
+        okBool("a blank row at least between picture and notice", BNOTE_TOP >= BOOT_BAND_Y + 1, true);
+        // u8g2 puts a glyph on the BNOTE_ASC rows above the baseline and its
+        // descent on the baseline itself.
+        okInt ("its first row is the baseline less the ascent", BNOTE_TOP, BNOTE_Y - BNOTE_ASC);
+        okBool("its descent is still on the panel", BNOTE_Y <= BOOT_PANEL_H - 1, true);
+        okInt ("centred: the odd blank row goes above it",
+               (BNOTE_TOP - BOOT_BAND_Y) - (BOOT_PANEL_H - 1 - BNOTE_Y), 1);
+        okBool("half the panel's grey", BNOTE_GREY == 8, true);
+        okBool("its longest line fits across the panel in 5x7", BNOTE_COLS * 5 <= BOOT_PANEL_W, true);
+        okBool("the fade takes BNOTE_FADE_MS in whole steps", BNOTE_STEP_MS * BNOTE_GREY <= BNOTE_FADE_MS, true);
+    }
+
+    section("band: a picture marked band is a frontend's");
+    {
+        band_parsePicture("CMDCOR,MENU,-2,band");       okBool("CMDCOR,MENU,-2,band", picBand, true);
+        band_parsePicture("CMDCOR,misterzine,30,band"); okBool("any effect", picBand, true);
+        band_parsePicture("CMDAPD,degauss,5,band");     okBool("CMDAPD too", picBand, true);
+        band_parsePicture("CMDCOR,NES,-2");             okBool("a core's is not", picBand, false);
+        band_parsePicture("CMDCOR,band,5");             okBool("nor a core called band", picBand, false);
+        band_parsePicture("CMDCOR,NES");                okBool("nor one with no effect", picBand, false);
+        band_parsePicture("CMDCOR,NES,-2,bandits");     okBool("the word, not a prefix of it", picBand, false);
+    }
+
+    section("band: a frontend's picture is cut to 54 rows and composed");
+    {
+        bandReset();
+        memset(logoBin, 0xFF, sizeof(logoBin));
+        actPicType = GSC;
+        lastEffect = -999;
+        band_showPicture(5);
+        bool band = true, pic = true;
+        for (int i = 0; i < BOOTIMG_BYTES; i++) if (logoBin[i] != 0xFF) pic = false;
+        for (int i = BOOTIMG_BYTES; i < BOOT_PANEL_BYTES; i++) if (logoBin[i]) band = false;
+        okBool("the 54 rows of picture are kept", pic, true);
+        okBool("the ten under them are black", band, true);
+        okInt ("it transitions with the effect asked for", lastEffect, 5);
+        okBool("from the composed frame", lastSrcAtDraw == metaBin, true);
+        okBool("which is the picture", memcmp(metaBin, logoBin, BOOT_PANEL_BYTES) == 0, true);
+        okBool("and the panel is now a frontend's", bandShown, true);
+        okInt ("no notice, nothing drawn in the band", noteLevel, 0);
+        okBool("the srcBin a core picture uses is back", srcBin == logoBin, true);
+    }
+
+    section("band: a notice already set comes with the picture");
+    {
+        bandReset();
+        band_noteParse((std::string("CMDNOTE,") + NOTE).c_str());
+        okBool("CMDNOTE alone draws nothing", u8g2.draws.empty() && oled.displayCalls == 0, true);
+        memset(logoBin, 0x11, sizeof(logoBin));
+        actPicType = GSC;
+        band_showPicture(5);
+        const auto *d = u8g2.find(NOTE);
+        okBool("the notice is in the frame", d != nullptr, true);
+        if (d) {
+            okInt("at half grey",  d->fg, BNOTE_GREY);
+            okInt("on its row",    d->y, BNOTE_Y);
+            okInt("centred",       d->x, (DispWidth - (int)strlen(NOTE) * d->charW) / 2);
+        }
+        okInt ("so it is up at full grey", noteLevel, BNOTE_GREY);
+        u8g2.resetProbe(); oled.resetProbe();
+        for (int i = 0; i < 40; i++) bandTick(50);
+        okBool("and there is nothing left to fade in", u8g2.draws.empty(), true);
+    }
+
+    section("band: a notice arriving on a frontend's picture fades in there");
+    {
+        bandReset();
+        memset(logoBin, 0x11, sizeof(logoBin));
+        actPicType = GSC;
+        band_showPicture(0);
+        u8g2.resetProbe(); oled.resetProbe();
+        const unsigned long t0 = g_fakeMillis;
+        band_noteParse((std::string("CMDNOTE,") + NOTE).c_str());
+        unsigned long done = 0;
+        for (int i = 0; i < 100 && !done; i++) { bandTick(25); if (noteLevel == BNOTE_GREY) done = g_fakeMillis; }
+        ok("a grey level at a time, up to half", noteGreys(NOTE), "1 2 3 4 5 6 7 8 ");
+        okBool("over about BNOTE_FADE_MS",
+               done - t0 >= BNOTE_FADE_MS - BNOTE_STEP_MS && done - t0 <= BNOTE_FADE_MS + 100, true);
+        bool inBand = !oled.rects.empty();
+        for (const auto &r : oled.rects)
+            if (r.y != BOOT_BAND_Y || r.h != BOOT_BAND_H || r.x != 0 || r.w != BOOT_PANEL_W) inBand = false;
+        okBool("blacking the band and nothing else", inBand, true);
+
+        u8g2.resetProbe();
+        band_noteParse("CMDNOTE,");
+        for (int i = 0; i < 100; i++) bandTick(25);
+        ok("an empty one fades it back out", noteGreys(NOTE), "7 6 5 4 3 2 1 ");
+        okInt("to nothing", noteLevel, 0);
+
+        // A different notice replaces it the same way: out, then in.
+        band_noteParse((std::string("CMDNOTE,") + NOTE).c_str());
+        for (int i = 0; i < 100; i++) bandTick(25);
+        u8g2.resetProbe();
+        band_noteParse("CMDNOTE,Something else");
+        for (int i = 0; i < 200; i++) bandTick(25);
+        ok("the old one goes out", noteGreys(NOTE), "7 6 5 4 3 2 1 ");
+        ok("before the new one comes in", noteGreys("Something else"), "1 2 3 4 5 6 7 8 ");
+    }
+
+    section("band: the notice waits for the band to be free");
+    {
+        bandReset();
+        memset(logoBin, 0x11, sizeof(logoBin));
+        actPicType = GSC;
+        band_showPicture(0);
+        band_noteParse((std::string("CMDNOTE,") + NOTE).c_str());
+        u8g2.resetProbe();
+        boActive = true; bootHolding = true;
+        boot_outroStart(32, -1);
+        for (int i = 0; i < 20; i++) { g_fakeMillis += 25; band_tick(); }
+        okBool("not while the boot outro has the band", u8g2.find(NOTE) == nullptr, true);
+        boActive = false;
+        busyActive = true;
+        for (int i = 0; i < 20; i++) { g_fakeMillis += 25; band_tick(); }
+        okBool("nor the busy bar", u8g2.find(NOTE) == nullptr, true);
+        busyActive = false;
+        tfState = TF_OUT;
+        for (int i = 0; i < 20; i++) { g_fakeMillis += 25; band_tick(); }
+        okBool("nor a transition", u8g2.find(NOTE) == nullptr, true);
+        tfState = TF_IDLE;
+        for (int i = 0; i < 100; i++) { g_fakeMillis += 25; band_tick(); }
+        okInt("then it fades in", noteLevel, BNOTE_GREY);
+        bootHolding = false;
+    }
+
+    section("band: a core's picture has no band, and the notice waits for a frontend");
+    {
+        bandReset();
+        memset(logoBin, 0x11, sizeof(logoBin));
+        actPicType = GSC;
+        band_showPicture(0);
+        band_noteCommand("CMDCOR,SNES,5");
+        okBool("any drawing command takes the panel", bandShown, false);
+        band_noteParse((std::string("CMDNOTE,") + NOTE).c_str());
+        u8g2.resetProbe(); oled.resetProbe();
+        for (int i = 0; i < 100; i++) bandTick(25);
+        okBool("so a notice set in a game is not drawn over it", u8g2.find(NOTE) == nullptr, true);
+        okBool("and nothing is sent to the panel", oled.displayCalls == 0, true);
+
+        // Back to the menu: it arrives with the picture, whatever the effect.
+        band_noteCommand("CMDBOOTPIC,MENU,5");
+        boot_showAsCore(5);
+        okBool("the menu's picture brings it", u8g2.find(NOTE) != nullptr, true);
+        okInt ("at full grey", noteLevel, BNOTE_GREY);
+        okBool("and the menu is a frontend", bandShown, true);
+
+        // CMDNOTE itself is quiet: the boot screen, the busy bar and the
+        // frontend's picture all stay as they are.
+        bootHolding = true;
+        boot_noteCommand("CMDNOTE,x");
+        okBool("the boot screen still holds", bootHolding, true);
+        band_noteCommand("CMDNOTE,x");
+        okBool("the frontend's picture is still up", bandShown, true);
+        busy_parse("CMDBUSY,1,UPDATING");
+        busy_noteCommand("CMDNOTE,x");
+        okBool("the busy bar runs on", busyActive, true);
+        busy_cancel(); busy_forgetLabel(); bootHolding = false;
+    }
+
+    section("band: the power-on screen is the menu's picture, and the outro goes first");
+    {
+        bandReset();
+        band_noteParse((std::string("CMDNOTE,") + NOTE).c_str());
+        bootHolding = true;
+        lastEffect = -999;
+        boot_showAsCore(EFFECT_FADE);
+        okInt ("nothing transitions", lastEffect, -999);
+        okBool("the menu's picture is up: the power-on screen", bandShown, true);
+        okInt ("with the band not yet the notice's", noteLevel, 0);
+        boot_outroStart(32, 200);
+        bool under = false;
+        for (int i = 0; i < 700 && boActive; i++) {
+            g_fakeMillis += BOOT_BAR_PX_MS;
+            contrast_tick(); transition_tick(); busy_tick();
+            band_tick();                       // before the outro's tick, so a draw here is under it
+            if (u8g2.find(NOTE)) under = true;
+            boot_outroTick();
+        }
+        okBool("the outro runs to its end", boActive, false);
+        okBool("without the notice drawn under it", under, false);
+        for (int i = 0; i < 100; i++) bandTick(25);
+        ok("then the notice fades in", noteGreys(NOTE), "1 2 3 4 5 6 7 8 ");
+        bootHolding = false;
+    }
+
+    section("band: a notice arriving while a Fade goes out makes its fade-in");
+    {
+        bandReset();
+        tfFadeMs = 800; tfBlankMs = 1000;
+        veil_fadeOver(255, 0);
+        memset(logoBin, 0x11, sizeof(logoBin));
+        actPicType = GSC;
+        boot_showAsCore(EFFECT_FADE);
+        okBool("the menu fades", tfState == TF_OUT, true);
+        okBool("composed with no notice", u8g2.find(NOTE) == nullptr, true);
+        band_noteParse((std::string("CMDNOTE,") + NOTE).c_str());
+        u8g2.resetProbe();
+        for (int i = 0; i < 400 && tfState != TF_IDLE; i++) bandTick(10);
+        okBool("the fade is over", tfState == TF_IDLE, true);
+        const auto *d = u8g2.find(NOTE);
+        okBool("composed again at the bottom, notice and all", d != nullptr, true);
+        if (d) okInt("at full grey, fading in with the picture", d->fg, BNOTE_GREY);
+        okInt("so it is up once the picture is", noteLevel, BNOTE_GREY);
+        tfFadeMs = TFADE_MS_DEFAULT; tfBlankMs = TBLANK_MS_DEFAULT;
+        bandReset();
     }
 
     printf("\n\033[1mResults:\033[0m %d passed, %d failed\n\n", passed, failed);

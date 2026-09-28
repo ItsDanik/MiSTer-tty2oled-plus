@@ -653,6 +653,10 @@ ok "the wheel pack and its index agree" "${PACKCHECK}" ""
 # bytes of what renders as static, and it had been showing a transfer error for
 # as long as it has been in the pack. One python pass rather than a pipe per
 # file, which is the difference between a second and a minute.
+#
+# The frontends' pictures, and update_all's, may also be 256x54 - 6912 bytes:
+# the daemon sends those as their top 54 rows and a black band, whatever the
+# file's height (senddata, sendupdateall).
 SHORT="$(python3 - "${ROOT}/pics/banner" <<'EOPY'
 import glob, os, sys
 def decode(b):
@@ -670,11 +674,13 @@ for f in files:
     with open(f, 'rb') as fh:
         body = fh.read().split(b'\n', 3)
     n = len(decode(body[3])) if len(body) > 3 else 0
-    if n != 8192: bad.append(f'{os.path.basename(f)}:{n}')
+    name = os.path.splitext(os.path.basename(f))[0].lower()
+    ok = (8192, 6912) if name in ('menu', 'misterzine', 'degauss', 'update_all') else (8192,)
+    if n not in ok: bad.append(f'{os.path.basename(f)}:{n}')
 print(' '.join(bad))
 EOPY
 )"
-ok "and every banner is a whole 8192-byte picture" "${SHORT}" ""
+ok "and every banner is a whole 8192-byte picture, or a frontend's 6912" "${SHORT}" ""
 
 # The suite's own xxd stand-in, for machines with no real one. It has to agree
 # with the real thing on the pack's "0X1f,0Xa2," spelling, and it did not: it
@@ -978,6 +984,99 @@ PRIORITIZE_USER_BANNERS="yes"
 rm -f "${bannerfolder}/deg.gsc" "${userbannerfolder}/d.gsc" \
       "${bannerfolder}/degauss.gsc" "${userbannerfolder}/degauss.gsc"
 TRANSITION="-1"
+
+# ---------------------------------------------------------------------------
+section "frontends: 54 rows of picture, and the band under it"
+# ---------------------------------------------------------------------------
+# The menu, MisterZine and Degauss keep the boot screen's band for the
+# display's notices: their picture goes out marked ",band", as its top 54
+# rows and 1280 black bytes, whatever height the file is.
+for c in MENU menu MisterZine MISTERZINE misterzine degauss; do
+  frontend_core "${c}"; ok "${c} is a frontend" "${?}" "0"
+done
+for c in NES MENUX misterzin update_all ""; do
+  frontend_core "${c}"; ok "'${c}' is not" "${?}" "1"
+done
+
+# A .gsc of <rows> rows: every byte 11, the last ten rows' ff so the band
+# shows on the wire if it is not blacked. No 0a: the bytes are read back
+# after the command line.
+mkgsc() {  # mkgsc <file> <rows>
+  { printf '#define icon_width 256\n#define icon_height %s\n#\n' "${2}"
+    { head -c $(( (${2} - 10) * 128 )) /dev/zero | tr '\0' '\021'
+      head -c 1280 /dev/zero | tr '\0' '\377'; } | xxd -p; } > "${1}"
+}
+# The bytes after the picture's command line, as hex.
+picbytes() { captured | sed -n '/^CMDCOR/,$p' | tail -n +2 | xxd -p | tr -d '\n'; }
+EXPECT="$( { head -c 6912 /dev/zero | tr '\0' '\021'; head -c 1280 /dev/zero; } | xxd -p | tr -d '\n')"
+
+META_ICON=""; TRANSITION="-2"
+printf '/media/fat/menu.rbf\n' > "${TMP}/STARTPATH"
+mkgsc "${bannerfolder}/misterzine.gsc" 64
+reset_capture
+printf '/media/fat/menu.rbf\n' > "${TMP}/STARTPATH"
+senddata "misterzine" >/dev/null 2>&1
+ok "MisterZine's picture is marked band" "$(captured | grep -a '^CMDCOR' | tr -d '\r')" "CMDCOR,misterzine,-2,band"
+ok "a 256x64 one goes out as its top 54 rows, the band black" "$(picbytes)" "${EXPECT}"
+
+mkgsc "${bannerfolder}/misterzine.gsc" 54
+# A 256x54 file's last ten rows are its picture's, not a band: all 11.
+{ printf '#\n#\n#\n'; head -c 6912 /dev/zero | tr '\0' '\021' | xxd -p; } > "${bannerfolder}/misterzine.gsc"
+reset_capture
+printf '/media/fat/menu.rbf\n' > "${TMP}/STARTPATH"
+senddata "misterzine" >/dev/null 2>&1
+ok "a 256x54 one is padded to a whole 8192 with the band" "$(picbytes)" "${EXPECT}"
+
+mkgsc "${bannerfolder}/degauss.gsc" 64
+reset_capture
+printf '/media/fat/menu.rbf\n' > "${TMP}/STARTPATH"
+senddata "degauss" >/dev/null 2>&1
+ok "Degauss is marked band too" "$(captured | grep -a '^CMDCOR' | tr -d '\r')" "CMDCOR,degauss,-2,band"
+ok "and cut to 54 rows" "$(picbytes)" "${EXPECT}"
+
+mkgsc "${bannerfolder}/MENU.gsc" 64
+BOOTSCREEN_AS_MENU="no"
+reset_capture
+printf '/media/fat/menu.rbf\n' > "${TMP}/STARTPATH"
+senddata "MENU" >/dev/null 2>&1
+ok "the menu's MENU.gsc, with BOOTSCREEN_AS_MENU off, too" "$(captured | grep -a '^CMDCOR' | tr -d '\r')" "CMDCOR,MENU,-2,band"
+ok "cut the same" "$(picbytes)" "${EXPECT}"
+BOOTSCREEN_AS_MENU="yes"
+
+mkgsc "${bannerfolder}/NES.gsc" 64
+reset_capture
+senddata "NES" >/dev/null 2>&1
+ok "a core's picture is not marked" "$(captured | grep -a '^CMDCOR' | tr -d '\r')" "CMDCOR,NES,-2"
+ok "and goes out whole, its bottom rows and all" "$(picbytes)" \
+   "$( { head -c 6912 /dev/zero | tr '\0' '\021'; head -c 1280 /dev/zero | tr '\0' '\377'; } | xxd -p | tr -d '\n')"
+rm -f "${bannerfolder}/misterzine.gsc" "${bannerfolder}/degauss.gsc" \
+      "${bannerfolder}/MENU.gsc" "${bannerfolder}/NES.gsc"
+TRANSITION="-1"
+
+# ---------------------------------------------------------------------------
+section "CMDNOTE: the band's notice, sent when it changes, to firmware that has it"
+# ---------------------------------------------------------------------------
+NOTE_SENT="?"
+reset_capture; FW_VERSION="0.7.0b"; sendnote "TTY2OLED+ update available"
+ok "firmware before 0.7.1b is sent nothing" "$(captured)" ""
+ok "and nothing is taken as told" "${NOTE_SENT}" "?"
+reset_capture; FW_VERSION=""; sendnote "TTY2OLED+ update available"
+ok "nor a display that has not said what it runs" "$(captured)" ""
+reset_capture; FW_VERSION="0.7.1b"; sendnote "TTY2OLED+ update available"
+ok "0.7.1b is told" "$(captured | tr -d '\r')" "CMDNOTE,TTY2OLED+ update available"
+reset_capture; sendnote "TTY2OLED+ update available"
+ok "once" "$(captured)" ""
+reset_capture; sendnote ""
+ok "and when it goes" "$(captured | tr -d '\r')" "CMDNOTE,"
+reset_capture; sendnote ""
+ok "once" "$(captured)" ""
+reset_capture; NOTE_SENT="?"; sendnote ""
+ok "a display that may be holding one is told there is none" "$(captured | tr -d '\r')" "CMDNOTE,"
+reset_capture; sendnote "$(printf 'New,\tone|%s' "$(printf 'x%.0s' {1..60})")"
+line="$(captured | tr -d '\r')"
+ok "control characters out, cut to the band's 51 columns" "${line}" \
+   "CMDNOTE,New,one|$(printf 'x%.0s' {1..43})"
+FW_VERSION=""; NOTE_SENT="?"
 
 # ---------------------------------------------------------------------------
 section "scraped metadata: more fields, and the description after the line"
