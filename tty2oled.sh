@@ -245,7 +245,12 @@ findpicture() {
   PICFILE=""; PICFRAME=""
   core_kind "${core}"
   if [ "${CORE_KIND}" != "arcade" ]; then
-    findbanner "${core}" && PICFILE="${BANNERFILE}"
+    # Degauss is not a core, and its name is looked up whole, as update_all's
+    # is: trimmed, any banner named for a prefix of it (deg.gsc) would stand
+    # in for it instead of the name as text.
+    local mode=""
+    [ "${core}" = "${DEGAUSS_CORE}" ] && mode="exact"
+    findbanner "${core}" "${mode}" && PICFILE="${BANNERFILE}"
     [ -n "${PICFILE}" ]; return
   fi
   if [ "${PRIORITIZE_USER_BANNERS:-yes}" = "yes" ]; then
@@ -593,6 +598,7 @@ checkversion() {
   done
   exec 3<&-
 
+  FW_VERSION="${fwver}"
   if [ -z "${fwver}" ]; then
     echo "tty2oled+ ${TTY2OLED_VERSION:-unknown} (the display did not answer CMDHWINF)"
     dbug "No CMDHWINF reply after ${tries} tokens"
@@ -606,6 +612,24 @@ checkversion() {
     echo "tty2oled: the two ship together. Reflash with:  ./tools/deploy-mister.sh --firmware --flash"
   fi
   dbug "Script version ${TTY2OLED_VERSION:-unknown}, firmware version ${fwver}"
+}
+
+# Is the display's firmware at least <version>? Ours is always N.N.N with a
+# letter or two after it; upstream's is a date with no dots, and an unanswered
+# CMDHWINF is empty - both are "no", which is the safe answer: a command the
+# firmware does not know is drawn on the panel as text.
+FW_VERSION=""
+fw_atleast() {  # fw_atleast 0.7.0
+  local have="${FW_VERSION:-}" want="${1}" h=() w=() i
+  [[ "${have}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)[A-Za-z]*$ ]] || return 1
+  h=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+  [[ "${want}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] || return 1
+  w=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+  for i in 0 1 2; do
+    [ "$((10#${h[i]}))" -gt "$((10#${w[i]}))" ] && return 0
+    [ "$((10#${h[i]}))" -lt "$((10#${w[i]}))" ] && return 1
+  done
+  return 0
 }
 
 # The rest of the startup handshake, run once the first core picture is on the
@@ -854,6 +878,55 @@ sleepmode_pass() {
 }
 
 # ---------------------------------------------------------------------------
+# Degauss: a frontend that is not a core
+# ---------------------------------------------------------------------------
+#
+# MisterZine is launched as a core (MisterZine.mgl), so MiSTer writes its name
+# to CORENAME and its banner is found like any other. Degauss is a Scripts
+# entry: it draws over the menu core and CORENAME says MENU the whole time.
+# All MiSTer writes is the selection of the script - CURRENTPATH "degauss",
+# FULLPATH "Scripts" - which outlives it, so the process is the only sign.
+# While the menu core is up and Degauss runs, the daemon takes "degauss" for
+# the core: degauss.gsc by that exact name, else the name as text. When it
+# exits the core is MENU again, and the menu's picture goes back up like any
+# other core change. A game it launches changes CORENAME as usual.
+DEGAUSS_CORE="degauss"
+
+# Is the Degauss frontend running? Its binary, by argv[0]:
+# Scripts/.config/degauss/degauss, or Scripts/.degauss/degauss where v0.1.0
+# and v0.2.0 installed it. Only argv[0]: its own --config argument names
+# degauss/degauss.toml, and so would an editor open on that file. The grep
+# only narrows the field (busybox grep has no -z to anchor on an argument);
+# the bracket keeps it from matching its own command line.
+degauss_running() {
+  local f="" a0=""
+  for f in $(grep -lsa -e '[d]egauss/degauss' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
+    a0=""
+    IFS= read -r -d '' a0 2>/dev/null <"${f}"
+    case "${a0}" in
+      */.config/degauss/degauss|*/.degauss/degauss) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# The core as far as the display is concerned, into CURCORE: CORENAME, except
+# that the menu core with Degauss running is Degauss.
+readcore() {
+  CURCORE="$(<"${corenamefile}")"
+  if [ "${CURCORE}" = "MENU" ] && degauss_running; then
+    CURCORE="${DEGAUSS_CORE}"
+  fi
+}
+
+# Could Degauss start or stop now? Neither touches a state file the daemon
+# waits on, so while this holds - the menu is up, or Degauss is - the waits
+# time out every UPDATE_ALL_POLL seconds to look again.
+degauss_possible() {
+  [ "${oldcore}" = "MENU" ] || [ "${oldcore}" = "${DEGAUSS_CORE}" ]
+}
+
+# ---------------------------------------------------------------------------
 # update_all screen
 # ---------------------------------------------------------------------------
 
@@ -952,8 +1025,24 @@ selfupdate_running() {
   # has not been updated since still has update_tty2oledplus.sh in Scripts.
   # Where it runs from does not matter - the install folder, from the
   # launcher, since 0.6.3b - which is why this matches the name, not a path.
-  grep -qsa -e '[t]ty2oledplus_update' -e '[u]pdate_tty2oledplus' \
-       "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null
+  #
+  # Not one that was already running when this daemon started: that is the
+  # updater that started it, in its last second - its finish screen is up,
+  # and "Updating" going back over it would say the opposite.
+  local p
+  for p in $(selfupdate_pids); do
+    case " ${SELFUPDATE_OURS:-} " in *" ${p} "*) continue ;; esac
+    return 0
+  done
+  return 1
+}
+
+selfupdate_pids() {
+  local f p
+  for f in $(grep -lsa -e '[t]ty2oledplus_update' -e '[u]pdate_tty2oledplus' \
+               "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
+    p="${f%/cmdline}"; printf '%s ' "${p##*/}"
+  done
 }
 
 # The updater's own screen: no banner to show - it may be replaced mid-run -
@@ -992,33 +1081,215 @@ selfupdate_pass() {
   return 0
 }
 
-# One pass of the main loop while update_all runs: show its screen once, then
-# wait. Returns 1 when it is not running; the first such pass after it was
-# clears oldcore and the metadata line, so the core and game go out again in
-# full rather than being judged unchanged.
+# ---------------------------------------------------------------------------
+# update_all's own words, under the bar
+# ---------------------------------------------------------------------------
+#
+# update_all (2.x) copies everything it prints to the screen into
+# /tmp/update_all_print.log as it prints it, flushed line by line - the
+# downloader's output too, which it relays from the child process as it
+# arrives. So the file's last useful line is what the MiSTer's own screen is
+# saying right now, and it goes under the label as the status line
+# (CMDBUSYLINE, firmware 0.7.0b and later). The end of the run is in it as
+# well: "Success! ..." or "There were some errors in the Updaters.", after
+# the "Update All <version> ... <run time>s" summary.
+#
+# update_all deletes and recreates the file when it starts, but not at once -
+# its launcher runs first - so until then the file is the previous run's, and
+# that one ends in a verdict. It is trusted only once it differs, by inode or
+# mtime, from what was there when update_all was first seen.
+UA_PRINTLOG="${UA_PRINTLOG:-/tmp/update_all_print.log}"
+# Written when update_all exits; where the verdict is looked for if the print
+# log had none - an update_all too old to write one.
+UA_FINALLOG="${UA_FINALLOG:-/media/fat/Scripts/.config/update_all/update_all.log}"
+UA_LINE_COLS=51     # the 5x7 status line's width, 256 pixels / 5
+
+# Milliseconds, for the finish screen's minimum time.
+ms_now() {
+  local t="${EPOCHREALTIME:-}"
+  if [ -n "${t}" ]; then t="${t//[.,]/}"; echo "$(( 10#${t} / 1000 ))"
+  else echo "$(( $(date +%s) * 1000 ))"; fi
+}
+
+ua_logref() { stat -c '%i %Y' "${UA_PRINTLOG}" 2>/dev/null; }
+
+# The last useful line, and the verdict and run time if the run is over:
+# three lines out - verdict (ok, failed or empty), run time, line. Rules,
+# blank lines and the downloader's progress dots are not useful; nor are its
+# DUPLICATED warnings, which come in hundreds and say nothing about progress.
+ua_parselog() {
+  tr '\r' '\n' | LC_ALL=C tr -cd '\n\040-\176' | awk '
+    {
+      sub(/^[ \t]+/, ""); sub(/[ \t]+$/, "")
+      if ($0 ~ /^Success!/) v = "ok"
+      else if ($0 ~ /^There were some errors in the Updaters/) v = "failed"
+      if ($0 ~ /^Update All / && match($0, /[0-9][0-9:]*\.[0-9]+s/)) {
+        rt = substr($0, RSTART, RLENGTH); sub(/\.[0-9]+s$/, "", rt)
+      }
+      if ($0 == "" || $0 ~ /^[-#=*._ ]+$/ || $0 ~ /^DUPLICATED:/) next
+      sub(/^- /, "")
+      last = $0
+    }
+    END { print v; print rt; print last }'
+}
+
+# Into UA_VERDICT, UA_RUNTIME, UA_LINE; latches UA_MAIN once update_all has
+# printed its "Sequence:" - the main run has begun, and from there to the end
+# is all update, downloader or not.
+ua_readlog() {
+  UA_VERDICT=""; UA_RUNTIME=""; UA_LINE=""
+  [ -r "${UA_PRINTLOG}" ] || return 0
+  if [ "${UA_LOG_FRESH:-no}" != "yes" ]; then
+    [ "$(ua_logref)" = "${UA_LOG_REF:-}" ] && return 0
+    UA_LOG_FRESH="yes"
+  fi
+  [ "${UA_MAIN:-no}" = "yes" ] || ! grep -qs '^Sequence:' "${UA_PRINTLOG}" || UA_MAIN="yes"
+  { IFS= read -r UA_VERDICT; IFS= read -r UA_RUNTIME; IFS= read -r UA_LINE; } \
+    < <(tail -c 8192 "${UA_PRINTLOG}" | ua_parselog)
+}
+
+# update_all has exited without a verdict in the print log: its full log, if
+# this run wrote it.
+ua_readfinal() {
+  [ -r "${UA_FINALLOG}" ] || return 0
+  [ "$(stat -c %Y "${UA_FINALLOG}" 2>/dev/null || echo 0)" -ge "${UA_SEEN_AT:-0}" ] || return 0
+  IFS= read -r UA_VERDICT < <(tail -c 8192 "${UA_FINALLOG}" | ua_parselog)
+}
+
+# Shortened to the status line's width: a path loses its beginning, since the
+# file name is the part that says something; anything else its end.
+ua_shorten() {
+  local s="${1}" max="${UA_LINE_COLS}"
+  if [ "${#s}" -le "${max}" ]; then printf '%s' "${s}"; return; fi
+  case "${s}" in
+    */*) printf '...%s' "${s: -$((max - 3))}" ;;
+    *)   printf '%s...' "${s:0:$((max - 3))}" ;;
+  esac
+}
+
+# The status line under the busy label. Only what changed goes out, and only
+# to firmware that knows the command - to any other it would be drawn as text.
+sendbusyline() {
+  local line; line="$(ua_shorten "${1}")"
+  [ "${line}" = "${BUSYLINE_LAST:-}" ] && return 0
+  fw_atleast 0.7.0 || return 0
+  BUSYLINE_LAST="${line}"
+  dbug "Sending: CMDBUSYLINE,${line}"
+  echo "CMDBUSYLINE,${line}" >${TTYDEV}
+  cmdwait
+}
+
+# The finish screen: "Update Complete" (or failed) in place of the label, the
+# bar left to run off, and the run time under it. It stays for at least
+# UPDATE_DONE_SECS, counted from here - see ua_holddone.
+ua_done() {
+  UA_DONE_HEAD="${UPDATE_DONE_TEXT:-Update Complete}"
+  UA_DONE_LINE="${UA_RUNTIME:+Finished in ${UA_RUNTIME}}"
+  if [ "${UA_VERDICT}" = "failed" ]; then
+    UA_DONE_HEAD="${UPDATE_FAILED_TEXT:-Update Failed}"
+    UA_DONE_LINE="Some updaters failed - see the log"
+  fi
+  dbug "update_all is done: ${UA_VERDICT}"
+  ua_showdone
+  UA_DONE_AT="$(ms_now)"
+}
+
+ua_showdone() {
+  # The effect is for a panel that is showing the banner; over the busy
+  # screen the firmware swaps the label in place and ignores it.
+  sendbusy 0 "${UA_DONE_HEAD}" "${TRANSITION}"
+  UPDATEALL_BUSY="no"
+  BUSYLINE_LAST=""
+  sendbusyline "${UA_DONE_LINE}"
+}
+
+# Can this display show the finish screen, and is it wanted?
+ua_finishes() {
+  fw_atleast 0.7.0 && [ "${UPDATE_DONE_SECS:-3}" -gt 0 ] 2>/dev/null
+}
+
+# update_all has gone: whatever is left of the finish screen's minimum time.
+# If it outlasted that - the log viewer it offers at the end - nothing.
+ua_holddone() {
+  [ -n "${UA_DONE_AT:-}" ] || return 0
+  local left=$(( ${UPDATE_DONE_SECS:-3} * 1000 - ( $(ms_now) - UA_DONE_AT ) ))
+  UA_DONE_AT=""
+  [ "${left}" -gt 0 ] || return 0
+  dbug "Holding the finish screen ${left}ms more"
+  sleep "$(printf '%d.%03d' $((left / 1000)) $((left % 1000)))"
+}
+
+# How long to wait between looks: a second while the status line is following
+# the log, so it keeps up; UPDATE_ALL_POLL otherwise.
+ua_poll() {
+  local p="${UPDATE_ALL_POLL:-2}"
+  if [ "${UPDATEALL_BUSY:-no}" = "yes" ] && [ "${UPDATE_ALL_DETAILS:-yes}" = "yes" ] \
+     && [ "${p}" -gt 1 ] 2>/dev/null; then
+    p=1
+  fi
+  echo "${p}"
+}
+
+# One pass of the main loop while update_all runs. Returns 1 when it is not
+# running; the first such pass after it was clears oldcore and the metadata
+# line, so the core and game go out again in full rather than being judged
+# unchanged.
+#
+# The banner while update_all is only asking (its countdown and settings
+# screen); the label and bar while it updates - the downloader, and on a
+# display that can show the finish, everything from "Sequence:" to the end;
+# then "Update Complete" for at least UPDATE_DONE_SECS, however soon or late
+# update_all itself exits after printing it.
 updateall_pass() {
   if updateall_running; then
+    if [ "${UA_RUN:-no}" != "yes" ]; then
+      UA_RUN="yes"; UA_MAIN="no"; UA_DONE_AT=""; UA_LOG_FRESH="no"
+      UA_LOG_REF="$(ua_logref)"; UA_SEEN_AT="$(date +%s)"
+    fi
     if [ "${UPDATEALL_SHOWN:-no}" != "yes" ]; then
       dbug "update_all is running"
       sendupdateall
       UPDATEALL_SHOWN="yes"
       UPDATEALL_BUSY="no"
+      # A display that reset during the finish screen gets it back.
+      [ -n "${UA_DONE_AT}" ] && ua_showdone
     fi
-    # The bar follows the downloader, which update_all may run several times
-    # over - its own update, then the main run.
-    if downloader_running; then
-      # The download is the part that takes minutes, so it gets the panel:
-      # UPDATING above the bar, the banner gone. The firmware ignores a repeat
-      # of the same label, so re-sending it costs a command and nothing else.
-      [ "${UPDATEALL_BUSY:-no}" = "yes" ] || { sendbusy 1 "${UPDATE_ALL_TEXT:-Updating System ...}"; UPDATEALL_BUSY="yes"; }
-    elif [ "${UPDATEALL_BUSY:-no}" = "yes" ]; then
-      # Back to the banner: the label blacked it out, so it has to go again.
-      sendbusy 0; UPDATEALL_BUSY="no"; sendupdateall
+    if [ -z "${UA_DONE_AT}" ]; then
+      ua_readlog
+      # Older firmware keeps the older screens: the bar with the downloader.
+      fw_atleast 0.7.0 || UA_MAIN="no"
+      if [ -n "${UA_VERDICT}" ] && ua_finishes; then
+        ua_done
+      # The bar follows the downloader, which update_all may run more than
+      # once - its own update, then the main run.
+      elif downloader_running || [ "${UA_MAIN}" = "yes" ]; then
+        # The download is the part that takes minutes, so it gets the panel:
+        # UPDATING above the bar, the banner gone. The firmware ignores a
+        # repeat of the same label, so re-sending it costs a command and
+        # nothing else.
+        if [ "${UPDATEALL_BUSY:-no}" != "yes" ]; then
+          sendbusy 1 "${UPDATE_ALL_TEXT:-Updating System ...}"
+          UPDATEALL_BUSY="yes"
+          BUSYLINE_LAST=""
+        fi
+        [ "${UPDATE_ALL_DETAILS:-yes}" = "yes" ] && sendbusyline "${UA_LINE}"
+      elif [ "${UPDATEALL_BUSY:-no}" = "yes" ]; then
+        # Back to the banner: the label blacked it out, so it has to go again.
+        sendbusy 0; UPDATEALL_BUSY="no"; sendupdateall
+      fi
     fi
-    sleep "${UPDATE_ALL_POLL:-2}"
+    sleep "$(ua_poll)"
     return 0
   fi
   if [ "${UPDATEALL_SHOWN:-no}" = "yes" ]; then
+    # It may have printed its verdict and exited between two looks.
+    if [ -z "${UA_DONE_AT:-}" ] && ua_finishes \
+       && { [ "${UPDATEALL_BUSY:-no}" = "yes" ] || [ "${UA_MAIN:-no}" = "yes" ]; }; then
+      ua_readlog
+      [ -n "${UA_VERDICT}" ] || ua_readfinal
+      [ -n "${UA_VERDICT}" ] && ua_done
+    fi
+    ua_holddone
     dbug "update_all finished, back to the core"
     [ "${UPDATEALL_BUSY:-no}" = "yes" ] && sendbusy 0
     UPDATEALL_SHOWN="no"
@@ -1026,6 +1297,7 @@ updateall_pass() {
     oldcore=""
     META_WIRE_LAST=""
   fi
+  UA_RUN="no"; UA_DONE_AT=""
   return 1
 }
 
@@ -1043,6 +1315,7 @@ fi                                                        # end if command line 
 
 # Let's go
 if [ -c "${TTYDEV}" ]; then # check for tty device
+  SELFUPDATE_OURS="$(selfupdate_pids)"            # the updater that started us, if any
   serialinit													# Line settings, contrast, rotation
   while true; do											# main loop
     # The display can be unplugged, re-enumerated or reset under a running
@@ -1057,7 +1330,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
         # own updater over that - it is about to stop this daemon.
         selfupdate_pass && { deferred_setup; continue; }
         updateall_pass && { deferred_setup; continue; }
-        newcore=$(<${corenamefile})				  # get CORENAME
+        readcore; newcore="${CURCORE}"			  # get CORENAME, or Degauss over MENU
         if [ "${SHOW_METADATA}" = "yes" ]; then
           # Metadata mode. Loading a ROM does not modify /tmp/CORENAME, so
           # watching that file alone never notices a game change - which is
@@ -1080,10 +1353,13 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
           # the watch list was built - GAMEID only appears once a game with a
           # known CRC is loaded. A wake with nothing changed costs one cheap
           # rebuild and no serial traffic, because sendmeta de-duplicates.
+          # Shorter while Degauss could come or go, which changes none of them.
+          mpoll="${METADATA_POLL:-5}"
+          degauss_possible && mpoll="${UPDATE_ALL_POLL:-2}"
           if [ "${debug}" = "false" ]; then
-            inotifywait -qq -t "${METADATA_POLL:-5}" -e modify,create,moved_to ${metawatch}
+            inotifywait -qq -t "${mpoll}" -e modify,create,moved_to ${metawatch}
           else
-            inotifywait -t "${METADATA_POLL:-5}" -e modify,create,moved_to ${metawatch}
+            inotifywait -t "${mpoll}" -e modify,create,moved_to ${metawatch}
           fi
         else
           # Upstream path, unchanged.
@@ -1099,7 +1375,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
             # Anything but a timeout (an event, or inotifywait failing) ends
             # the wait as it always did.
             upwait=""
-            { [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] || [ "${SELF_UPDATE_SCREEN:-yes}" = "yes" ]; } \
+            { [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] || [ "${SELF_UPDATE_SCREEN:-yes}" = "yes" ] || degauss_possible; } \
               && upwait="-t ${UPDATE_ALL_POLL:-2}"
             while true; do
               if [ "${debug}" = "false" ]; then
@@ -1110,6 +1386,9 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
               [ "$?" -eq 2 ] || break
               updateall_running && break
               selfupdate_running && break
+              if degauss_possible; then
+                readcore; [ "${CURCORE}" = "${oldcore}" ] || break
+              fi
             done
 	  #else
           #  dbug "Core not changed!"

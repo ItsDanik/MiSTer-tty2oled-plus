@@ -70,11 +70,22 @@ if you have stored one.
 bar](docs/img/boot.png)
 
 **While an update runs** the panel says so instead of leaving stale artwork up,
-whether it is `update_all` or tty2oled+ updating itself. Those screens arrive
-with the same transition everything else uses; the bar that runs during the
-download simply appears, since by then nothing is being replaced.
+whether it is `update_all` or tty2oled+ updating itself. Under the message, in
+small grey letters, is what the update is doing right now - for `update_all`
+the last line it printed on the MiSTer's screen, for tty2oled+ each step,
+including a warning just before the display's firmware is flashed. Those
+screens arrive with the same transition everything else uses; the bar that
+runs during the download simply appears, since by then nothing is being
+replaced.
 
-![The message "Updating System ..." above the sweep bar](docs/img/busy.png)
+![The message "Updating System ..." with the file being fetched under it,
+above the sweep bar](docs/img/busy.png)
+
+When it has finished the message becomes **Update Complete** (or **Update
+Failed**) and stays at least three seconds before the core's picture comes
+back.
+
+![The message "Update Complete"](docs/img/busy-done.png)
 
 Pictures cross-fade by default, and the panel dims itself after a couple of
 minutes of nothing happening, waking on the next thing the MiSTer sends.
@@ -348,6 +359,10 @@ sent over when it restarts, so nothing needs reflashing.
 | `BOOTSCREEN_AS_MENU` | `yes` | The boot screen doubles as the menu's picture. `no` shows the artwork pack's `MENU` picture instead. |
 | `UPDATE_ALL_SCREEN` | `yes` | Say so on the panel while `update_all` runs. |
 | `UPDATE_ALL_TEXT` | `Updating System ...` | What it says while the download is running. |
+| `UPDATE_ALL_DETAILS` | `yes` | Under that, the last line `update_all` printed on the MiSTer's screen. |
+| `UPDATE_DONE_TEXT` | `Update Complete` | What the message becomes when an update has finished. |
+| `UPDATE_FAILED_TEXT` | `Update Failed` | ...or when it reported errors. |
+| `UPDATE_DONE_SECS` | `3` | The least time that stays up before the core comes back. `0` skips it. |
 | `SELF_UPDATE_SCREEN` | `yes` | The same, while tty2oled+ updates itself. |
 | `ROTATE` | `no` | Turn the whole display 180°. |
 | `USE_NAMES_TXT` | `yes` | Name cores as your MiSTer menu names them. |

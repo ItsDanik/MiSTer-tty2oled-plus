@@ -2953,6 +2953,149 @@ int main() {
         tfFadeMs = TFADE_MS_DEFAULT; tfBlankMs = TBLANK_MS_DEFAULT;
     }
 
+    section("busy bar: a status line under the label, and the finish");
+    {
+        auto at = [](unsigned long ms) { g_fakeMillis += ms; contrast_tick(); transition_tick(); };
+        auto rowsCleared = []() {
+            int h = -1;
+            for (const auto &r : oled.rects)
+                if (r.x == 0 && r.y == 0 && r.w == BOOT_PANEL_W && r.color == SSD1322_BLACK) h = r.h;
+            return h;
+        };
+        busy_cancel(); busy_forgetLabel();
+        transition_cancel();
+        tfState = TF_IDLE;
+
+        // The geometry, off the band: the line's rows and a gap, then the bar.
+        okInt ("the line's first row",           BUSY_LINE_TOP, BUSY_LINE_Y - BUSY_LINE_ASC + 1);
+        okInt ("its descent, then BUSY_GAP_LINE blank rows, then the band",
+               BUSY_LINE_Y + 1 + BUSY_GAP_LINE + 1, BOOT_BAND_Y);
+        okBool("the whole line fits the panel's 51 columns of 5x7", 51 * 5 <= BOOT_PANEL_W, true);
+
+        busy_parse("CMDBUSY,1,Updating System ...");
+        u8g2.resetProbe();
+        int bareY = -1;
+        busy_forgetLabel(); busy_cancel();
+        busy_parse("CMDBUSY,1,Updating System ...");
+        for (const auto &d : u8g2.draws) if (d.text == "Updating System ...") bareY = d.y;
+        for (int i = 0; i < 6; i++) { g_fakeMillis += BOOT_BAR_PX_MS; busy_tick(); }
+        int head = busyHead;
+
+        oled.resetProbe(); u8g2.resetProbe();
+        busy_lineParse("CMDBUSYLINE,SECTION: jtcores");
+        ok    ("the line is drawn", busyLine, "SECTION: jtcores");
+        const FakeU8g2::Draw *label = nullptr, *line = nullptr;
+        for (const auto &d : u8g2.draws) {
+            if (d.text == "Updating System ...") label = &d;
+            if (d.text == "SECTION: jtcores")   line  = &d;
+        }
+        okBool("with the label redrawn above it", label && line, true);
+        if (label && line) {
+            okInt ("on its baseline", line->y, BUSY_LINE_Y);
+            okInt ("in the small font", line->charW, 5);
+            okInt ("centred", line->x, (BOOT_PANEL_W - 16 * 5) / 2);
+            okBool("in grey, not white", line->fg == BUSY_LINE_GREY && BUSY_LINE_GREY < SSD1322_WHITE, true);
+            okBool("the label moves up, clear of it", label->y < bareY && label->y < BUSY_LINE_TOP, true);
+            okInt ("and is white", label->fg, SSD1322_WHITE);
+        }
+        okInt ("only the rows above the band are cleared", rowsCleared(), BOOT_BAND_Y);
+        okBool("the bar keeps its place", busyActive && busyHead == head, true);
+
+        u8g2.resetProbe();
+        busy_lineParse("CMDBUSYLINE,SECTION: jtcores");
+        okInt ("the same line again draws nothing", u8g2.printCalls, 0);
+
+        // Longer than the buffer: kept to BUSY_LINE_MAX, from the left.
+        std::string longLine = "CMDBUSYLINE," + std::string(100, 'x');
+        busy_lineParse(longLine.c_str());
+        okInt ("a long line is cut to the buffer", (long)strlen(busyLine), BUSY_LINE_MAX);
+        okInt ("and starts at the left edge", u8g2.draws.back().x, 0);
+
+        // Empty takes it down, and the label goes back to the middle.
+        u8g2.resetProbe();
+        busy_lineParse("CMDBUSYLINE,");
+        okInt ("an empty line removes it", (long)strlen(busyLine), 0);
+        okBool("and the label is centred over the band again",
+               u8g2.draws.size() == 1 && u8g2.draws[0].y == bareY, true);
+
+        // A drawing command takes the screen, the line with it.
+        busy_lineParse("CMDBUSYLINE,Installing scripts");
+        busy_noteCommand("CMDCOR,nes,-2");
+        okInt ("a picture forgets the line", (long)strlen(busyLine), 0);
+        u8g2.resetProbe();
+        busy_lineParse("CMDBUSYLINE,Installing scripts");
+        okInt ("and a line with no busy screen is not drawn", u8g2.printCalls, 0);
+
+        // A quiet command does not.
+        busy_parse("CMDBUSY,1,Updating System ...");
+        busy_lineParse("CMDBUSYLINE,Installing scripts");
+        busy_noteCommand("CMDCON,120");
+        ok    ("a setting leaves it", busyLine, "Installing scripts");
+        busy_noteCommand("CMDBUSYLINE,next");
+        ok    ("and so does the line command itself", busyLine, "Installing scripts");
+
+        // A new label is a new screen, with no detail until one is sent.
+        busy_parse("CMDBUSY,1,Updating TTY2OLED+...");
+        okInt ("a new label clears the line", (long)strlen(busyLine), 0);
+
+        // The finish, on a running bar: the label changes, the band is left
+        // to the comet, which runs its cycle off the edge.
+        busy_lineParse("CMDBUSYLINE,Flashing");
+        for (int i = 0; i < 6; i++) { g_fakeMillis += BOOT_BAR_PX_MS; busy_tick(); }
+        oled.resetProbe(); u8g2.resetProbe();
+        busy_parse("CMDBUSY,0,Update Complete");
+        ok    ("CMDBUSY,0,<label> changes the label", u8g2.lastPrint, "Update Complete");
+        okInt ("and drops the line", (long)strlen(busyLine), 0);
+        okInt ("above the band only", rowsCleared(), BOOT_BAND_Y);
+        okBool("the bar finishes its cycle", busyActive && busyStopping, true);
+        for (int i = 0; i < 1000 && busyActive; i++) { g_fakeMillis += BOOT_BAR_PX_MS; busy_tick(); }
+        okBool("and stops", busyActive, false);
+        u8g2.resetProbe();
+        busy_parse("CMDBUSY,0,Update Complete");
+        okInt ("the same finish again draws nothing", u8g2.printCalls, 0);
+        busy_lineParse("CMDBUSYLINE,tty2oled+ 0.7.0b");
+        ok    ("a line can follow it", u8g2.lastPrint, "tty2oled+ 0.7.0b");
+        okBool("with no bar", busyActive, false);
+
+        // The finish on a panel that is not the busy screen - the display
+        // has just been reset by a flash - is a whole new screen, no bar.
+        busy_cancel(); busy_forgetLabel();
+        oled.resetProbe(); u8g2.resetProbe();
+        busy_parse("CMDBUSY,0,Update Complete");
+        ok    ("after a reset it is drawn", u8g2.lastPrint, "Update Complete");
+        okInt ("over the whole panel", rowsCleared(), BOOT_PANEL_H);
+        okBool("with no bar started", busyActive, false);
+
+        // Without a label, CMDBUSY,0 is what it always was.
+        busy_parse("CMDBUSY,1,Updating System ...");
+        u8g2.resetProbe();
+        busy_parse("CMDBUSY,0");
+        okInt ("a bare CMDBUSY,0 draws nothing", u8g2.printCalls, 0);
+        okBool("and lets the bar finish", busyStopping, true);
+        ok    ("keeping the label", busyLabel, "Updating System ...");
+
+        // A line that arrives mid-transition waits for it: the transition
+        // redraws the frame from its own copy every step.
+        busy_cancel(); busy_forgetLabel();
+        tfFadeMs = 1600; tfBlankMs = 500;
+        fadeMs = 0; contrast = 200; contrast_jump(200); veil_fadeOver(255, 0);
+        busy_parse("CMDBUSY,1,Updating TTY2OLED+...,-2");
+        okBool("the label transitions in", tfState == TF_OUT, true);
+        u8g2.resetProbe();
+        busy_lineParse("CMDBUSYLINE,Downloading");
+        okInt ("a line meanwhile is not drawn yet", u8g2.printCalls, 0);
+        for (int i = 0; i < 400 && tfState != TF_IDLE; i++) { at(10); busy_tick(); }
+        okBool("the transition ends", tfState == TF_IDLE, true);
+        busy_tick();
+        okBool("and the line is drawn after it", u8g2.find("Downloading") != nullptr, true);
+        okBool("once", busyTextDirty, false);
+
+        busy_cancel(); busy_forgetLabel();
+        transition_cancel();
+        tfSlideDX = tfSlideDY = 0;
+        tfFadeMs = TFADE_MS_DEFAULT; tfBlankMs = TBLANK_MS_DEFAULT;
+    }
+
     section("CMDMSG: a message that arrives like a picture");
     {
         // The update_all screen whenever the artwork pack has no

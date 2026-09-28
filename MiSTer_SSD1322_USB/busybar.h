@@ -40,7 +40,23 @@
 void oled_setfont(int font);
 #define BUSY_LABEL_FONT 2
 
+// The status line: what the update is doing right now, in the 5x7 font under
+// the label - update_all's last line of output, or the updater's own step.
+// 51 characters fit across the panel. Grey, so the label stays the message
+// and this reads as the detail. Its baseline leaves BUSY_GAP_LINE blank rows
+// above the band (the 5x7 font's one row of descent included); with a line
+// up, the label is centred in the rows above it instead of above the band.
+#define BUSY_LINE_FONT  0
+#define BUSY_LINE_GREY  10
+#define BUSY_LINE_ASC   6                                  // 5x7: rows above the baseline
+#define BUSY_GAP_LINE   3                                  // blank rows between it and the band
+#define BUSY_LINE_Y     (BOOT_BAND_Y - BUSY_GAP_LINE - 2)  // 49: baseline; descent is row 50
+#define BUSY_LINE_TOP   (BUSY_LINE_Y - BUSY_LINE_ASC + 1)  // 44: its first row
+#define BUSY_LINE_MAX   64
+
 char          busyLabel[33] = "";      // the message drawn above the band, if any
+char          busyLine[BUSY_LINE_MAX + 1] = "";   // the status line under it, if any
+bool          busyTextDirty = false;  // label or line changed during a transition
 bool          busyActive   = false;   // the bar is running
 bool          busyStopping = false;   // ...and finishing its cycle
 int           busyHead     = 0;       // the comet's head, in pixels
@@ -63,22 +79,56 @@ unsigned long busyLast     = 0;       // when it last moved
 // number - the parsers clamp anything below -2 up to -1.
 #define BUSY_NO_EFFECT (-99)
 
+// The label and the status line, into rows the caller has already blacked.
+void busy_composeText(const char *label) {
+  oled_setfont(BUSY_LABEL_FONT);
+  int w = u8g2.getUTF8Width(label);
+  int x = (DispWidth - w) / 2;
+  if (x < 0) x = 0;
+  // Centred in the picture area, not the panel: the band is the bar's - and
+  // with a status line, in what is above that.
+  int area = busyLine[0] ? BUSY_LINE_TOP : BOOT_BAND_Y;
+  u8g2.setCursor(x, (area + u8g2.getFontAscent()) / 2);
+  u8g2.print(label);
+  if (!busyLine[0]) return;
+  oled_setfont(BUSY_LINE_FONT);
+  // Centred like the label; a line too long for the panel starts at the left
+  // edge and loses its end rather than its beginning. The daemon shortens
+  // paths from the left before they get here, so that is rare.
+  w = u8g2.getUTF8Width(busyLine);
+  x = (DispWidth - w) / 2;
+  if (x < 0) x = 0;
+  u8g2.setForegroundColor(BUSY_LINE_GREY);
+  u8g2.setCursor(x, BUSY_LINE_Y);
+  u8g2.print(busyLine);
+  u8g2.setForegroundColor(SSD1322_WHITE);
+}
+
 void busy_showLabel(const char *label, int effect) {
 #ifdef HAS_METADISPLAY
   bool fade = (effect != BUSY_NO_EFFECT);
   if (fade) meta_beginTransitionText(effect);   // the old picture, while it is there
 #endif
   oled.fillRect(0, 0, DispWidth, BOOT_PANEL_H, SSD1322_BLACK);
-  oled_setfont(BUSY_LABEL_FONT);
-  int w = u8g2.getUTF8Width(label);
-  int x = (DispWidth - w) / 2;
-  if (x < 0) x = 0;
-  // Centred in the picture area, not the panel: the band is the bar's.
-  u8g2.setCursor(x, (BOOT_BAND_Y + u8g2.getFontAscent()) / 2);
-  u8g2.print(label);
+  busy_composeText(label);
+  busyTextDirty = false;
 #ifdef HAS_METADISPLAY
   if (fade) { meta_transitionToBuffer(effect); return; }
 #endif
+  oled.display();
+}
+
+// The label or the line changed on a screen that is already up: redraw the
+// rows above the band and leave the band alone - the bar may be mid-sweep, or
+// finishing its last cycle under "Update Complete". A transition in progress
+// redraws the whole frame from its own copy on every step, so a change that
+// arrives during one waits for busy_tick to find it idle.
+void busy_redrawText(void) {
+  if (tfState != TF_IDLE) { busyTextDirty = true; return; }
+  busyTextDirty = false;
+  if (!busyLabel[0]) return;
+  oled.fillRect(0, 0, DispWidth, BOOT_BAND_Y, SSD1322_BLACK);
+  busy_composeText(busyLabel);
   oled.display();
 }
 
@@ -104,6 +154,8 @@ void busy_cancel(void) {
 // CMDBUSY with the same label has to draw it again.
 void busy_forgetLabel(void) {
   busyLabel[0] = '\0';
+  busyLine[0] = '\0';
+  busyTextDirty = false;
 }
 
 // CMDBUSY,<0|1>[,<label>[,<effect>]]
@@ -113,30 +165,64 @@ void busy_forgetLabel(void) {
 // keep working. It is unambiguous despite that: metasanitize strips commas
 // from everything the daemon puts on the wire, so a comma after the label has
 // to be one of ours.
+//
+// CMDBUSY,0 with a label is the end of the job: "Update Complete" replaces
+// the label, the status line goes, and the bar finishes the cycle it is in.
+// On a screen that is already the busy screen only the rows above the band
+// are redrawn, so the comet can run off the edge undisturbed; on anything
+// else - the display just reset by a flash - it is a new screen, drawn (or
+// transitioned) whole, with no bar. Firmware before 0.7.0b ignores the label
+// and only stops the bar.
 void busy_parse(const char *cmd) {
   const char *p = strchr(cmd, ',');
-  if (!p || atoi(p + 1) <= 0) { busy_stop(); return; }
-  const char *label = strchr(p + 1, ',');
+  bool on = p && atoi(p + 1) > 0;
+  const char *label = p ? strchr(p + 1, ',') : nullptr;
   if (label && label[1]) {
     // A third comma, if there is one, ends the label and begins the effect.
     const char *eff = strrchr(label + 1, ',');
     size_t len = eff ? (size_t)(eff - (label + 1)) : strlen(label + 1);
     if (len > sizeof(busyLabel) - 1) len = sizeof(busyLabel) - 1;
+    int effect = eff ? effect_clamp(atoi(eff + 1)) : BUSY_NO_EFFECT;
     // A label restarts the bar from the left, under a freshly drawn message;
     // repeating the same command must not, or a poll every couple of seconds
     // would redraw the panel and reset the sweep each time. The effect is not
     // part of that comparison: the same message is the same screen however it
     // was asked to arrive.
     if (strncmp(busyLabel, label + 1, len) != 0 || strlen(busyLabel) != len) {
+      bool screenUp = busyLabel[0] != '\0';
       memcpy(busyLabel, label + 1, len);
       busyLabel[len] = '\0';
-      busy_cancel();                                     // so busy_start() rewinds it
-      busy_showLabel(busyLabel, eff ? effect_clamp(atoi(eff + 1)) : BUSY_NO_EFFECT);
+      busyLine[0] = '\0';                                 // a new message, no detail yet
+      if (on) {
+        busy_cancel();                                   // so busy_start() rewinds it
+        busy_showLabel(busyLabel, effect);
+      } else if (screenUp || busyActive) {
+        busy_redrawText();
+      } else {
+        busy_showLabel(busyLabel, effect);
+      }
     }
-  } else {
+  } else if (on) {
     busyLabel[0] = '\0';
+    busyLine[0] = '\0';
   }
-  busy_start();
+  if (on) busy_start(); else busy_stop();
+}
+
+// CMDBUSYLINE,<text> - the status line under the label; the text is the rest
+// of the line, and an empty one takes the line down. Only on a busy screen
+// with a label: over a picture there is nowhere to put it. The same text again
+// draws nothing, so the daemon may repeat itself.
+void busy_lineParse(const char *cmd) {
+  const char *text = strchr(cmd, ',');
+  text = text ? text + 1 : "";
+  if (!busyLabel[0]) return;
+  size_t len = strlen(text);
+  if (len > BUSY_LINE_MAX) len = BUSY_LINE_MAX;
+  if (strncmp(busyLine, text, len) == 0 && strlen(busyLine) == len) return;
+  memcpy(busyLine, text, len);
+  busyLine[len] = '\0';
+  busy_redrawText();
 }
 
 // Called for every command before it is handled.
@@ -163,6 +249,8 @@ void busy_noteCommand(const char *cmd) {
 }
 
 void busy_tick(void) {
+  // Text that changed during a transition, drawn once it is over.
+  if (busyTextDirty && tfState == TF_IDLE) busy_redrawText();
   if (!busyActive) return;
   if (tfState != TF_IDLE) { busyLast = millis(); return; }   // after the transition
   unsigned long now = millis();

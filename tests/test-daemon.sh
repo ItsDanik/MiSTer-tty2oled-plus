@@ -609,6 +609,214 @@ UPDATEALL_SHOWN="yes"; UPDATEALL_BUSY="yes"; TTYGONE="yes"; TTYDEV="/dev/null"
 serialready
 ok "a display that came back gets the update_all screen and bar again" \
    "${UPDATEALL_SHOWN}|${UPDATEALL_BUSY}" "no|no"
+UA_RUN="no"; UA_DONE_AT=""
+
+# ---------------------------------------------------------------------------
+section "update_all: its own words under the bar, and the finish"
+# ---------------------------------------------------------------------------
+
+# The firmware is asked before anything new goes on the wire: a command it
+# does not know is drawn on the panel as text.
+for v in "0.7.0b:0" "0.7.0:0" "0.7.3b:0" "0.10.0b:0" "1.0.0b:0" "0.6.10b:1" "0.6.9b:1" \
+         "240519T:1" ":1" "0.7:1"; do
+  FW_VERSION="${v%:*}"; fw_atleast 0.7.0
+  ok "fw_atleast 0.7.0 with firmware '${v%:*}'" "${?}" "${v#*:}"
+done
+
+# ua_parselog, on what update_all 2.11 really writes: the downloader's
+# progress dots with no newline, rules, a centred summary, DUPLICATED lines
+# by the hundred.
+LOG="${TMP}/update_all_print.log"
+printf '%s\n' "Reading sections from /media/fat/downloader.ini" "" "Sequence:" \
+  "- Main Distribution: MiSTer-devel" "- JTCORES for MiSTer" "" \
+  "########################################################################" \
+  "#======================================================================#" \
+  "Running MiSTer Downloader" "" "START!" "" \
+  "########################################################################" \
+  "SECTION: jtcores" "_Arcade/cores/jtkiwi_20260927.rbf" >"${LOG}"
+printf '........*.' >>"${LOG}"
+ok "the last useful line, past the progress dots" \
+   "$(ua_parselog <"${LOG}" | tr '\n' '|')" "||_Arcade/cores/jtkiwi_20260927.rbf|"
+printf '\n%s\n' "DUPLICATED: _Arcade/Many Block.mra in [a, b] [using a instead]" >>"${LOG}"
+ok "DUPLICATED warnings are not progress" "$(ua_parselog <"${LOG}" | sed -n 3p)" \
+   "_Arcade/cores/jtkiwi_20260927.rbf"
+printf '\r\n  - Arcade Organizer  \r\n' >>"${LOG}"
+ok "carriage returns, padding and a list's dash go" "$(ua_parselog <"${LOG}" | sed -n 3p)" "Arcade Organizer"
+printf '%s\n' "                  ╔════╗" >>"${LOG}"
+ok "and a box drawn in UTF-8 is not a line" "$(ua_parselog <"${LOG}" | sed -n 3p)" "Arcade Organizer"
+cp "${LOG}" "${TMP}/log.running"
+printf '%s\n' "" "########################################################################" \
+  "Update All 2.11 by theypsilon 00:49.38s 2026-09-28 16:09:49" "" \
+  "Success! More details at: Scripts/.config/update_all/update_all.log" "" \
+  "Shoutout to Thomas Williams! patreon.com/theypsilon" >>"${LOG}"
+ok "the end: a verdict and the run time" "$(ua_parselog <"${LOG}" | sed -n 1,2p | tr '\n' '|')" "ok|00:49|"
+cp "${LOG}" "${TMP}/log.success"
+cp "${TMP}/log.running" "${TMP}/log.failed"
+printf '%s\n' "Update All 2.11 by theypsilon 01:02:03.00s 2026-09-28" "" \
+  "There were some errors in the Updaters." "Therefore, MiSTer hasn't been fully updated." \
+  >>"${TMP}/log.failed"
+ok "or it failed, and an hour-long run keeps its hours" \
+   "$(ua_parselog <"${TMP}/log.failed" | sed -n 1,2p | tr '\n' '|')" "failed|01:02:03|"
+
+LONG="_Arcade/cores/some/deep/folder/Arcade-NamcoS2_SG_20260927.rbf"
+ok "a long path keeps its end" "$(ua_shorten "${LONG}")" ".../some/deep/folder/Arcade-NamcoS2_SG_20260927.rbf"
+ok "at the status line's 51 columns" "$(ua_shorten "${LONG}" | wc -c | tr -d ' ')" "51"
+ok "a long sentence keeps its start" \
+   "$(ua_shorten "Check your connection and then run this script again, please, now")" \
+   "Check your connection and then run this script a..."
+ok "a short line is left alone" "$(ua_shorten "SECTION: jtcores")" "SECTION: jtcores"
+
+# The pass. Every write reopens the port, and a regular file would be
+# truncated each time, so the wire is a pipe into the file - and the pass
+# runs in this shell, so its state is kept.
+pass() { : >"${WIRE}"; TTYDEV=/dev/stdout updateall_pass > >(cat >>"${WIRE}"); UA_RC="${?}"; wait "${!}" 2>/dev/null; }
+wire() { tr '\n' '|' <"${WIRE}"; }
+UA_PRINTLOG="${LOG}"; UA_FINALLOG="${TMP}/update_all.log"
+UPDATE_ALL_POLL="0"; TRANSITION="-2"; SHOW_METADATA="no"
+UPDATE_ALL_DETAILS="yes"; UPDATE_DONE_SECS="1"
+UPDATE_DONE_TEXT="Update Complete"; UPDATE_FAILED_TEXT="Update Failed"
+mv "${bannerfolder}/update_all.gsc" "${TMP}/update_all.gsc.away"
+uareset() {
+  rm -rf "${PROC_ROOT}"/5[0-9][0-9] "${PROC_ROOT}"/6[0-9][0-9]
+  UPDATEALL_SHOWN="no"; UPDATEALL_BUSY="no"; UA_RUN="no"; UA_DONE_AT=""; BUSYLINE_LAST=""
+  FW_VERSION="0.7.0b"
+}
+
+# update_all started and its log written since: two passes in, the log fresh.
+uastart() {
+  uareset; FW_VERSION="${1:-0.7.0b}"
+  rm -f "${LOG}"
+  mkproc 500 /bin/bash /media/fat/Scripts/update_all.sh
+  pass
+  cp "${TMP}/log.running" "${LOG}"
+  pass
+}
+
+# The previous run's log, verdict and all, is still there when update_all
+# starts: its launcher runs before it recreates the file.
+uareset
+cp "${TMP}/log.success" "${LOG}"; touch -d '-1 hour' "${LOG}"
+mkproc 500 /bin/bash /media/fat/Scripts/update_all.sh
+pass
+ok "update_all starts: its banner" "$(wire)" "CMDMSG,-2,update_all|"
+pass
+ok "the last run's verdict is not this one's" "$(wire)" ""
+ok "nor its Sequence" "${UA_MAIN}" "no"
+
+# It recreates the file: intro, countdown - still only asking.
+printf '%s\n' "Reading sections from /media/fat/downloader.ini" "" >"${LOG}.new"; mv "${LOG}.new" "${LOG}"
+pass
+ok "the countdown is not an update" "$(wire)" ""
+
+# The main run begins.
+printf '%s\n' "Sequence:" "- Main Distribution: MiSTer-devel" >>"${LOG}"
+pass
+ok "Sequence: the label, and its line" "$(wire)" "CMDBUSY,1,Updating System ...|CMDBUSYLINE,Main Distribution: MiSTer-devel|"
+pass
+ok "the same line is not sent again" "$(wire)" ""
+mkproc 601 /tmp/ua_downloader_bin
+printf '%s\n' "Running MiSTer Downloader" "SECTION: jtcores" >>"${LOG}"
+pass
+ok "the downloader's lines follow" "$(wire)" "CMDBUSYLINE,SECTION: jtcores|"
+printf '%s\n' "${LONG}" "....*." >>"${LOG}"
+pass
+ok "shortened to fit" "$(wire)" "CMDBUSYLINE,.../some/deep/folder/Arcade-NamcoS2_SG_20260927.rbf|"
+ok "polled every second while it follows the log" "$(UPDATE_ALL_POLL=2 ua_poll)" "1"
+ok "unless UPDATE_ALL_POLL is already quicker" "$(UPDATE_ALL_POLL=0 ua_poll)" "0"
+rm -rf "${PROC_ROOT}/601"
+printf '%s\n' "Running Arcade Organizer" >>"${LOG}"
+pass
+ok "the downloader done, the update is not: the label stays" "$(wire)" "CMDBUSYLINE,Running Arcade Organizer|"
+
+# The verdict: the label becomes the finish, the bar runs off.
+cp "${TMP}/log.success" "${LOG}"
+pass
+ok "success: Update Complete, and the run time under it" "$(wire)" \
+   "CMDBUSY,0,Update Complete,-2|CMDBUSYLINE,Finished in 00:49|"
+pass
+ok "sent once" "$(wire)" ""
+# update_all exits at once: the rest of the second is waited out.
+rm -rf "${PROC_ROOT}/500"
+T0="$(tenths)"; pass; T1="$(tenths)"
+ok "gone before UPDATE_DONE_SECS: the rest of it is waited" "$(( T1 - T0 >= 8 ))" "1"
+ok "then back to the core" "${UA_RC}|${oldcore}|$(wire)" "1||"
+
+# update_all stays up past it - its log viewer - and exits later: no wait.
+uastart
+cp "${TMP}/log.success" "${LOG}"; pass
+T0="$(tenths)"; while [ "$(( $(tenths) - T0 ))" -lt 11 ]; do :; done
+rm -rf "${PROC_ROOT}/500"
+T0="$(tenths)"; pass; T1="$(tenths)"
+ok "outlasting UPDATE_DONE_SECS: back to the core at once" "$(( T1 - T0 < 5 ))" "1"
+
+# Printed and gone between two looks: the finish still goes up, and stays.
+uastart
+cp "${TMP}/log.success" "${LOG}"; rm -rf "${PROC_ROOT}/500"
+T0="$(tenths)"; pass; T1="$(tenths)"
+ok "a verdict found after it exited is shown" "$(wire)" \
+   "CMDBUSY,0,Update Complete,-2|CMDBUSYLINE,Finished in 00:49|"
+ok "for the whole of UPDATE_DONE_SECS" "$(( T1 - T0 >= 8 ))" "1"
+
+# Failed.
+uastart
+cp "${TMP}/log.failed" "${LOG}"; pass
+ok "errors: Update Failed, and where to look" "$(wire)" \
+   "CMDBUSY,0,Update Failed,-2|CMDBUSYLINE,Some updaters failed - see the log|"
+UA_DONE_AT=""; rm -rf "${PROC_ROOT}/500"; pass
+
+# An update_all that writes no print log: the verdict is in its own log,
+# written as it exits.
+uareset
+rm -f "${LOG}"
+mkproc 500 /bin/bash /media/fat/Scripts/update_all.sh
+pass
+mkproc 601 /tmp/ua_downloader_bin
+pass
+ok "no print log: the label, no line" "$(wire)" "CMDBUSY,1,Updating System ...|"
+rm -rf "${PROC_ROOT}/601" "${PROC_ROOT}/500"
+cp "${TMP}/log.success" "${UA_FINALLOG}"
+pass
+ok "and the finish from update_all.log" "$(wire | cut -d'|' -f1)" "CMDBUSY,0,Update Complete,-2"
+# ...but not a log left by an earlier run.
+uareset
+mkproc 500 /bin/bash /media/fat/Scripts/update_all.sh
+touch -d '-1 hour' "${UA_FINALLOG}"
+pass; mkproc 601 /tmp/ua_downloader_bin; pass
+rm -rf "${PROC_ROOT}/601" "${PROC_ROOT}/500"
+pass
+ok "an old update_all.log says nothing about this run" "$(wire)" "CMDBUSY,0|"
+
+# Settings.
+UPDATE_ALL_DETAILS="no"; uastart
+ok "UPDATE_ALL_DETAILS=no: the label without a line" "$(wire)" "CMDBUSY,1,Updating System ...|"
+cp "${TMP}/log.success" "${LOG}"; pass
+ok "the finish still has its own" "$(wire)" "CMDBUSY,0,Update Complete,-2|CMDBUSYLINE,Finished in 00:49|"
+UA_DONE_AT=""; rm -rf "${PROC_ROOT}/500"; pass
+UPDATE_ALL_DETAILS="yes"
+
+UPDATE_DONE_SECS="0"; uastart
+cp "${TMP}/log.success" "${LOG}"; pass
+ok "UPDATE_DONE_SECS=0: no finish screen" "$(wire | grep -c 'Update Complete')" "0"
+rm -rf "${PROC_ROOT}/500"; pass
+ok "straight back to the core" "$(wire)" "CMDBUSY,0|"
+UPDATE_DONE_SECS="1"
+
+# Firmware before 0.7.0b: exactly the old screens.
+uastart 0.6.9b
+ok "old firmware: Sequence alone is not the bar" "$(wire)" ""
+mkproc 601 /tmp/ua_downloader_bin; pass
+ok "the downloader is, with no line" "$(wire)" "CMDBUSY,1,Updating System ...|"
+rm -rf "${PROC_ROOT}/601"; pass
+ok "and after it, the banner again" "$(wire)" "CMDBUSY,0|CMDMSG,-2,update_all|"
+cp "${TMP}/log.success" "${LOG}"; pass
+ok "no finish screen" "$(wire)" ""
+rm -rf "${PROC_ROOT}/500"
+T0="$(tenths)"; pass; T1="$(tenths)"
+ok "and no wait" "$(( T1 - T0 < 5 ))" "1"
+
+uareset
+mv "${TMP}/update_all.gsc.away" "${bannerfolder}/update_all.gsc"
+UA_RUN="no"; UA_DONE_AT=""; TTYDEV="${WIRE}"
 # ---------------------------------------------------------------------------
 # Our own updater: the message has to go up before it stops this daemon
 # ---------------------------------------------------------------------------
@@ -621,6 +829,14 @@ selfupdate_running; ok "tty2oledplus_update seen" "${?}" "0"
 SELF_UPDATE_SCREEN="no"
 selfupdate_running; ok "SELF_UPDATE_SCREEN=no ignores it" "${?}" "1"
 SELF_UPDATE_SCREEN="yes"
+# The updater starts the daemon a second before it exits, with its finish on
+# the panel; the daemon must not put "Updating" back over it.
+SELFUPDATE_OURS="$(selfupdate_pids)"
+ok "the daemon notes an updater already running when it starts" "${SELFUPDATE_OURS}" "700 "
+selfupdate_running; ok "and does not take it for an update starting" "${?}" "1"
+mkproc 702 /bin/bash /media/fat/tty2oledplus/tty2oledplus_update.sh
+selfupdate_running; ok "a later one it does" "${?}" "0"
+rm -rf "${PROC_ROOT}/702"; SELFUPDATE_OURS=""
 
 oldcore="NES"; META_WIRE_LAST="CMDMETA,..."
 # The updater's screen replaces a core's artwork, so it arrives like a
@@ -661,7 +877,43 @@ rm -rf "${PROC_ROOT}/500" "${PROC_ROOT}/700"
 SELFUPDATE_SHOWN="no"
 
 ok "the daemon's wait times out for it even with the update_all screen off" \
-   "$(grep -c 'SELF_UPDATE_SCREEN:-yes}" = "yes" \]; }' "${ROOT}/tty2oled.sh")" "1"
+   "$(grep -c 'SELF_UPDATE_SCREEN:-yes}" = "yes" \] || degauss_possible; }' "${ROOT}/tty2oled.sh")" "1"
+
+# ---------------------------------------------------------------------------
+section "Degauss: a frontend over the menu core, found by its process"
+# ---------------------------------------------------------------------------
+# Degauss is a Scripts entry, not a core: CORENAME says MENU all the while it
+# runs. Its binary is the only sign.
+degauss_running; ok "nothing running: not Degauss" "${?}" "1"
+mkproc 800 /bin/bash /media/fat/Scripts/degauss.sh
+degauss_running; ok "its launcher script alone is not it" "${?}" "1"
+mkproc 801 vi /media/fat/Scripts/.config/degauss/degauss.toml
+degauss_running; ok "nor an editor open on its config, which names degauss/degauss" "${?}" "1"
+mkproc 802 /media/fat/Scripts/.config/degauss/degauss \
+  --config /media/fat/Scripts/.config/degauss/degauss.toml \
+  --systems /media/fat/Scripts/.config/degauss/systems.toml
+degauss_running; ok "its binary, as degauss.sh starts it" "${?}" "0"
+rm -rf "${PROC_ROOT}/802"
+mkproc 803 /media/fat/Scripts/.degauss/degauss --config /media/fat/Scripts/.degauss/degauss.toml
+degauss_running; ok "and where v0.1.0 and v0.2.0 installed it" "${?}" "0"
+rm -rf "${PROC_ROOT}/803"
+
+# The display's idea of the core: Degauss replaces MENU and nothing else.
+printf 'MENU' > "${corenamefile}"
+readcore; ok "the menu, Degauss not running: MENU" "${CURCORE}" "MENU"
+mkproc 802 /media/fat/Scripts/.config/degauss/degauss --config x
+readcore; ok "the menu with Degauss running: degauss" "${CURCORE}" "degauss"
+printf 'SNES' > "${corenamefile}"
+readcore; ok "a game it launched is that game's core" "${CURCORE}" "SNES"
+printf 'MENU' > "${corenamefile}"
+
+# Starting or leaving it changes no state file, so the waits must time out
+# to see it - while the menu or Degauss is up, and not in a core.
+oldcore="MENU"; degauss_possible; ok "on the menu, the wait polls for it" "${?}" "0"
+oldcore="degauss"; degauss_possible; ok "and while it runs, for it leaving" "${?}" "0"
+oldcore="SNES"; degauss_possible; ok "in a core it does not" "${?}" "1"
+rm -rf "${PROC_ROOT}/800" "${PROC_ROOT}/801" "${PROC_ROOT}/802"
+printf 'NES' > "${corenamefile}"
 
 TTYDEV="/dev/null"; unset PROC_ROOT
 

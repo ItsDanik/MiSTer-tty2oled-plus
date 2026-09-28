@@ -169,7 +169,7 @@ static bool gsc_load(const char *path, uint8_t *out, size_t want) {
 
 // ---------------------------------------------------------------------------
 // Output: one 256x64 greyscale PGM per screen, a pixel per byte, 0..15 scaled
-// to 0..255. make-screenshots.sh scales and tints them.
+// to 0..255. make-screenshots.sh scales them, grids and tints them.
 // ---------------------------------------------------------------------------
 static std::string outDir = ".";
 
@@ -284,10 +284,13 @@ static void scene_boot(const char *name, const char *gsc, int head) {
 }
 
 // CMDBUSY with a label: the message takes the panel, the comet runs in the band.
-static void scene_busy(const char *name, const char *label, int head) {
+// With a status line under it, when `line` is not empty.
+static void scene_busy(const char *name, const char *label, const char *line, int head) {
   oled.clearDisplay();
+  busy_forgetLabel();
+  snprintf(busyLine, sizeof(busyLine), "%s", line);
   busy_showLabel(label, BUSY_NO_EFFECT);
-  boot_barDraw(head, 0);
+  if (head >= 0) boot_barDraw(head, 0);
   save(name);
 }
 
@@ -364,7 +367,8 @@ int main(int argc, char **argv) {
   scene_boot("boot", nullptr, 150);
 
   // update_all: the message owns the panel, the bar says it is working.
-  scene_busy("busy", "Updating System ...", 150);
+  scene_busy("busy", "Updating System ...", "_Arcade/cores/Arcade-NamcoS2_SG_20260927.rbf", 150);
+  scene_busy("busy-done", "Update Complete", "", -1);
 
   printf("done\n");
   return 0;

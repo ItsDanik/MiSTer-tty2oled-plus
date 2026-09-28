@@ -137,6 +137,10 @@ EOS
     updates) cat <<'EOS'
 UPDATE_ALL_SCREEN|bool||Say so while update_all runs|Show what is happening on the panel instead of leaving the last core's artwork up.
 UPDATE_ALL_TEXT|text||What it says|The message shown while update_all is downloading.
+UPDATE_ALL_DETAILS|bool||Show each step|Under the message, in small letters, the last line update_all printed on the MiSTer's screen - the database or file it is working on.
+UPDATE_DONE_TEXT|text||When it has finished|What the message becomes when an update - update_all or this display's own - has finished.
+UPDATE_FAILED_TEXT|text||When it has failed|What it becomes instead when the update reported errors.
+UPDATE_DONE_SECS|int|0 60|Keep that up (seconds)|The least time the finished message stays before the display goes back to the core. 0 skips it.
 SELF_UPDATE_SCREEN|bool||Say so while tty2oled+ updates|The same, for this display's own updater.
 SELF_UPDATE_TEXT|text||What that says|The message shown while an Update runs.
 UPDATE_ALL_POLL|int|1 60|How often to look (seconds)|How often to check whether update_all is running. Lower notices sooner and costs a little more.

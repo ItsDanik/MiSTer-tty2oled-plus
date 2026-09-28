@@ -9,7 +9,14 @@
 # the real Adafruit GFX and U8g2 libraries, hands them a 256x64 4bpp
 # framebuffer - the same bytes the panel is sent - composes each screen with
 # the code the ESP32 runs, and writes the buffer out. This wraps that: build,
-# render, and scale the frames up into PNGs.
+# render, and scale the frames up into PNGs that look like the panel.
+#
+# The look: each panel pixel is a SCALE x SCALE block in TINT, its brightness
+# the pixel's grey level (level 15 is TINT itself, level 0 black), with the
+# last GAP columns and rows of the block left black. So lit areas show the
+# faint grid of an OLED's separate pixels, and the dark ones stay dark.
+#
+#   SCALE=4 GAP=1 TINT='#00FFFF' ./tools/make-screenshots.sh   # the defaults
 #
 # So re-running it after a layout change updates the documentation, and a
 # screenshot cannot drift from the layout: the rows, the fonts, the paging and
@@ -24,12 +31,16 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${0}")/.." && pwd)"
 OUTDIR="${1:-${HERE}/docs/img}"
 LIBS="${ARDUINO_LIBS:-${HOME}/Arduino/libraries}"
-SCALE="${SCALE:-3}"          # nearest-neighbour, so a panel pixel stays square
+SCALE="${SCALE:-4}"          # output pixels per panel pixel, each way
+GAP="${GAP:-1}"              # of which black, between neighbouring pixels
+TINT="${TINT:-#00FFFF}"      # the colour of a fully lit pixel
 
 say()  { printf '\033[1;32m==> %s\033[0m\n' "$1"; }
 die()  { printf '\033[1;31m%s\033[0m\n' "$1" >&2; exit 1; }
 
 command -v g++ >/dev/null 2>&1 || die "No g++ - a host C++ compiler is needed."
+case "${SCALE}${GAP}" in *[!0-9]*) die "SCALE and GAP are whole numbers." ;; esac
+[ "${GAP}" -lt "${SCALE}" ] || die "GAP (${GAP}) has to be less than SCALE (${SCALE}), or nothing is lit."
 
 MAGICK=""
 for c in magick convert; do command -v "${c}" >/dev/null 2>&1 && { MAGICK="${c}"; break; }; done
@@ -64,14 +75,30 @@ g++ -std=c++11 -O1 -w -DARDUINO=100 \
 say "Rendering"
 "${WORK}/render" "${WORK}" "${HERE}"
 
+# One pixel's block: white where it is lit, black in the gap along its right
+# and bottom edges. Tiled across the frame and multiplied in, it separates
+# every pixel from its neighbours; nothing is drawn with no gap asked for.
+CELL=(-size "${SCALE}x${SCALE}" xc:white)
+if [ "${GAP}" -gt 0 ]; then
+  CELL+=(-fill black
+         -draw "rectangle $((SCALE - GAP)),0 $((SCALE - 1)),$((SCALE - 1))"
+         -draw "rectangle 0,$((SCALE - GAP)) $((SCALE - 1)),$((SCALE - 1))")
+fi
+
 say "Writing PNGs into ${OUTDIR}"
 mkdir -p "${OUTDIR}"
 for pgm in "${WORK}"/*.pgm; do
   name="$(basename "${pgm}" .pgm)"
-  # -interpolate Integer + -filter point: no smoothing. A blurred screenshot
-  # of a 256x64 panel says nothing about what the panel draws.
+  # -filter point: no smoothing. A blurred screenshot of a 256x64 panel says
+  # nothing about what the panel draws. Then the grid, then the tint: the
+  # grey level scales TINT, so the 16 levels stay 16 levels.
   "${MAGICK}" "${pgm}" -filter point -resize "$((SCALE * 100))%" \
-              -define png:color-type=0 "${OUTDIR}/${name}.png"
+              \( "${CELL[@]}" -write mpr:cell +delete \) \
+              -size "$((256 * SCALE))x$((64 * SCALE))" tile:mpr:cell \
+              -compose multiply -composite \
+              -colorspace sRGB \( +clone -fill "${TINT}" -colorize 100 \) \
+              -compose multiply -composite \
+              -define png:color-type=2 "${OUTDIR}/${name}.png"
   printf '    %s.png\n' "${name}"
 done
 

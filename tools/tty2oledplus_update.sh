@@ -105,6 +105,7 @@ identify_display() {
   # A test states the answer rather than providing a port.
   if [ -n "${T2OP_HWINF+set}" ]; then
     parse_hwinf <<<"${T2OP_HWINF}"
+    PANEL_TTY="${T2OP_PANEL:-}"
     return 0
   fi
   local TTYDEV="/dev/ttyUSB0" BAUDRATE="115200" TTYPARAM="cs8 raw -parenb -cstopb -hupcl -echo"
@@ -117,6 +118,7 @@ identify_display() {
   )"
   [ -c "${TTYDEV}" ] || return 0
   stty -F "${TTYDEV}" ${BAUDRATE} ${TTYPARAM} 2>/dev/null || return 0
+  PANEL_TTY="${TTYDEV}"
   exec 3<"${TTYDEV}" || return 0
   echo "CMDHWINF" > "${TTYDEV}"
   parse_hwinf <&3
@@ -168,6 +170,135 @@ display_claimed() {
 
 installed_version() {
   sed -n 's/^TTY2OLED_VERSION="\([^"]*\)".*/\1/p' "${INSTALL}/tty2oled-system.ini" 2>/dev/null
+}
+
+# --- The panel, while this runs ---------------------------------------------
+# The daemon puts SELF_UPDATE_TEXT up when it sees this start, and this stops
+# it within seconds for the serial port - so from there the display is this
+# script's to talk to, and it says what is going on: each step on the status
+# line under the label, a warning before the flash (the panel freezes, then
+# restarts), and at the end the finish - "Update Complete", or "Update
+# Failed" - for at least UPDATE_DONE_SECS before the daemon takes over again.
+#
+# Only to firmware 0.7.0b or later, which has the status line; to anything
+# older a command it does not know is drawn as text. A display flashed from
+# older firmware to newer is asked again once it has restarted, and gets the
+# finish. The settings are the daemon's, parsed rather than sourced.
+PANEL="no"            # the display can show it, and it is wanted
+PANEL_TTY=""          # the port, once identify_display has found one
+PANEL_DONE_AT=""      # when the finish went up, in milliseconds
+PANEL_COLS=51         # the status line: 256 pixels of 5x7
+
+ini_value() {  # ini_value <KEY> - the user's if set, else the system ini's
+  local f v="" x
+  for f in "${INSTALL}/tty2oled-system.ini" "${INSTALL}/tty2oled-user.ini"; do
+    [ -r "${f}" ] || continue
+    x="$(sed -n -e "s/^${1}=\"\([^\"]*\)\".*/\1/p" -e "s/^${1}=\([^\"#[:space:]][^#[:space:]]*\).*/\1/p" "${f}" | tail -n1)"
+    [ -n "${x}" ] && v="${x}"
+  done
+  printf '%s' "${v}"
+}
+
+version_atleast() {  # version_atleast <have> <want>; upstream's dated versions are not
+  local h=() w=() i
+  [[ "${1}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)[A-Za-z]*$ ]] || return 1
+  h=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+  [[ "${2}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] || return 1
+  w=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+  for i in 0 1 2; do
+    [ "$((10#${h[i]}))" -gt "$((10#${w[i]}))" ] && return 0
+    [ "$((10#${h[i]}))" -lt "$((10#${w[i]}))" ] && return 1
+  done
+  return 0
+}
+
+ms_now() {
+  local t="${EPOCHREALTIME:-}"
+  if [ -n "${t}" ]; then t="${t//[.,]/}"; echo "$(( 10#${t} / 1000 ))"
+  else echo "$(( $(date +%s) * 1000 ))"; fi
+}
+
+# Wanted, and can the display just identified show it?
+panel_can() {
+  [ "$(ini_value SELF_UPDATE_SCREEN)" != "no" ] && [ -n "${PANEL_TTY}" ] \
+    && [ -n "${HW_BOARD}" ] && [ "${HW_BOARD}" != "esp8266" ] \
+    && version_atleast "${HW_VERSION}" 0.7.0
+}
+
+panel_send() {
+  [ "${PANEL}" = "yes" ] || return 0
+  printf '%s\n' "${1}" >>"${PANEL_TTY}" 2>/dev/null
+  sleep 0.05
+}
+
+# The effect the ini asks for, for a screen that replaces what was there.
+panel_effect() {
+  local e; e="$(ini_value TRANSITION)"
+  [[ "${e}" =~ ^-?[0-9]+$ ]] && printf ',%s' "${e}"
+}
+
+panel_open() {
+  panel_can || return 0
+  PANEL="yes"
+  local label; label="$(ini_value SELF_UPDATE_TEXT)"
+  label="${label:-Updating TTY2OLED+...}"
+  # Out of the metadata view, then the label - the same the daemon sends, so
+  # when the daemon put it up already the firmware takes it as a repeat.
+  panel_send "CMDMETAOFF"
+  panel_send "CMDBUSY,1,${label//,/}$(panel_effect)"
+}
+
+panel_step() {  # panel_step <what is happening>
+  local s="${1}"
+  [ "${#s}" -le "${PANEL_COLS}" ] || s="${s:0:$((PANEL_COLS - 3))}..."
+  panel_send "CMDBUSYLINE,${s}"
+}
+
+# The finish: the label replaced, the bar left to run off, a line under it.
+panel_finish() {  # panel_finish <done|failed|uptodate> <line>
+  [ "${PANEL}" = "yes" ] && [ -z "${PANEL_DONE_AT}" ] || return 0
+  local secs head
+  secs="$(ini_value UPDATE_DONE_SECS)"
+  [ "${secs:-3}" -gt 0 ] 2>/dev/null || return 0
+  case "${1}" in
+    failed)   head="$(ini_value UPDATE_FAILED_TEXT)"; head="${head:-Update Failed}" ;;
+    uptodate) head="Up to Date" ;;
+    *)        head="$(ini_value UPDATE_DONE_TEXT)"; head="${head:-Update Complete}" ;;
+  esac
+  panel_send "CMDBUSY,0,${head//,/}$(panel_effect)"
+  panel_step "${2}"
+  PANEL_DONE_AT="$(ms_now)"
+}
+
+# Whatever is left of the finish's minimum time, before the daemon draws.
+panel_hold() {
+  [ -n "${PANEL_DONE_AT}" ] || return 0
+  local secs left
+  secs="$(ini_value UPDATE_DONE_SECS)"
+  [ "${secs:-3}" -ge 0 ] 2>/dev/null || secs=3
+  left=$(( ${secs:-3} * 1000 - ( $(ms_now) - PANEL_DONE_AT ) ))
+  PANEL_DONE_AT=""
+  [ "${left}" -gt 0 ] && sleep "$(printf '%d.%03d' $((left / 1000)) $((left % 1000)))"
+  return 0
+}
+
+# After a flash: the display restarts, and is asked again - it may be running
+# firmware that can show the finish when the old one could not. A few tries:
+# it takes a second or two to boot, and the first line to reach it can be
+# garbled, which is what QWERTZ is for (the daemon does the same).
+panel_reopen() {
+  PANEL="no"
+  [ "$(ini_value SELF_UPDATE_SCREEN)" != "no" ] && [ -n "${PANEL_TTY}" ] || return 0
+  local tries=0
+  [ -n "${T2OP_HWINF_AFTER+set}" ] && T2OP_HWINF="${T2OP_HWINF_AFTER}"
+  while [ "${tries}" -lt 6 ]; do
+    tries=$((tries + 1))
+    [ -n "${T2OP_HWINF+set}" ] || { sleep 1; printf 'QWERTZ\n' >>"${PANEL_TTY}" 2>/dev/null; sleep 0.1; }
+    identify_display
+    [ -n "${HW_BOARD}" ] && break
+  done
+  panel_can && PANEL="yes"
+  return 0
 }
 
 # --- MiSTer.ini ------------------------------------------------------------
@@ -250,7 +381,10 @@ start_daemon() {
   DAEMON_STARTED="yes"
 }
 on_exit() {
+  local rc="$?"
   [ -n "${STAGE:-}" ] && rm -rf "${STAGE}"
+  [ "${rc}" -ne 0 ] && panel_finish failed "See the MiSTer's screen for why"
+  panel_hold
   if [ "${DAEMON_WAS_RUNNING}" = "yes" ] && [ "${DAEMON_STARTED}" = "no" ]; then
     printf '\n==> Restarting the daemon as it was\n'
     start_daemon
@@ -342,11 +476,14 @@ main() {
     sleep 1
   fi
 
+  # Asked even with --no-firmware: the answer also says whether the panel can
+  # show what this run is doing.
   local flash="no"
+  say "Asking the display what it is"
+  identify_display
+  note "reported: ${HW_BOARD:-no answer}${HW_VERSION:+, firmware ${HW_VERSION}}"
+  panel_open
   if [ "${firmware}" = "yes" ]; then
-    say "Asking the display what it is"
-    identify_display
-    note "reported: ${HW_BOARD:-no answer}${HW_VERSION:+, firmware ${HW_VERSION}}"
     if [ "${HW_BOARD}" = "esp8266" ]; then
       note "An ESP8266 cannot run tty2oled+ firmware - leaving it alone."
     elif [ -z "${HW_BOARD}" ] && [ -z "${board}" ]; then
@@ -366,6 +503,7 @@ main() {
 
   if [ "${scripts}" = "no" ] && [ "${flash}" = "no" ] && [ "${pics}" = "no" ]; then
     say "tty2oled+ ${version} is already installed - nothing to do."
+    panel_finish uptodate "tty2oled+ ${version} is installed"
     return 0
   fi
 
@@ -378,6 +516,11 @@ main() {
   local a
   for a in "${assets[@]}"; do
     note "${a}"
+    case "${a}" in
+      tty2oledplus.tar.gz)      panel_step "Downloading tty2oled+ ${version}" ;;
+      tty2oledplus-pics.tar.gz) panel_step "Downloading the artwork" ;;
+      *.bin)                    panel_step "Downloading the ${board} firmware" ;;
+    esac
     fetch "${a}" "${STAGE}/${a}" || die "Could not download ${a}. Nothing was changed."
     verify "${a}"
   done
@@ -385,6 +528,7 @@ main() {
   # --- Scripts ------------------------------------------------------------
   if [ "${scripts}" = "yes" ]; then
     say "Installing scripts into ${INSTALL}"
+    panel_step "Installing the scripts"
     tar -C "${STAGE}" --no-same-owner -xzf "${STAGE}/tty2oledplus.tar.gz" \
       || die "Could not unpack the scripts. Nothing was changed."
     mkdir -p "${INSTALL}"
@@ -415,6 +559,7 @@ main() {
 
   if [ "${pics}" = "yes" ]; then
     say "Installing the artwork pack"
+    panel_step "Installing the artwork"
     # Unpacked beside the install first, then swapped in folder by folder:
     # the release's folders are replaced whole, so a picture a release has
     # dropped - the arcade marquees, pics/alt - goes from the card too,
@@ -435,8 +580,12 @@ main() {
   fi
 
   # --- Firmware -----------------------------------------------------------
+  local flashed="yes"
   if [ "${flash}" = "yes" ]; then
     say "Flashing the ${board} firmware"
+    # Last words before the panel freezes: the flash stops the firmware
+    # mid-frame, and the new one restarts it on its boot screen.
+    panel_step "Flashing firmware - the display will restart"
     cp "${STAGE}/tty2oledplus-${board}.bin" "${INSTALL}/tty2oledplus-${board}.bin"
     # flash-mister.sh identifies the chip itself; the override only matters
     # when it cannot get an answer, and then this run already knows.
@@ -444,7 +593,15 @@ main() {
     [ "${board}" = "esp32s3" ] && chip="esp32s3"
     CHIP_OVERRIDE="${chip}" TTY2OLED_PATH="${INSTALL}" \
       "${FLASH}" "${INSTALL}/tty2oledplus-${board}.bin" \
-      || note "The flash did not complete - the scripts are installed; run this again to retry it."
+      || { flashed="no"; note "The flash did not complete - the scripts are installed; run this again to retry it."; }
+    panel_reopen
+  fi
+
+  # Nothing left that can fail: the rest is quick, and runs under the finish.
+  if [ "${flashed}" = "yes" ]; then
+    panel_finish done "tty2oled+ ${version} installed"
+  else
+    panel_finish failed "The firmware flash did not complete"
   fi
 
   # --- Boot hook, daemon, updater -----------------------------------------
@@ -453,11 +610,6 @@ main() {
     BOOTHOOK_LIB=yes . "${INSTALL}/tty2oled-boothook.sh"
     boothook "${FAT}/linux/user-startup.sh" "${FAT}/linux/_user-startup.sh" "${INSTALL}/S60tty2oled"
   )
-
-  say "Starting the daemon"
-  start_daemon
-  sleep 1
-  "${INIT}" status || note "It did not start - see ${DAEMON_LOG}"
 
   if [ "${scripts}" = "yes" ] && [ -d "${FAT}/Scripts" ]; then
     # By rename, never in place: the launcher exec's the updater, so it is not
@@ -486,6 +638,13 @@ main() {
 
   say "Checking MiSTer.ini"
   ensure_log_file_entry
+
+  # Last, so the finish is the panel's until it has been up long enough.
+  panel_hold
+  say "Starting the daemon"
+  start_daemon
+  sleep 1
+  "${INIT}" status || note "It did not start - see ${DAEMON_LOG}"
 
   say "tty2oled+ ${version} is installed."
 }

@@ -149,7 +149,12 @@ cat > "${TMP}/fake-init" <<'FAKE'
 #!/bin/bash
 echo "init $1" >> "${FAKE_CALLS}"
 case "$1" in
-  start)  echo running > "${FAKE_STATE}" ;;
+  start)  echo running > "${FAKE_STATE}"
+          # How long the panel's last word had been up, in tenths: the
+          # updater's finish is meant to be, UPDATE_DONE_SECS at least.
+          if [ -s "${FAKE_PANEL:-}" ]; then
+            echo "held $(( ($(date +%s%N) - $(date -r "${FAKE_PANEL}" +%s%N)) / 100000000 ))" >> "${FAKE_CALLS}"
+          fi ;;
   stop)   echo stopped > "${FAKE_STATE}" ;;
   status) [ "$(cat "${FAKE_STATE}" 2>/dev/null)" = running ] ;;
 esac
@@ -351,6 +356,112 @@ ok "and ran nothing after it finished" "$(tail -n1 "${TMP}/out")" "==> tty2oled+
 ok "the updater in the install folder is the release's" \
    "$(cmp -s "${INSTALL}/tty2oledplus_update.sh" "${ROOT}/tools/tty2oledplus_update.sh" && echo same)" "same"
 ok "and is executable" "$(yesno test -x "${INSTALL}/tty2oledplus_update.sh")" "yes"
+
+section "installer: what the panel says while it runs"
+
+# The display is a file here, T2OP_PANEL; what it "says" before the flash is
+# T2OP_HWINF and after it T2OP_HWINF_AFTER. The user ini sets TRANSITION -2,
+# so every screen that replaces another asks for that.
+#
+# The fake init script says how long the finish had been up when the daemon
+# was started ("held", tenths of a second).
+PANEL_FILE="${TMP}/panel"
+panel() { tr '\n' '|' < "${PANEL_FILE}" 2>/dev/null; }
+USER_INI="${INSTALL}/tty2oled-user.ini"
+cp "${USER_INI}" "${TMP}/user-ini.pristine"
+printf 'TRANSITION="-2"\nUPDATE_DONE_SECS="1"\n' >> "${USER_INI}"
+cp "${USER_INI}" "${TMP}/user-ini.saved"
+held() { sed -n 's/^held //p' "${CALLS}"; }
+timed_install() {  # timed_install <hwinf before> <hwinf after> [options]
+  local before="${1}" after="${2}"; shift 2
+  : > "${PANEL_FILE}"
+  FAKE_PANEL="${PANEL_FILE}" T2OP_PANEL="${PANEL_FILE}" T2OP_HWINF="${before}" \
+    T2OP_HWINF_AFTER="${after}" install "$@"
+  RC="${?}"
+}
+
+set_installed_version "0.0.1b"
+timed_install "HWLOLIN32;0.7.0T;" "HWLOLIN32;${VERSION};"
+ok "an update with a flash succeeds" "${RC}" "0"
+ok "and the shell complained about nothing" "$(shell_errors)" ""
+ok "the panel is told each step, the flash before it happens, then the finish" "$(panel)" \
+   "CMDMETAOFF|CMDBUSY,1,Updating TTY2OLED+...,-2|CMDBUSYLINE,Downloading tty2oled+ ${VERSION}|CMDBUSYLINE,Downloading the lolin32 firmware|CMDBUSYLINE,Installing the scripts|CMDBUSYLINE,Flashing firmware - the display will restart|CMDBUSY,0,Update Complete,-2|CMDBUSYLINE,tty2oled+ ${VERSION} installed|"
+ok "it was flashed" "$(flashed)" "tty2oledplus-lolin32.bin chip=esp32 port=free"
+ok "the finish is held UPDATE_DONE_SECS before the daemon takes over" "$(( $(held) >= 10 ))" "1"
+ok "and the daemon does take over" "$(running)" "running"
+ok "the daemon is started after the hold, last" "$(tail -n1 "${CALLS}")" "init status"
+
+# Older firmware has no status line: nothing is sent to it - but the firmware
+# it is flashed with has, and is asked once it has restarted.
+set_installed_version "0.0.1b"
+timed_install "HWLOLIN32;0.6.9b;" "HWLOLIN32;${VERSION};"
+ok "old firmware is sent nothing; the new one gets the finish" "$(panel)" \
+   "CMDBUSY,0,Update Complete,-2|CMDBUSYLINE,tty2oled+ ${VERSION} installed|"
+set_installed_version "0.0.1b"
+timed_install "HWLOLIN32;0.6.9b;" "HWLOLIN32;0.6.9b;"
+ok "and if it is still old after the flash, nothing at all" "$(panel)" ""
+set_installed_version "0.0.1b"
+timed_install "HWLOLIN32;240519T;" "HWLOLIN32;240519T;" --no-firmware
+ok "upstream's firmware is sent nothing" "$(panel)" ""
+
+# Scripts only.
+set_installed_version "0.0.1b"
+timed_install "HWLOLIN32;0.7.0T;" "" --no-firmware
+ok "--no-firmware: no flash, and no warning about one" "$(panel | grep -c Flashing)" "0"
+ok "the finish still comes" "$(panel | grep -c 'CMDBUSY,0,Update Complete,-2')" "1"
+
+# Nothing to do.
+timed_install "HWLOLIN32;0.7.0T;" "" --no-firmware
+ok "nothing to do: Up to Date" "$(panel)" \
+   "CMDMETAOFF|CMDBUSY,1,Updating TTY2OLED+...,-2|CMDBUSY,0,Up to Date,-2|CMDBUSYLINE,tty2oled+ ${VERSION} is installed|"
+ok "held too" "$(( $(held) >= 10 ))" "1"
+
+# A flash that fails.
+cat > "${TMP}/fake-flash-fails" <<'FAKE'
+#!/bin/bash
+echo "flash failed" >> "${FAKE_CALLS}"
+exit 1
+FAKE
+chmod +x "${TMP}/fake-flash-fails"
+set_installed_version "0.0.1b"
+: > "${PANEL_FILE}"; : > "${CALLS}"
+T2OP_FAT="${FAT}" T2OP_URL="file://${REL}" T2OP_INIT="${TMP}/fake-init" \
+T2OP_FLASH="${TMP}/fake-flash-fails" T2OP_PANEL="${PANEL_FILE}" \
+T2OP_HWINF="HWLOLIN32;0.7.0T;" \
+  bash "${ROOT}/tools/tty2oledplus_update.sh" > "${TMP}/out" 2>&1 </dev/null
+ok "a failed flash ends in Update Failed" "$(panel | tr '|' '\n' | tail -n2 | tr '\n' '|')" \
+   "CMDBUSY,0,Update Failed,-2|CMDBUSYLINE,The firmware flash did not complete|"
+
+# A damaged download: it dies, and says so on the panel on the way out.
+BAD="${TMP}/releases-bad"
+rm -rf "${BAD}"; cp -r "${REL}" "${BAD}"
+printf 'x' >> "${BAD}/latest/download/tty2oledplus.tar.gz"
+set_installed_version "0.0.1b"
+: > "${PANEL_FILE}"; : > "${CALLS}"
+T2OP_FAT="${FAT}" T2OP_URL="file://${BAD}" T2OP_INIT="${TMP}/fake-init" T2OP_FLASH="${TMP}/fake-flash" \
+  T2OP_PANEL="${PANEL_FILE}" FAKE_PANEL="${PANEL_FILE}" T2OP_HWINF="HWLOLIN32;0.7.0T;" \
+  bash "${ROOT}/tools/tty2oledplus_update.sh" > "${TMP}/out" 2>&1 </dev/null
+ok "a run that dies says Update Failed" "$(panel | tr '|' '\n' | tail -n2 | tr '\n' '|')" \
+   "CMDBUSY,0,Update Failed,-2|CMDBUSYLINE,See the MiSTer's screen for why|"
+ok "and the daemon is back" "$(running)" "running"
+ok "after the finish has been up" "$(( $(held) >= 10 ))" "1"
+
+# Settings: the user's words, and off.
+printf 'UPDATE_DONE_TEXT="All done, now"\nSELF_UPDATE_TEXT="Updating, me"\n' >> "${USER_INI}"
+set_installed_version "0.0.1b"
+timed_install "HWLOLIN32;0.7.0T;" "" --no-firmware
+ok "the user's own words, with the separator taken out" "$(panel | tr '|' '\n' | grep '^CMDBUSY,' | tr '\n' '|')" \
+   "CMDBUSY,1,Updating me,-2|CMDBUSY,0,All done now,-2|"
+printf 'SELF_UPDATE_SCREEN="no"\n' >> "${USER_INI}"
+set_installed_version "0.0.1b"
+timed_install "HWLOLIN32;0.7.0T;" "HWLOLIN32;${VERSION};"
+ok "SELF_UPDATE_SCREEN=no: the panel is left alone" "$(panel)" ""
+cp "${TMP}/user-ini.saved" "${USER_INI}"
+printf 'UPDATE_DONE_SECS="0"\n' >> "${USER_INI}"
+set_installed_version "0.0.1b"
+timed_install "HWLOLIN32;0.7.0T;" "" --no-firmware
+ok "UPDATE_DONE_SECS=0: steps, no finish" "$(panel | grep -c 'CMDBUSY,0')" "0"
+cp "${TMP}/user-ini.pristine" "${USER_INI}"
 
 section "installer: when it must change nothing"
 

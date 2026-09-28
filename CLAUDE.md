@@ -2,34 +2,28 @@
 
 ## Releasing: every push is a version
 
-Commit and push only when asked - but when asked, this is the whole ritual,
-in order. The scripts and the firmware carry **one** version and move together
-even when only one side changed, because a build where the two differ is a
-build nobody can reason about.
+Commit and push only when asked; when asked, this is the whole ritual, in
+order. Scripts and firmware carry **one** version and move together even when
+only one side changed.
 
-**1. Decide the version.** `VERSION` holds the version of the *next* push. If
-it has already been tagged, the work since then needs a new number; if not,
-`VERSION` is already the one to push.
+**1. Decide the version.** `VERSION` holds the *next* push's version.
 
 ```bash
-V="$(cat VERSION)"
-git tag --list "v${V}"          # prints the tag => already pushed => bump
-./tools/bump-version.sh         # 0.4.0b -> 0.4.1b, keeping the beta mark
+git tag --list "v$(cat VERSION)"   # prints the tag => already pushed => bump
+./tools/bump-version.sh            # 0.4.0b -> 0.4.1b, keeping the beta mark
 ```
 
-`--set 0.5.0b` says it outright, and `--release` drops the `b` - **only when
-the user asks for it**, never on your own judgement. The script writes the
-number into `tty2oled-system.ini` and the sketch's `BuildVersion`, which are
-the only two places that need it as a literal.
+`--set 0.5.0b` sets it outright; `--release` drops the `b` - **only when the
+user asks**. The script writes `TTY2OLED_VERSION` in `tty2oled-system.ini` and
+`#define BuildVersion` in the sketch, the only literal copies. `--check` says
+whether all three agree; `tests/test-version.sh` fails the suite if not. The
+`b` is ours; the sketch's `runsTesting` keys on upstream's trailing `T`.
 
-**2. Write the changelog.** A new `## <version> — <date>` section at the top of
-`CHANGELOG.md`, describing what changed for someone running it, not what was
-edited.
+**2. Changelog.** A new `## <version> — <date>` at the top of `CHANGELOG.md`,
+written for someone running it, not a list of edits.
 
-**3. Prove it - all three boards, and the release itself.** The version bump
-alone changes the firmware, so the binary is stale until it is rebuilt; and
-CI builds every board against **today's** libraries, which is not what the
-workstation has:
+**3. Prove it - all three boards, and the release.** The bump alone makes the
+binary stale, and CI builds against **today's** libraries:
 
 ```bash
 arduino-cli lib upgrade                                 # what CI will install
@@ -42,16 +36,13 @@ done
 ./tools/make-release.sh --out /tmp/rel --tag "v$(cat VERSION)" --notes /tmp/rel.md
 ```
 
-Three boards because a build that only ever runs for lolin32 is a CI failure
-waiting on a tag - that is exactly how `v0.4.0b` was spent. **lolin32 last**
-because `deploy-mister.sh --firmware` flashes the newest `merged.bin` in any
+A lolin32-only build is how `v0.4.0b` was spent. **lolin32 last** because
+`deploy-mister.sh --firmware` flashes the newest `merged.bin` in any
 `build-out-*`, and the hardware here is a LOLIN32. `make-release.sh` with the
-real `--tag` and `--notes` is the whole release, built locally: it runs the
-checks CI runs, and the test suite it belongs to fails on any two assets whose
-names differ only in case, which is how `v0.4.1b` was spent.
+real `--tag`/`--notes` runs CI's checks; its suite fails on two asset names
+differing only in case (how `v0.4.1b` was spent).
 
-**4. Commit, tag, push.** The tag is what makes "which firmware is on the
-display" answerable from the repo.
+**4. Commit, tag, push.**
 
 ```bash
 git add -A
@@ -67,16 +58,12 @@ git tag -a "v$(cat VERSION)" -m "tty2oled+ $(cat VERSION)"
 git push && git push --tags
 ```
 
-The tag push is also the release. CI (`.github/workflows/ci.yml`) runs every
-suite and builds the firmware for all three boards on every push; on a `v*`
-tag it then builds the title index, runs `tools/make-release.sh` and publishes
-a GitHub release - which is what **Update** in the `tty2oledplus` menu on every
-MiSTer installs from. Watch it through: `gh run watch`. It refuses a tag that is not `VERSION`
-and a version with no `CHANGELOG.md` section, so steps 1 and 2 are enforced
-there too.
-
-Watch it through to the **Release** job, not just to green tests, and check
-that the assets are actually served before telling anyone it is out:
+CI (`.github/workflows/ci.yml`) runs every suite and builds all three boards
+on every push; on a `v*` tag it builds the title index, runs `make-release.sh`
+and publishes the GitHub release that the launcher's **Update** installs from.
+It refuses a tag that is not `VERSION` and a version with no changelog
+section. Watch it through to the **Release** job and check the assets are
+served before saying it is out:
 
 ```bash
 gh run watch "$(gh run list --branch "v$(cat VERSION)" --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status
@@ -85,2413 +72,836 @@ curl -fsSLI -o /dev/null -w '%{http_code}\n' \
   https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/VERSION
 ```
 
-**A tag CI rejects is spent.** Nothing was published, but the number is used:
-fix the fault, bump again (step 1), and let the failed tag stand. Do not move
-or delete a pushed tag. `0.4.0b` and `0.4.1b` are both in `CHANGELOG.md` as
-tagged-but-never-released for that reason, and `0.4.2b` was the first release
-anyone could install.
+**A tag CI rejects is spent.** Fix, bump again, let the failed tag stand;
+never move or delete a pushed tag. (`0.4.0b`, `0.4.1b` are in the changelog as
+tagged-never-released; `0.4.2b` was the first installable.)
 
-**5. Flash, don't just deploy.** The firmware version moved with the scripts,
-so a script-only deploy leaves the display a version behind and the daemon
-will say so in `/tmp/tty2oled`:
+**5. Flash, don't just deploy** - a script-only deploy leaves the display a
+version behind, and the daemon says so in `/tmp/tty2oled`:
 
 ```bash
 MISTER=root@192.168.1.206 ./tools/deploy-mister.sh --firmware --flash
 ```
 
-`MiSTer.local` does not resolve on this workstation. The deploy keeps working
-between releases exactly as before - it is only that the MiSTer then holds the
-released version, so **Update** finds nothing to do until the next
-one (`--force` overrides that).
+`MiSTer.local` does not resolve here. The MiSTer then holds the released
+version, so **Update** finds nothing until the next one (`--force` overrides).
 
-**Skip this step when the user wants to test the install path themselves.**
-Then the display is *meant* to be a version behind, so that
-`tty2oledplus_install` has a reason to flash it, and the MiSTer is wiped
-first (install folder, both Scripts entries, the `user-startup.sh` line, the
-daemon, `/tmp` and `/run` leftovers, and `tty2oled-bootimg.sh clear`) so the
-run is a genuine first install.
-
-`./tools/bump-version.sh --check` at any time says whether the three copies
-still agree; `tests/test-version.sh` fails the suite if they do not. The
-reasoning behind all of it is under [Versioning](#versioning) below.
+**Skip step 5 when the user wants to test the install path.** Then wipe the
+MiSTer first - install folder, both Scripts entries, the `user-startup.sh`
+line, the daemon, `/tmp` and `/run` leftovers, `tty2oled-bootimg.sh clear` -
+so `tty2oledplus_install` is a genuine first install with a reason to flash.
 
 ---
 
-**tty2oled+** is a fork of
-[venice1200/MiSTer_tty2oled](https://github.com/venice1200/MiSTer_tty2oled),
-GPLv3 like upstream. The work lives on `main`, which is upstream's `50c08ac`
-plus this fork. It was written on `feature/game-metadata`, since merged and
-deleted. `main` is what the repository shows a visitor and what a
-clone gets, which is why the fork's own README had to be on it.
+## What this is
 
-The install folder **is** the fork's own: `/media/fat/tty2oledplus`, where
-upstream uses `/media/fat/tty2oled`, so neither updater can overwrite the
-other's files. It **replaces** upstream, though, rather than sitting beside it:
-the two would fight over one serial port, and upstream's boot hook would start
-its daemon beside ours on every reboot. So while `/media/fat/tty2oled` holds
-upstream's `tty2oled.sh` or `S60tty2oled`, three things refuse and say how to
-remove it - the installer (before it changes anything), the deploy
-(before copying anything) and `S60tty2oled start` (into `DAEMONLOG` as well,
-since nobody reads stdout at boot). `stop` and `status` still work. The README's
-move-the-folder migration satisfies all three.
+A fork of [venice1200/MiSTer_tty2oled](https://github.com/venice1200/MiSTer_tty2oled),
+GPLv3, on `main` (upstream `50c08ac` plus this fork). Upstream shows one
+picture per **core**; this shows the **game**.
 
-Everything else deliberately keeps the upstream spelling: the script and ini
-filenames, the `S60tty2oled` init script, the NVS namespace and the serial
-protocol. Renaming those buys nothing and breaks every set of instructions on
-the internet, every thread about the thing, and any muscle memory the user
-has.
-
-`TTY2OLED_PATH` in `tty2oled-system.ini` is the one definition; everything
-inside the ini derives from it. Two scripts cannot use it and name the folder
-outright, because they run *before* any ini is read: `S60tty2oled` and
-`tty2oled-read.sh`. `deploy-mister.sh` ships both for exactly that reason - a
-stock copy left in a moved install goes looking for `/media/fat/tty2oled` and
-finds nothing.
-
-Upstream shows one picture per **core**. This fork shows the **game**: arcade
-cores alternate artwork with an info card, console cores get a split layout
-with scrolling text and an icon panel.
+- **Install folder `/media/fat/tty2oledplus`** (upstream: `/media/fat/tty2oled`),
+  so neither updater overwrites the other. It **replaces** upstream (one serial
+  port; two boot hooks would start two daemons): while `/media/fat/tty2oled`
+  holds upstream's `tty2oled.sh` or `S60tty2oled`, the installer, the deploy
+  and `S60tty2oled start` refuse (start also logs to `DAEMONLOG`); `stop` and
+  `status` still work. The README's move-the-folder migration satisfies all.
+- **Everything else keeps upstream's spelling** - script/ini names,
+  `S60tty2oled`, NVS namespace, serial protocol - so existing instructions and
+  muscle memory keep working.
+- `TTY2OLED_PATH` in `tty2oled-system.ini` is the one definition.
+  `S60tty2oled` and `tty2oled-read.sh` run before any ini and name the folder
+  outright; the deploy ships both for that reason.
+- Upstream's `installer.sh`, `update_tty2oled*.sh`, `local_flasher.sh`,
+  `tty2oleddb.json` and their ini keys are **not part of the fork**: they pull
+  upstream over a local install. The boot hook they used to wire is now
+  `tools/tty2oled-boothook.sh`, run by the deploy.
 
 ## Layout of the change
 
+W = runs on the workstation, M = runs on the MiSTer.
+
 | Path | What it is |
 |---|---|
-| `tty2oled-meta.sh` | New. Turns MiSTer's `/tmp` state files into display metadata. |
-| `tty2oled.sh` | Daemon. Sends `CMDMETA`/`CMDICON`, watches game state, not just the core. |
-| `tty2oled-system.ini` | New settings (see below). |
-| `VERSION`, `CHANGELOG.md` | One version for scripts and firmware; an entry per release. |
-| `tools/bump-version.sh` | Moves that number, and `--check`s that every copy agrees. |
-| `coretypes.ini` | New. `corename=console\|computer\|arcade`, consulted before folder guessing. |
-| `MiSTer_SSD1322_USB/metadisplay.h` | New. Arcade card + console split layout. |
-| `MiSTer_SSD1322_USB/bootscreen.h` | New. LittleFS-backed custom boot image, and the reserved band below it. |
-| `MiSTer_SSD1322_USB/bootlogo.h` | New. The built-in 256x54 boot picture, generated. |
-| `MiSTer_SSD1322_USB/bootlogo.png` | New. The art it is generated from. |
-| `MiSTer_SSD1322_USB/contrastfade.h` | New. Every contrast change fades; base level times the transition veil. |
-| `MiSTer_SSD1322_USB/pagefade.h` | New. A metadata page turn fades only the rows that change. |
-| `MiSTer_SSD1322_USB/fadetransition.h` | New. `TRANSITION=-2`: palette-and-contrast fade out, black, fade in. `30`-`39`: the same, sliding. |
-| `MiSTer_SSD1322_USB/bootoutro.h` | New. The boot screen as the menu's picture, and the power-on outro. |
-| `MiSTer_SSD1322_USB/busybar.h` | New. The boot sweep as a busy bar in the band, for update_all's downloader. |
-| `MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino` | Includes the two headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | 2176 checks, no hardware needed. |
-| `tools/build-title-index.sh` | Builds the CRC32 title index from libretro-database. Workstation. |
-| `tools/mamexml2index.awk` | Year/publisher for arcade-lineage consoles out of a MAME XML. |
-| `tools/png2gsc.py` | PNG -> the 4bpp `.gsc` the display wants. Workstation **and MiSTer**: three backends, the third being a PNG reader built on the standard library, which is what the MiSTer has. |
-| `tools/wheels2gsc.py` | A folder of arcade wheel logos (colour PNG, transparent) -> 256x64 `.gsc` banners: crop, fit, colour to grey, level stretch; `--nodupes` removes identical pictures into `duplicates.txt`. Pillow. Workstation. See [Arcade wheel logos](#arcade-wheel-logos-not-wired-in-yet). |
-| `tools/gscpack.py` | A folder of 256x64 `.gsc` banners -> `<name>.bin` (raw 8192-byte frames) and `<name>.idx` (`set\|frame`, duplicates folded in). Workstation. |
-| `tools/mistergscpreview` | Shows `.gsc` files on the real panel over SSH: stops the daemon, steps through them, restarts it on Ctrl-C/q. `-r` shows a grey ramp for judging which levels the panel tells apart. Workstation. |
-| `tools/make-screenshots.sh`, `tools/screenshots/` | The README's screenshots. Compiles the display headers against the real GFX/u8g2 libraries, composes each screen into a real framebuffer and writes `docs/img/*.png`. Re-run it when a layout changes. Workstation. |
-| `pics/icon/` | The icons themselves, 27 core names over 26 systems; same path as on the MiSTer. |
-| `pics/banner/` | 192 console, computer and utility core banners. Upstream's, vendored and converted to one format; the arcade marquees and the alternatives are gone. |
-| `pics/arcade/` | `wheels.bin` + `wheels.idx`: the arcade wheel logos, 12235 MAME sets in 4621 pictures. Built by `wheels2gsc.py` and `gscpack.py`. |
-| `pics/user/` | The user's own banners. Empty here, and no release writes into it. |
-| `pics/boot.png` | The user's boot screen, if they have one. Gitignored; no release writes it. |
-| `tools/tty2oled-bootimg.sh` | Installs/clears the stored boot screen. **On the MiSTer**. |
-| `tools/dat2index.awk`, `tools/index-emit.awk` | The DAT parser and index emitter it drives. |
-| `tools/build-tty2oled.sh` | Builds the firmware with arduino-cli. Runs on the workstation. |
-| `tools/deploy-mister.sh` | Pushes this working copy to the MiSTer over SSH. Workstation. |
-| `tools/tty2oled-boothook.sh` | Adds the boot hook to `user-startup.sh`. Fed to the MiSTer on stdin by the deploy. |
-| `tools/manifest.sh` | What an install is made of. Read by the deploy and the release, so they agree. |
-| `tools/make-release.sh` | Builds the release assets into `dist/`. CI runs it on a tag; so can you. |
-| `tools/tty2oledplus.sh` | The launcher: the one Scripts menu entry, a `dialog` menu of Settings / Update / Scrape metadata / Uninstall. Lives in `/media/fat/Scripts`. **On the MiSTer**. |
-| `tools/tty2oledplus_uninstall.sh` | Removes the install, the boot hook, the Scripts entry and the stored boot image. Lives in the install folder, runs from a copy in `/tmp`. **On the MiSTer**. |
-| `tools/tty2oledplus_settings.sh` | The `dialog` settings editor for `tty2oled-user.ini`. Lives in the install folder. **On the MiSTer**. |
-| `tools/tty2oledplus_scrape.sh` | Scrape metadata's menu: which systems to import. Lives in the install folder; the launcher's third entry. **On the MiSTer**. |
-| `tools/tty2oledplus_scrape.py` | The importer: each system's `games/<folder>/gamelist.xml` into `scraped/<system>.txt`. Standard library only. **On the MiSTer**. |
-| `tools/history2gamelist.py` | MAME's `history.xml` -> a `gamelist.xml` of arcade descriptions for the sets in a ROM folder, plus `2048.txt`, the ones it shortened to fit the firmware. No scraper, no quota. Workstation. See [Arcade descriptions from history.xml](#arcade-descriptions-from-historyxml). |
-| `tools/tty2oledplus_install.sh` | The starter users drop in `/media/fat/Scripts`: fetches the latest installer, checks it, runs it, removes itself. **On the MiSTer**. |
-| `tools/tty2oledplus_update.sh` | Installs/updates from a GitHub release. Lives in the install folder; the launcher's **Update**. **On the MiSTer**. |
-| `.github/workflows/ci.yml` | Tests and firmware on every push; the release on a `v*` tag. |
-| `tools/flash-mister.sh` | Flashes the firmware. Runs **on the MiSTer**. |
-| `tools/fw-segments.py` | Which parts of a merged image to write, so the boot image and settings survive. **On the MiSTer**. |
-| `tools/tty2oled-diag.sh` | Dumps MiSTer's state files and what they parse to. **On the MiSTer**. |
-| `tools/tty2oled-capture.sh` | Records every state change while you load games. **On the MiSTer**. |
+| `tty2oled-meta.sh` | MiSTer's `/tmp` state files -> display metadata (`build_meta`). |
+| `tty2oled.sh` | Daemon. Watches game state as well as the core; sends `CMDMETA`/`CMDICON` etc. |
+| `tty2oled-system.ini`, `tty2oled-user.ini` | Defaults; the user's overrides (sourced after, never shipped over). |
+| `VERSION`, `CHANGELOG.md`, `tools/bump-version.sh` | One version; an entry per release; moves/checks it. |
+| `coretypes.ini` | `corename=console\|computer\|arcade`, consulted before folder guessing. |
+| `MiSTer_SSD1322_USB/metadisplay.h` | Arcade card + console split layout. |
+| `.../bootscreen.h`, `bootlogo.h`, `bootlogo.png` | LittleFS boot image + reserved band; built-in 256x54 logo (generated from the PNG). |
+| `.../contrastfade.h` | Every contrast change fades; base level x transition veil. |
+| `.../pagefade.h` | A page turn fades only the rows that change. |
+| `.../fadetransition.h` | `TRANSITION=-2` fade; `30`-`39` sliding fades. |
+| `.../bootoutro.h`, `busybar.h` | Boot screen as menu picture + power-on outro; the sweep as a busy bar. |
+| `.../MiSTer_SSD1322_USB.ino` | Includes the headers; LEDC shim for ESP32 core 3.x. |
+| `tests/` | ~2176 checks, no hardware. |
+| `tools/build-title-index.sh`, `dat2index.awk`, `index-emit.awk`, `mamexml2index.awk` | CRC32 title index from libretro-database (+ MAME XML for Neo Geo). W. |
+| `tools/png2gsc.py` | PNG -> 4bpp `.gsc`. W **and** M: Pillow, ImageMagick, or a stdlib PNG decoder. |
+| `tools/wheels2gsc.py`, `tools/gscpack.py` | Wheel PNGs -> 256x64 `.gsc` (`--nodupes`); pack into `.bin`+`.idx`. W. |
+| `tools/mistergscpreview` | Shows `.gsc` files on the real panel over SSH; `-r` grey ramp. W. |
+| `tools/make-screenshots.sh`, `tools/screenshots/` | README screenshots, rendered with the real GFX/u8g2 into `docs/img/*.png`. Re-run when a layout changes. W. |
+| `tools/history2gamelist.py` | MAME `history.xml` -> arcade `gamelist.xml` + `2048.txt`. W. |
+| `pics/icon/`, `pics/banner/`, `pics/arcade/`, `pics/user/` | See [Artwork folders](#artwork-folders). `pics/boot.png` is the user's, gitignored. |
+| `tools/build-tty2oled.sh` | Builds firmware with arduino-cli. W. |
+| `tools/deploy-mister.sh` | Pushes this working copy over SSH. W. |
+| `tools/tty2oled-boothook.sh` | Adds the boot hook to `user-startup.sh`; fed on stdin by the deploy. |
+| `tools/manifest.sh` | What an install is made of; read by deploy and release so they agree. |
+| `tools/make-release.sh` | Release assets into `dist/`. CI runs it on a tag. |
+| `tools/tty2oledplus.sh` | The launcher, the one Scripts entry: Settings / Update / Scrape metadata / Uninstall. M. |
+| `tools/tty2oledplus_{settings,scrape,update,uninstall}.sh`, `_scrape.py` | The launcher's entries, in the install folder. M. |
+| `tools/tty2oledplus_install.sh` | The starter users drop in Scripts. M. |
+| `tools/flash-mister.sh`, `tools/fw-segments.py` | Flashes firmware, writing only segments with data. M. |
+| `tools/tty2oled-bootimg.sh` | Sets/clears/queries the stored boot image. M. |
+| `tools/tty2oled-diag.sh`, `tty2oled-capture.sh` | Dump state files and what they parse to; record state changes. M. |
 
 ## What ends up on screen
 
-`build_meta` in `tty2oled-meta.sh` turns MiSTer's `/tmp` files into a kind, a
-title and an ordered field list; `sendmeta` puts it on the wire; the firmware
-composes it.
+`build_meta` -> kind, title, ordered fields; `sendmeta` puts it on the wire;
+the firmware composes it.
 
 | kind | layout |
 |---|---|
-| `arcade` | the game's wheel logo, then each page of the info card in turn, then the logo again - one step every `METADATA_INTERVAL`s |
-| `console` | split: "Now playing", a rule, the title, paged fields on the left - a page every `METADATA_INTERVAL`s, then the description page if there is one; an 86x64 icon on the right |
-| `computer` | untouched - full-screen artwork, as upstream |
-| `unknown` | as `computer`; metadata off |
+| `arcade` | wheel logo, then each card page, then the logo - a step every `METADATA_INTERVAL`s |
+| `console` | split: "Now playing", rule, title, paged fields left; 86x64 icon right; description page last |
+| `computer` / `unknown` | full-screen artwork as upstream (`unknown`: metadata off) |
 
-A console core launched **with** its game - a frontend, or a `.mgl` - would
-otherwise never show the core's own artwork at all: `CMDCOR` composes the split
-layout directly for console kinds. `core_bootscreen_time` holds the artwork
-first. The daemon decides *whether* (`sendcoreboot`, only from `senddata`, so
-only on a console core change); the firmware decides *when the hold starts*
-(the first `meta_tick` that finds `tfState` idle, so a fade in front of it is
-not counted). No `CMDCBOOT`, no hold - which is what a game loaded into a
-running core gets, and what `0` gets. With `0` and the game already known,
-the picture goes as `CMDAPD` - stored, not drawn - so the layout is the one
-transition rather than the artwork fading in only to fade straight out.
+**Core change wire order: `CMDMETAOFF`, picture, `CMDCBOOT`, `CMDMETA`,
+`CMDDESC`, `CMDICON`.** The firmware acts on each as it lands, so the order is
+the behaviour. `CMDMETA` first (up to 0.6.6b) started the transition before
+`CMDCBOOT` arrived, froze on the 8KB read, then jumped to black. `CMDCBOOT`
+before the picture started the hold's clock early and spent it on the
+transfer + fade. `test-wire.sh` checks the order; `test_meta_layout` replays it
+against the firmware.
 
-**A core change is sent in one order: `CMDMETAOFF`, the picture, `CMDCBOOT`,
-then `CMDMETA`, `CMDDESC`, `CMDICON`.** The firmware acts on each command as
-it lands - `loop()` runs `meta_tick` whenever the port is quiet - so the order
-*is* the behaviour, and two orders were wrong:
+- **Core boot hold** (`core_bootscreen_time`): the daemon decides *whether*
+  (`sendcoreboot`, only on a console core change); the firmware decides *when*
+  (the first `meta_tick` with `tfState` idle). No `CMDCBOOT`, no hold. With `0`
+  and the game already known the picture goes as `CMDAPD` (stored, not drawn).
+  The hold ends in a transition (`meta_transitionToConsole`: render, snapshot
+  to `metaBin`, `srcBin` there, `oled_transition(tEffect)`); plain
+  `meta_showConsole` is a cut, used by every marquee tick.
+- `meta_tick` returns early while `tfState != TF_IDLE`: a transition animates
+  copy-to-copy and overwrites anything drawn in between.
+- MiSTer publishes the core seconds before the game, so `CMDCBOOT` is armed on
+  every console core change; a game arriving after the hold is drawn at once.
 
-- `CMDMETA` first, as it was up to 0.6.6b: a core launched with its game had
-  the transition to the layout under way before the `CMDCBOOT` behind it
-  arrived. The old screen took a palette step or two, froze for the picture's
-  blocking 8KB read, and then - `tf_stepsDue()` owed the whole fade - jumped
-  to black before the artwork faded in.
-- `CMDCBOOT` before the picture: the first idle tick, in the 50ms before
-  `CMDCOR` arrived, started the hold's clock, and the ~1s transfer plus a
-  2.6s Fade spent all of it. The artwork faded in and straight back out.
+**Update screens transition like a picture.** `CMDCOR` if the pack has
+`update_all.gsc`, else `CMDMSG,<effect>,<text>`; `CMDBUSY`'s 4th field does the
+same for a labelled bar. The effect is last because the label used to be the
+rest of the line (old installs keep working; `metasanitize` makes a comma
+after the label unambiguous). The downloader's bar sends **no** effect - the
+panel is already the update_all screen. `meta_beginTransitionText` +
+`meta_transitionToBuffer` are the text-screen idiom (`busy_showLabel`,
+`msg_parse`); `metaBin` is free because every update screen follows
+`CMDMETAOFF`.
 
-After the picture, the panel is either mid-Fade (so the stamp waits for it)
-or already showing the artwork (a wipe blocks until it is done), and the
-metadata, description and icon all land while the firmware is waiting. Both
-are held by tests: `test-wire.sh` checks the order `senddata` puts on the
-wire, and `test_meta_layout` replays it against the firmware and fails on
-either of the two old ones.
+- **Self-update** (`selfupdate_pass`): the updater stops the daemon to use the
+  port, so the daemon sends `CMDMETAOFF` + `CMDBUSY,1,<SELF_UPDATE_TEXT>` and
+  no banner. `oldcore` cleared. The uninstaller is deliberately not matched.
+  `SELF_UPDATE_SCREEN="no"` disables. `selfupdate_running` matches the name,
+  including the pre-0.4.8b spelling.
+- **The updater then drives the panel itself** (`panel_*` in
+  `tty2oledplus_update.sh`, firmware >= 0.7.0b only, `T2OP_PANEL` in tests):
+  the same label (a repeat, so ignored), a `CMDBUSYLINE` per step, "Flashing
+  firmware - the display will restart" before the flash, `panel_reopen`
+  (asks `CMDHWINF` again - old firmware flashed to new gets the finish), then
+  `CMDBUSY,0,<UPDATE_DONE_TEXT>` + a line, and **the daemon is started last**,
+  after `panel_hold` has waited out `UPDATE_DONE_SECS`. A `die` shows Update
+  Failed from `on_exit`. The update *to* a version is run by the previous
+  updater, so a new panel feature shows one update late.
+- **update_all** overrides everything while a process whose cmdline names it
+  exists (`updateall_pass` greps `/proc/*/cmdline` every `UPDATE_ALL_POLL`s;
+  it has no state file and may run inside a core). Sends `CMDMETAOFF` and
+  `update_all.gsc` (`pics/user`, then `pics/banner`) cropped to 54 rows, or the
+  name as text; on exit clears `oldcore` and `META_WIRE_LAST`.
+  `UPDATE_ALL_SCREEN="no"` disables. While the downloader runs
+  (`/tmp/ua_downloader_{bin,latest.zip,dd.pyz}`, not `--list-dbs`):
+  `CMDBUSY,1,<UPDATE_ALL_TEXT>`, then `CMDBUSY,0` and the banner again.
+  The bar waits out a Fade and stops on any command not in `boot_quietCommand`.
+- **update_all's own words** (firmware >= 0.7.0b, `fw_atleast`, from
+  `checkversion`): update_all flushes every screen line to
+  `/tmp/update_all_print.log` (downloader output relayed live). `ua_parselog`
+  takes the last useful line (no rules, dots, `DUPLICATED:`) -> `CMDBUSYLINE`,
+  polled every 1s while it follows. The file is the **previous run's** until
+  update_all recreates it, so it is trusted only once its inode/mtime differs
+  from when update_all was seen (`UA_LOG_REF`). `Sequence:` latches `UA_MAIN`:
+  the bar stays from there to the end, downloader or not. `Success!` /
+  `There were some errors in the Updaters` is the verdict -> `ua_done`
+  (`CMDBUSY,0,<UPDATE_DONE_TEXT>` + "Finished in <run time>"), timed from
+  there; on exit `ua_holddone` sleeps whatever is left of `UPDATE_DONE_SECS`
+  (update_all's log viewer can outlast it). A verdict printed just before
+  exit is read on the exit pass; with no print log, `update_all.log` if it is
+  newer than the run.
+- **Degauss** is a Scripts entry over the menu core (`CORENAME` stays
+  `MENU`; MisterZine, by contrast, is an `.mgl` and a real `CORENAME`).
+  `readcore` swaps `MENU` for `degauss` while `degauss_running` finds its
+  binary by argv[0] (busybox grep has no `-z`); `findpicture` looks it up
+  `exact`. `degauss_possible` makes both waits poll every `UPDATE_ALL_POLL`s
+  on MENU/degauss, since starting or quitting it changes no state file.
+- Console fields page every `METADATA_INTERVAL`s (`meta_pageDwellMs`; `0`
+  never turns, so never reaches the description). Redraws only on movement.
 
-The hold **ends in a transition**, not a cut: `meta_transitionToConsole` renders
-the layout, snapshots it to `metaBin` and points `srcBin` there, exactly as
-`meta_showCard` does, then hands it to `oled_transition(tEffect)`. So a fade
-takes the artwork first (`transition_prepare`) and animates to the layout. The
-plain `meta_showConsole` stays a cut, because it is what every marquee tick
-calls.
-
-`meta_tick` now returns early while `tfState != TF_IDLE`, for the reason
-`pf_active()` already did: a transition animates from a copy towards a copy, so
-anything drawn into the framebuffer between two steps is overwritten by the
-next. Without it a long title's marquee would redraw the whole frame every 40ms
-for the length of a fade.
-
-**An update screen is a change of picture, so it arrives like one.** Moving
-to the update_all screen or the updater's own screen replaces whatever core
-was on the panel, and that deserves the same transition a core change gets.
-Two paths carry it: `CMDCOR` already did, for a MiSTer whose artwork pack has
-an `update_all.gsc`, and `CMDMSG,<effect>,<text>` is the one for the far more
-common case where it has not - a bare line is what the firmware draws for a
-command it does not recognise, and there is nothing on it to hold an effect.
-`CMDBUSY`'s optional fourth field does the same for a labelled bar.
-
-**The downloader's bar deliberately does not transition.** By the time it
-starts, the panel is already the update_all screen: nothing is being replaced,
-and fading from one message to another would announce a change that did not
-happen. So `updateall_pass` sends `CMDBUSY,1,<label>` with no effect while
-`selfupdate_pass` sends one - the daemon is what knows which case it is in,
-and the firmware only does as it is told. The effect is the last field rather
-than before the label because the label used to be the whole rest of the line
-and an install one version behind must keep working; `metasanitize` strips
-commas from everything the daemon sends, so a comma after the label is
-unambiguously ours.
-
-**A screen built out of text goes through the same door as a picture.**
-`meta_beginTransitionText` takes the old picture before the caller draws over
-it, and `meta_transitionToBuffer` snapshots what was drawn into `metaBin` and
-points `srcBin` at it - the idiom `meta_showCard` uses, split in two so
-anything that renders its own screen can borrow it. `busy_showLabel` and
-`msg_parse` are the two callers. `metaBin` is free whenever they run, because
-every update screen is preceded by `CMDMETAOFF`; that is the same argument
-`oled_showStartScreen` makes for composing into it.
-
-**This fork's own updater overrides even that.** `tty2oledplus_update` stops
-the daemon within seconds of starting - it wants the serial port for the
-display's version and the flash - so `selfupdate_pass` is the one chance to
-say what is happening: `CMDMETAOFF`, then `CMDBUSY,1,<SELF_UPDATE_TEXT>`, and
-no banner, because the banner may be replaced mid-run. The message then stays
-up precisely *because* the daemon is gone - nothing else writes to the panel
-until the flash resets the board. `oldcore` is cleared so everything goes out
-again when the daemon returns. The **uninstaller** is deliberately not
-matched: it stops the daemon too, and a display saying "Updating" about
-software being removed would be a lie. `SELF_UPDATE_SCREEN="no"` turns it off.
-
-**update_all overrides all of it.** While a process whose command line names
-`update_all` exists, the daemon sends `CMDMETAOFF` and `update_all.gsc` (exact
-name; `pics/user`, then `pics/banner`), or the bare name as text when
-there is none, and does nothing else until it exits - then clears `oldcore`
-and `META_WIRE_LAST` so the core and game go out again in full. It has no
-state file and does not touch `CORENAME` (MiSTerZine runs it from inside a
-core), so the process is the only signal: `updateall_pass` greps
-`/proc/*/cmdline` every `UPDATE_ALL_POLL` seconds, and the upstream path's
-`inotifywait` gained a timeout for it. `UPDATE_ALL_SCREEN="no"` turns it off.
-
-The picture is cropped to 54 rows (the daemon sends 6912 bytes of it and 1280
-of black), which frees the boot band for the **busy bar**:
-`CMDBUSY,1,UPDATING` while update_all's downloader runs, `CMDBUSY,0` after -
-and the banner is sent again then, because the label blacked it out. The
-download is the part that takes minutes, so it gets the whole panel:
-`UPDATE_ALL_TEXT` above the bar and nothing else. update_all runs the
-downloader from `/tmp/ua_downloader_{bin,latest.zip,dd.pyz}`, so that is what
-`downloader_running` matches - except with `--list-dbs`, a query the settings
-screen makes, which is not an update. The bar is `busybar.h`, the boot sweep
-at full width ticked from `loop()`; it waits out a Fade and stops dead on any
-command `boot_quietCommand` does not list.
-
-The console title marquees when it overflows the column, and the field list
-pages every `METADATA_INTERVAL` seconds when there is more than a page - the
-same setting the arcade card alternates by. Up to 0.6.5b it was a fixed 2.5s,
-which turned pages faster than they could be read; `meta_pageDwellMs` is the
-one place that says how long, and `0` never turns a page (so never reaches the
-description either). Both only redraw when
-something actually moves.
-
-Where a field comes from:
+Console fields (`METADATA_FIELDS` picks and orders them):
 
 | field | source |
 |---|---|
-| title | `CURRENTPATH` cleaned by `clean_romname`, upgraded to the index's canonical title when the game resolves |
-| System | `CORENAME`, renamed through `names.txt` |
-| Region | the `(USA)` group in the filename, or the index |
-| Year, Company, Genre, Developer | the index only - a filename cannot supply them |
-| Format | the file extension, recovered off disk when MiSTer stripped it |
+| title | `CURRENTPATH` via `clean_romname`, upgraded to the index's title on a hit |
+| System | `CORENAME` through `names.txt` |
+| Region | `(USA)` in the filename, or the index |
+| Year, Company, Genre, Developer | index only |
+| Format | extension, recovered off disk when MiSTer stripped it |
 
-`METADATA_FIELDS` picks which of those reach the screen and in what order.
-That table is the console vocabulary. Arcade has its own, all of it out of
-the `.mra` sitting in `STARTPATH`:
+Arcade fields, all from the `.mra` in `STARTPATH`, read in **one** `awk` pass
+(`parse_mra`; a `sed` per tag cost most of a second on the DE10-Nano):
+`<name>` title; Year, Manufacturer, Region, Platform, Version by tag; Genre
+from `<catver>` else `<category>`; Players; Controls from `<joystick>` or a
+button count; Buttons = first `count` of `<buttons names>`; Orientation from
+`<rotation>`; Set/Core/MAME from `<setname>`/`<rbf>`/`<mameversion>`; Author
+from `<about author>`. `ARCADE_FIELDS` (short, paired) and
+`ARCADE_FIELDS_WIDE` (a row each) pick them; `ARCADE_PINNED` must be a leading
+run of `ARCADE_FIELDS`. Card labels are abbreviated (`Manufctr`, `Orient`) by
+`_arcade_display_label`.
 
-| field | tag |
-|---|---|
-| title | `<name>` |
-| Year, Manufacturer, Region, Platform, Version | the tag of that name |
-| Genre | `<catver>` - "Platform / Run Jump" - falling back to `<category>` |
-| Players | `<players>` |
-| Controls | `<joystick>`, or a button count when the board has no stick |
-| Buttons | the first `count` of `<buttons names="...">`; the rest are the cabinet's own |
-| Orientation | `<rotation>`, capitalised |
-| Set, Core, MAME | `<setname>`, `<rbf>`, `<mameversion>` |
-| Author | the `author` attribute of `<about>` |
-
-Two ini lists pick and order them, because the values are two shapes:
-`ARCADE_FIELDS` for the short ones, which pair up two to a row, and
-`ARCADE_FIELDS_WIDE` for the ones that need a row to themselves.
-`ARCADE_PINNED` is the grid row repeated above the wide pages, and must be the
-first names in `ARCADE_FIELDS` - it is the top row of the grid, and a row
-cannot start halfway down the list. Genre, Platform and Version are known but
-listed in neither by default.
-
-The labels on the card are abbreviated - `Manufctr`, `Orient` - because half a
-row is about fifteen characters. The ini names are not: `_arcade_display_label`
-maps one to the other, so `ARCADE_FIELDS` stays readable.
-
-**Nothing built for a card may contain a comma.** `metasanitize` replaces one
-with a space, because the optional pinned count in `CMDMETA` is recognised by
-being digits followed by a comma. `Attack/Jump`, not `Attack, Jump`.
-
-`parse_mra` reads the lot in **one** `awk` pass rather than a `sed` per tag:
-seventeen tags at three processes each is most of a second on a DE10-Nano,
-and it lands on every arcade core change. The same pass pulls the two
-attributes - `<buttons names=... count=...>` and `<about author=...>` - by
-locating them in a lowercased copy of the line, which is safe because
-`tolower` cannot change a length.
+**Nothing built for a card may contain a comma** - `metasanitize` turns it to
+a space (`Attack/Jump`, not `Attack, Jump`).
 
 ## Console layout, row by row
 
-64 rows is the whole budget, so every gap is a named constant in
-`metadisplay.h` and these are the numbers to tune if it looks wrong on glass.
-Each `CON_GAP_*` is a count of **blank rows**, and each following element's
-top row is one past the last blank one - that `+1` is easy to leave out, and
-leaving it out silently closes the gap rather than breaking anything.
+Every gap is a named constant in `metadisplay.h`. Each `CON_GAP_*` counts
+**blank rows**; the next element's top is one past the last blank - leaving
+out that `+1` silently closes the gap. `test_meta_layout.cpp` derives each gap
+back from the constants.
 
 ```
 row  0..11  "Now playing"        baseline CON_HEADER_Y   pips at the right, blinking
 row 12      blank                         CON_GAP_HEADER
 row 13      rule                          CON_RULE_Y
-row 14      blank                         CON_GAP_RULE
-row 15      blank                         CON_GAP_RULE is 2
+row 14..15  blank                         CON_GAP_RULE is 2
 row 16..30  game title           baseline CON_TITLE_Y
 row 31      blank                         CON_GAP_TITLE
 row 32..38  field 0              baseline CON_FIELD_Y0   pinned
-row 40..46  field 1                       + CON_FIELD_PITCH  pinned
-row 48..54  field 2                                      paged
-row 56..62  field 3                                      paged
+row 40..46  field 1                       + CON_FIELD_PITCH (8)
+row 48..54  field 2
+row 56..62  field 3
 ```
 
-Four field rows, where there used to be three. Two came free: the page
-indicator moved up beside the header, which released the bottom of the panel,
-and `CON_FIELD_PITCH` dropped from 9 to 8 - a 7px font with one blank row
-between, which pays for the gap under the title.
-
-`tests/firmware/test_meta_layout.cpp` derives each gap back out of the
-constants and compares it to the `CON_GAP_*` it came from, so changing one
-number cannot quietly overlap two elements. It caught exactly that while this
-was written: `CON_TITLE_Y` was missing its `+1` and the title sat directly on
-the rule.
-
-## Field alignment
-
-Labels are drawn at the text column's left edge; values share a column of
-their own, `meta_valueOffset()` - the widest label across **every** field,
-plus 5. Measured across all of them rather than the visible page, so the
-column does not shift when the pager turns over, and capped at half the text
-width so one long label cannot push the values off screen. A label wider than
-the column still gets its value placed after itself rather than drawn on top.
-
-Values used to be packed immediately after each label, so every row started
-its value wherever its own label ended - `Year` is shorter than `System`, so
-their values sat in different places and the rows read as misaligned. The
-labels were always fine; it was only ever the values.
+**Field alignment:** labels at the column's left edge; values share one column,
+`meta_valueOffset()` = widest label across **every** field + 5 (so it does not
+shift between pages), capped at half the text width.
 
 ## Arcade card, row by row
 
-The console layout's top half, stretched across the whole panel: the same
-`Now playing` header, rule and title, in the same fonts and on the same rows,
-and the field rows on the console's pitch - `CARD_FIELD_*` are the `CON_FIELD_*`
-constants by another name. There is no icon, so the corner it would take above
-the rule is closed off by a vertical rule at `CARD_CELL_X` (188), running from
-the top edge down to the one under the header, and the cell it makes says
-`Arcade` in the 5x7 font, centred. The pips sit hard against that rule,
-`CARD_PIP_GAP` columns short of it, and the header is clipped short of them.
+The console's top half across the whole panel: same header, rule, title,
+fonts and rows; `CARD_FIELD_*` are the `CON_FIELD_*` constants. A vertical
+rule at `CARD_CELL_X` (188) closes off a cell saying `Arcade` (5x7); the pips
+sit `CARD_PIP_GAP` short of it.
 
 ```
 row  0..11  "Now playing"   pips  |  Arcade   CON_HEADER_Y, CARD_CELL_Y
-row 13      rule, full width, met by the cell's   CON_RULE_Y
-row 16..30  title, full width                     CON_TITLE_Y
-row 32..38  row 0                        baseline CARD_FIELD_Y0
-row 40..46  row 1                                 + CARD_FIELD_PITCH is 8
-row 48..54  row 2
-row 56..62  row 3
+row 13      rule, full width                  CON_RULE_Y
+row 16..30  title, full width                 CON_TITLE_Y
+row 32..62  four rows                         CARD_FIELD_Y0, pitch 8
 ```
 
-Everything down to the title is on every page, and outside the page fade's
-rectangle.
-
-Four rows, and a row carries either two fields or one - which it is depends on
-the page, not the row:
-
-```
-page 0   Year     1993          Manufctr  Midway
-         Players  4             Rating    8/10
-         Developr Midway        Region    World
-         Orient   Horizontal    Core      blahmid_tunit
-
-page 1   Author   rejectedcoins Set       nbajam
-         MAME     0289
-
-page 2   Year     1993          Manufctr  Midway
-         Controls 8-way
-         Buttons  Turbo/Shoot / Block/Pass / Steal
-
-page 3   the description, when a gamelist gave one
-```
-
-Rating and Developer are there only for a set an imported gamelist
-describes. Without them the grid closes up: nine fields, with Players, is
-page 0 full and MAME alone on page 1 - which was a page turn, and eight
-seconds, spent on one field. So **a grid page that would hold a single field
-does not exist**: the field moves to the first wide page, on the right half
-of the first wide field's row, and that field gives up the half it was not
-using.
+Grid pages pair the leading `metaCompact` fields two to a row, reading
+across; wide pages give a row each to the rest, under a repeat of the pinned
+grid row; the description page is last.
 
 ```
 page 0   Year     1993          Manufctr  Midway
          Players  4             Region    World
          Orient   Horizontal    Core      blahmid_tunit
          Author   rejectedcoins Set       nbajam
-
 page 1   Year     1993          Manufctr  Midway
          Controls 8-way         MAME      0289
          Buttons  Turbo/Shoot / Block/Pass / Steal
 ```
 
-`meta_cardMerged` decides, once per `CMDMETA` (`cardMerge`, since it
-measures text and so selects the field font), and only when the wide value
-fits half a row as it is - a halved row that then had to scroll would trade a
-wasted page for an unreadable one. Only one field (two are a row, not a
-waste), only past page 0, never a pinned one, and only with a wide field to
-join. `meta_cardGridPages` counts the page away, so every paging function
-agrees without knowing; the renderer and `meta_cardValueWrap` are the two
-that draw or measure the shared row.
+- **A grid page holding a single field does not exist**
+  (`meta_cardMerged`, decided once per `CMDMETA`): the field moves to the
+  right half of the first wide field's row - only if that wide value fits half
+  a row unscrolled, only past page 0, never a pinned one.
+- `meta_cardGridPages`/`WideSlots`/`WidePages`/`PageCount` are the only paging
+  maths, so renderer and tick cannot disagree. `meta_cardColX` is the only
+  thing that knows column positions. No counts sent = one field per row.
+- Alternation: **artwork, pages, description, artwork**, each step with
+  `tEffect` (the last `CMDCOR`'s effect, not random).
+- The card marquees: long titles and wide values scroll. `meta_drawMarquee` is
+  the one marquee (offset modulo the string's wrap, so all values share
+  `valueScrollX`; `meta_cardValueWrap` decides the pause). `meta_drawField`
+  blacks out left of the value column and redraws the label, since
+  `meta_drawClipped` trims only on the right. The pause is timed from when the
+  card **lands** (`cardScrollArmed`), not from `meta_showCard`.
 
-The grid pages pair the leading `metaCompact` fields two to a row, reading
-**across**; the wide pages give a row each to the rest, under a repeat of the
-pinned grid row. `meta_cardColX` is the only thing that knows where a column
-starts, and the value offset is measured against `CARD_COL_W` so one shared
-column serves the paired rows and the full-width ones alike - `8-way` starts
-at the same x as `1993`.
+## Page turns, pips, pinned fields
 
-`meta_cardGridPages`/`meta_cardWideSlots`/`meta_cardWidePages`/
-`meta_cardPageCount` are the only things that work the paging out, so the
-renderer and the alternation tick cannot disagree about which page is next -
-the console pair made exactly that mistake once. With nothing paired and
-nothing pinned it degrades to one field per row, paged, which is what an older
-script that sends no counts gets.
+**A page turn fades only a rectangle** (`pagefade.h`): the paged rows, out,
+redraw, in, on sixteen palette steps. `meta_consolePagedRect` /
+`meta_cardPagedRect` derive it from the renderers' constants. No contrast veil
+(contrast is whole-panel). Byte-aligned: odd x rounds outwards, keeping the
+icon out. Borrows `fadeBin`; `pf_start` yields to a picture fade. During it
+`meta_tick` still advances the title marquee (`meta_titleAdvance`) and pips,
+composes, then `pf_reshow` writes the rectangle back at the current step.
+Anything taking the panel cancels it; a cancel mid-fade-out still does the
+redraw. Half its length, capped at 400ms.
 
-The alternation runs **artwork, page 0, page 1, artwork**: `meta_tick` moves to
-the next page while the card is up and only returns to the artwork after the
-last one - which is the description, when an imported gamelist gave the game
-one, and stays up until it has scrolled through rather than for an interval
-(see [Scrape metadata](#scrape-metadata-and-the-description-page)). Each step
-is a transition effect like any other.
+**Pips blink** every `PIP_BLINK_MS` (500) when there is more than one page
+(`pipLit`, `meta_pipTick`); relit on a page turn, `CMDMETA` and
+`meta_showCard`. Not activity - does not stop dimming.
 
-**The card marquees, like the console layout.** A title wider than the panel
-scrolls, and so does a wide row's value that will not fit its row - a
-cabinet's button names, typically. It used to be a still image by
-construction, dropping the title a font size rather than scrolling it; the
-title now shares the console's font, and the card is snapshotted into
-`metaBin` only for the transition *to* it. Once it is up, `meta_tick`
-redraws it the way the console's marquee does - compose, push - and goes
-quiet while a page fade or a transition owns the panel.
+**Pinned fields:** the first `metaPinned` are on every page; the rest page.
+Default pins System alone. The script decides, the firmware only counts:
+`meta_addfields_ordered` emits pinned names first and sends the count (and the
+card's `compact` count) as optional `CMDMETA` header fields - unambiguous
+because values are comma-free; `1943 The Battle...` is not a count because no
+comma follows. `meta_pinnedRows`/`meta_pageSlots`/`meta_pageCount` are the only
+paging maths. Pinning caps at rows-1. `META_PINNED_COUNT`/`META_COMPACT_COUNT`
+are reset in `meta_reset`, or a console game inherits the last card's pairing.
 
-`meta_drawMarquee` is the one marquee, for both layouts and the values. It
-takes the offset modulo the string's own wrap, which is seamless - at the wrap
-the trailing copy sits exactly where the first began - so every overflowing
-value on a page shares one counter, `valueScrollX`, and `meta_cardValueWrap`
-(the longest wrap on the page) decides when it pauses. A page turn starts it
-over. `meta_drawClipped` trims only on the right, so a value scrolling left
-would run on under its own label: `meta_drawField` blacks out the row left of
-the value column and draws the label again on top.
+## Contrast, transitions, dimming, side swap
 
-The pause before either marquee starts is timed from when the card **lands**,
-not from `meta_showCard`: a Fade to it takes longer than `SCROLL_PAUSE_MS`, so
-a hold started at the request had run out before the title was visible.
-`cardScrollArmed` is cleared by `meta_showCard`, and the first tick that finds
-the card up and the panel idle starts both holds.
-
-## Turning a page fades only the page
-
-A page turn is not a new picture: the header, the rule, the title and the
-pinned fields are identical either side of it, and fading the whole panel for
-the three or four rows that do change made the screen blink every few seconds
-while saying nothing. `pagefade.h` fades a **rectangle** instead - the paged
-rows only - out to black, redraws them, and back in, on the same sixteen
-palette steps as the picture fade. `meta_consolePagedRect` and
-`meta_cardPagedRect` derive it from the same constants the renderers use, so
-moving a row moves the fade with it.
-
-There is **no contrast veil** in it: contrast is a property of the whole panel,
-and dimming it would fade exactly what has to stay put. The rectangle is in
-**bytes** - 4bpp, so only an even x is a byte boundary, and an odd one is
-rounded outwards. That is what keeps the console's icon out of it: the text
-column starts at an even x and the icon sits beyond its right edge.
-
-It borrows `fadeBin` from `fadetransition.h` rather than carrying 8KB of its
-own; the two cannot run together, and `pf_start` gives way to a picture fade
-in progress instead of sharing it.
-
-**The title keeps scrolling through a page turn**, and the pips keep
-blinking. Both are above the rectangle, so while a fade runs `meta_tick`
-still advances the marquee (`meta_titleAdvance`, shared with both layouts'
-own ticks) and the blink, composes the whole frame, and then `pf_reshow`
-writes the rectangle back at the step the fade has reached before anything
-is shown - so the render never undoes a step and nothing reaches the panel
-undarkened. The values inside the rectangle do not move meanwhile; they are
-fading. It used to return early for the whole fade, which stopped the title
-dead for most of a second on every page turn. Anything that takes the panel - a new picture through
-`oled_transition`, `meta_reset` - cancels it, and a cancel
-mid-fade-out still performs the redraw it was asked for, so the page it was
-turning to is not lost. Half its length, capped at 400ms, because the console
-pager turns every `METADATA_INTERVAL` - a second, if someone sets it so - and a
-fade still running when the next page is due
-would be a fade nobody asked for.
-
-## The page pips blink
-
-The current page's pip goes dark and lit again every `PIP_BLINK_MS` (500ms),
-on both layouts, whenever there is more than one page: the panel is showing
-a running game, not a still. `pipLit` is what the renderers ask; the
-`meta_pipTick` calls in `meta_tick` flip it and redraw - the console's
-redraw, the card's while it is up (not over the artwork, and only once it has
-landed), and through `pf_reshow` during a page fade. A page turn relights it
-(`meta_redrawConsolePage`/`meta_redrawCardPage`), as do `CMDMETA` and
-`meta_showCard`, so the new page's pip is seen at once rather than whenever
-the blink comes round. It is drawn, not a command: it is not activity, and
-does not keep the panel from dimming.
-
-## Pinned fields
-
-The first `metaPinned` fields are drawn on every page; the rest cycle through
-the rows left over. The default pins System alone, so the three rows under it
-page: Year, Genre and Region on the first page, Format and what follows after
-- Year is seen once, on the first page, rather than on every one. On the arcade card the
-same count means the grid's top row, which is already on the grid page and is
-repeated above each wide page.
-
-The script decides which, the firmware only counts: `meta_addfields_ordered`
-emits the pinned names first, in `METADATA_PINNED` order, and sends the count
-as a fourth header field in `CMDMETA`. So the firmware never needs to know a
-field's name, and re-ordering is a script-side change.
-
-The card counts the same way, and takes a second number with it: `compact`,
-how many leading fields it pairs two to a row. Both counts are optional and
-safely so: `metasanitize` strips commas from the title and from every value,
-so everything after the header is comma-free, and a comma-terminated run of
-digits is therefore unambiguous. A script that sends neither, or only the
-first, still works - the firmware reads what is there and the title starts
-where the counts stop. A title starting with digits (`1943 The Battle of
-Midway`) is not mistaken for one, because it is not followed by a comma.
-
-`meta_pinnedRows`/`meta_pageSlots`/`meta_pageCount` are the only things that
-work this out, so the renderer and the scroll tick cannot disagree about how
-many pages exist - they did once, over the marquee window, and the result was
-a title that scrolled without ever overflowing. Pinning is capped at one below
-the row count so there is always something left to page with.
-
-`META_PINNED_COUNT` and `META_COMPACT_COUNT` are reset in `meta_reset` as well
-as in the emitter that uses them. Each layout has its own emitter and neither
-sets the other's count, so without the reset a console game would inherit the
-previous arcade card's pairing and be drawn half a row wide.
-
-## Dimming and side swapping
-
-Both run on the firmware's own clock, so the daemon sends them once at startup
-(`senddim`, `sendflip`) rather than driving them.
-
-**Every contrast change fades** (`contrastfade.h`). Nothing but that header
-calls `oled.setContrast()`: `CMDCON`, dimming, waking and the
-picture paths all ask `contrast_fadeTo()`, and `contrast_tick()` in `loop()`
-moves the panel there over `CONTRAST_FADE_MS`. A fade always starts from
-where the panel is, so a new target mid-fade turns around instead of
-snapping back; a target it is already heading for is not a new fade, because
-the picture paths re-assert the contrast on every draw and restarting the
-clock each time would stall it. `boot_waitOrCommand` ticks it too, since
-`loop()` is not running during the boot screen - which is how the power-on
-fade-in works: `setup()` blacks the panel (veil down, base at 255), the
-power-on screen composes its first frame into the framebuffer, and hands it
-to `transition_fadeIn(BOOT_FADE_MS)` - the same fade-in a Fade transition
-does, palette steps and contrast together - instead of sending it to the
-panel. Sending it first put it up undarkened at contrast 0, plainly visible.
-`BOOT_FADE_MS` (0.8s, fixed) must fit inside the 1s hold: the palette steps
-redraw the whole frame from a copy and would wipe out the sweep's bar if they
-overlapped it, and `test_meta_layout` checks the two constants. If the daemon
-speaks first the fade finishes in `loop()`, and its `CMDCON` moves the base
-level under the veil without disturbing it. Re-shows (`CMDSORG`, the tilt
-sensor) do not fade in; the panel is already lit and blacking it would
-flicker.
-
-**The panel's level is two faders multiplied**: the base (`CONTRAST` and
-dimming) and the *veil*, which only the Fade transition and the boot fade-in move. Kept
-apart so neither knows about the other - a transition on a dimmed panel goes
-80 -> 0 -> 80, and a dim that starts mid-transition lands correctly once the
-veil lifts. With the veil at 255 the panel gets exactly the base level.
-
-**`TRANSITION=-2` is a fade, not a wipe** (`fadetransition.h`): the old picture
-fades out, the panel is cleared and held black for `TRANSITION_BLANK_MS`, the
-new one is drawn plainly (effect 0) and fades in, `TRANSITION_FADE_MS` each
-way. **Contrast alone does not reach black** - an SSD1322 at contrast 0 is dim,
-not dark, and the first version of this left the picture plainly visible at
-the bottom of the fade. So the picture fades too: sixteen palette steps, each
-taking every pixel one grey level down (floored at 0), one per sixteenth of
-the fade time, so they start and end with the contrast. The fade-in mirrors
-it. The steps are computed from `fadeBin`, an 8KB copy of the picture being
-faded (ESP32 only; the ESP8266 keeps the contrast-only fade), never by
-darkening the framebuffer in place - so anything drawn into the framebuffer
-meanwhile is overwritten by the next step. `meta_showCard` is the one caller
-that renders *before* asking, so it calls `transition_prepare()` first to take
-the old picture while it is still there. All fade times, contrast and
-transition alike, max out at 4000ms and default to 800ms.
-
-**`TRANSITION=30`..`39` are the same fade, drifting** - the picture moves a
-pixel or two on every one of the sixteen palette steps, so it slides off one
-edge as it darkens and in from the other as it comes back. Eight fixed
-(left/right/up/down, each at one pixel a step and at two) and two that pick a
-direction at random. They are numbered clear of the wipes, which stop at
-`maxEffect`, so adding a wipe cannot collide with one; `test-wire.sh` reads
-`EFFECT_SLIDE_FIRST`/`_LAST` out of the header and checks the ini lists
-exactly them, and `test-settings.sh` checks the editor offers exactly what
-the ini lists.
-
-The offset is a function of the step, not an accumulator: `tf_slideAt` gives
-the position at step *n* of each phase, and `tf_showShifted` draws `fadeBin`
-from there. Outward that is `base + d*n`. **Inward it is `-d*(16-n)`**: the
-picture has to *end* centred, so it starts a whole travel's worth out on the
-side opposite the direction of travel and moves the same way the outward half
-did. Both halves therefore drift one way, which is what makes it read as a
-movement rather than a bounce - a fade-in that started centred and slid away
-was the first thing this got wrong.
-
-A horizontal offset of two pixels is a whole byte, but one pixel lands
-mid-byte, which is the entire reason the one-pixel speeds need the slow path:
-`tf_showShifted` works a pixel at a time, 16K nibble reads a step against the
-plain fade's 8K byte reads, sixteen times over most of a second.
-
-`base` is 0 normally and only matters when a fade-in is **turned around** by a
-new picture: the outward half then has to continue from where the picture
-actually is, which `transition_fade` works out from `tfSlidePos` - the last
-position drawn - rather than from the direction, so it is right even when the
-new effect slides a different way. Without it the picture jumped to the mirror
-of its own position before carrying on.
-
-The random pair pick **once per transition**, not per step - per step would be
-a shake, not a slide - and the dice keeps the low bit, so 38 stays a one-pixel
-slide and 39 a two-pixel one. `transition_cancel` clears the slide, so a wipe
-between two fades cannot leave one behind, and `transition_fadeIn` (the
-power-on screen) never slides: there is nothing for it to slide in from.
-
-`effect_clamp` is the one place that decides what the wire may ask for -
-`-2`, `-1`, `0..maxEffect` or a fade-slide - and `effect_is_fade` the one
-place that answers "does this go through `fadetransition.h`", which is what
-`meta_showCard` needs in order to snapshot the old picture first. There were
-four copies of the clamp before, and each would have had to learn about 30..39
-separately.
-
-**The new picture is rendered, not drawn, before it fades in.** The plain draw
-(effect 0) ends in `oled.display()`, so using it put the new picture on the
-panel undarkened for one frame transfer, at contrast 0 - which on this panel
-is far from dark - and it flashed just before every fade-in.
-`oled_renderlogo()` fills the framebuffer and shows nothing; the first frame
-the panel gets is the fully darkened one. The fake panel in the tests records
-the brightest grey it was ever sent (`shownPeak`), which is how a frame that
-should never have been shown is caught.
-
-**`CONTRAST` and the palette are independent.** The veil scales the base
-level, so `CONTRAST=120` fades 120 -> 0 -> 120; the palette steps always walk
-all sixteen grey levels, unscaled. `test_meta_layout` holds both. It is a state machine ticked from `loop()`, never a blocking loop like
-the wipes: five seconds at the defaults of not reading the serial port would
-overflow its 256-byte buffer with the metadata and icon that follow every
-picture. Because the draw happens seconds after the request, `srcBin` and
-`actPicType` are captured when it is asked for - the card alternation puts
-both back the moment it returns. A request while fading out or black just
-replaces the picture waiting to be shown; one while fading in turns around
-from where it got to; any other effect cancels it and draws at once.
-`oled_transition()` is the one entry point for every transition: `-2` fades,
-anything else negative is a random wipe, `0`..`maxEffect` is that wipe. The
-parsers used to clamp everything below `-1` up to `-1`, so `-2` has to be let
-through them explicitly.
-
-**The card alternation uses `TRANSITION`.** It used to pass `-1` - random -
-whatever the ini said, so a `TRANSITION` of 5 wiped the artwork in with 5 and
-every card page with a lottery. It passes `tEffect`, the value the last
-`CMDCOR` carried.
-
-The ini lists every effect by number and name, so nobody has to read the
-sketch. `test-wire.sh` checks the list against the `case` labels of
-`oled_drawlogo` and `maxEffect`, so an effect added to one and not the other
-fails the suite.
-
-**Dimming** and the side swap are the fork's whole burn-in story, since
-upstream's moving-logo screensaver was removed in 0.4.9b. Dimming lowers
-contrast after `DIM_AFTER` seconds with nothing drawn, and restores it on the
-next draw - and unlike the screensaver it leaves the game on the screen.
-The dim level is `DIM_CONTRAST`, an absolute 0..255 like `CONTRAST` and
-capped at the waking level. It used to be `DIM_PERCENT`, a share of the waking
-level, so the same number meant a different brightness for every `CONTRAST`;
-the daemon now says so in its log if a user ini still sets the old name.
-Going dim fades over `DIM_FADE_MS` (0..10000, default 6s) - burn-in
-protection nobody should notice happening - while waking uses
-`CONTRAST_FADE_MS` like any other change, because something new has arrived.
-`TRANSITION` ships as `-2`, the Fade.
-`meta_activity()` is the wake, and it is called **only** from the command
-dispatcher - a command arriving is new content, and that is what "screen
-update" means here.
-
-It is deliberately *not* called from the draw helpers, which is where it
-started. The marquee redraws every 40ms and the field pager every few seconds, both
-through `meta_showConsole`, so counting any draw as activity meant a console
-game with a long title or a second page never went idle and the panel never
-dimmed at all. The animation carries on quite happily at reduced brightness.
-A fade is only started on the transitions, not every tick, and during one the
-panel is written only when the level actually changes.
-
-**Side swapping** mirrors the console layout every `FLIP_MINUTES` so no region
-holds the same lit pixels indefinitely, and transitions like any other change
-of picture - `metaFlipped` is toggled before `meta_transitionToConsole`, so the
-render at the bottom of the fade composes the new side. `meta_iconX`/`meta_textX`/`meta_textW`
-are the only things that know which side is which. The icon x must stay
-**even**: the framebuffer is 4bpp, so a pixel column maps to a whole byte only
-at even x, and `meta_blitIcon` copies whole bytes. 0 and 170 both are.
+- **Only `contrastfade.h` calls `oled.setContrast()`.** Everything asks
+  `contrast_fadeTo()`; `contrast_tick()` moves there over `CONTRAST_FADE_MS`.
+  A fade starts from where the panel is; re-asking for the current target is
+  not a new fade. The level is **base x veil**: base = `CONTRAST`/dimming, veil
+  = Fade transition and boot fade-in only (a dimmed panel fades 80->0->80).
+- **Power-on fade-in**: `setup()` blacks the panel, the start screen composes
+  into the framebuffer and calls `transition_fadeIn(BOOT_FADE_MS)` (0.8s, must
+  fit the 1s hold - tested). `boot_waitOrCommand` ticks it. Re-shows
+  (`CMDSORG`, tilt) do not fade.
+- **`TRANSITION=-2` fade** (`fadetransition.h`): out, black for
+  `TRANSITION_BLANK_MS`, in, `TRANSITION_FADE_MS` each way (max 4000, default
+  800). **Contrast 0 is not black on an SSD1322**, so sixteen palette steps
+  darken the picture alongside, computed from `fadeBin` (8KB copy; ESP32 only).
+  A state machine ticked from `loop()`, never blocking (the 256-byte RX buffer
+  would overflow). `srcBin`/`actPicType` captured at request. A request while
+  fading out/black replaces the pending picture; while fading in, turns around;
+  any other effect cancels and draws. `meta_showCard` calls
+  `transition_prepare()` first because it renders before asking.
+- **The new picture is rendered, not drawn** (`oled_renderlogo()`), or it
+  flashes undarkened. The fake panel's `shownPeak` catches that.
+- **`30`..`39` slide while fading**: 8 fixed directions at 1 or 2 px/step, 2
+  random (picked once per transition; the low bit keeps the speed).
+  `tf_slideAt` is a function of the step: out `base + d*n`, in `-d*(16-n)` so
+  both halves drift one way and end centred. `base` comes from `tfSlidePos`
+  when a fade-in is turned around. 1px steps need the per-pixel slow path.
+  `transition_cancel` clears the slide; `transition_fadeIn` never slides.
+- `effect_clamp` is the one clamp (`-2`, `-1`, `0..maxEffect`, fade-slides);
+  `effect_is_fade` the one fade test; `oled_transition()` the one entry point.
+  `test-wire.sh` checks the ini's effect list against `oled_drawlogo`'s cases,
+  `maxEffect` and `EFFECT_SLIDE_FIRST`/`_LAST`; `test-settings.sh` checks the
+  editor offers exactly the ini's list.
+- **Dimming** (the burn-in story since the screensaver went in 0.4.9b): after
+  `DIM_AFTER`s with no command, fade to `DIM_CONTRAST` (absolute 0..255, capped
+  at wake; replaced `DIM_PERCENT`, which the log warns about) over
+  `DIM_FADE_MS` (default 6s); wake uses `CONTRAST_FADE_MS`. `meta_activity()`
+  is called **only** from the command dispatcher - counting marquee/pager draws
+  kept the panel from ever dimming.
+- **Side swap** mirrors the console layout every `FLIP_MINUTES`, via a
+  transition (`metaFlipped` toggled before `meta_transitionToConsole`).
+  `meta_iconX`/`meta_textX`/`meta_textW` own the geometry. Icon x must be
+  **even** (4bpp, `meta_blitIcon` copies bytes): 0 and 170.
 
 ## The wire protocol this fork adds
 
-Upstream's commands are unchanged, with one exception: `CMDSAVER` and
-`CMDSWSAVER` are accepted and ignored since the screensaver was removed in
-0.4.9b. They have to be *accepted* rather than simply unknown, because an
-unknown command is drawn on the panel as text - and a daemon older than the
-firmware sends `CMDSAVER` on every startup, as does MiSTer SAM around its own
-session. These are the fork's additions, all ESP32-only:
+Upstream's commands are unchanged. `CMDSAVER`/`CMDSWSAVER` are accepted and
+ignored (an unknown command is drawn as text, and old daemons and MiSTer SAM
+send them). Additions, ESP32 only:
 
 | command | payload |
 |---|---|
-| `CMDMETA,<kind>,<interval>[,<pinned>[,<compact>]],<title>[\|<label>=<value>]...` | one line; both counts optional, in order |
-| `CMDMETAOFF` | none - leave metadata mode, back to plain artwork |
-| `CMDICON` | followed by exactly 2752 raw bytes (86x64, 4bpp) |
-| `CMDSHMETA` | none - force the metadata view now |
-| `CMDCBOOT,<ms>` | one line; hold the core picture just sent for <ms> before the split layout replaces it, 0..10000, counted from when it is up. Sent only on a console core change, **after** the picture and before `CMDMETA` - receiving it at all is the decision |
-| `CMDDIM,<seconds>,<contrast>,<wake>[,<dim fade ms>]` | one line; 0 seconds disables; contrast 0..255, capped at the wake level; wake -1 means CONTRAST; going dim takes the fade time, 0..10000, default 6000 - waking takes `CMDFADE`'s |
-| `CMDFADE,<ms>` | one line; how long every contrast change fades, 0..4000, 0 jumps. Sent before the first `CMDCON` |
-| `CMDBOOTPIC,<core>,<effect>` | one line, no payload; show the boot image as the core's picture. Sent for MENU when `BOOTSCREEN_AS_MENU` is on. Nothing transitions if the power-on screen is still up |
-| `CMDTFADE,<fade ms>,<blank ms>` | one line; the Fade transition's timings, 0..4000 each. Sent before the first picture. `CMDCOR`'s effect may now be `-2` |
-| `CMDBUSY,<0\|1>[,<label>[,<effect>]]` | one line; 1 runs the boot sweep in the bottom band, 0 lets it finish its cycle and stop. A label blacks the panel above the band and writes it there, so the message is all that shows; the same label again is ignored, a different one redraws and rewinds the sweep. With an effect the label screen is transitioned to rather than drawn. Any drawing command stops it at once |
-| `CMDMSG,<effect>,<text>` | one line; a centred message, transitioned to like a picture. The text is the rest of the line, so commas in it are safe |
-| `CMDFLIP,<seconds>` | one line; 0 disables and returns to the normal side |
-| `CMDDESC,<bytes>` | followed by exactly that many raw bytes: the description page's text, printable ASCII, up to 2048 kept (`DESC_MAX`; the daemon and the importer cut to the same number, and `test-scrape.py` fails if the three differ). More is read and discarded, so a daemon sending more than an older firmware keeps loses only the end. Sent after `CMDMETA`, which clears it, for console and arcade kinds |
-| `CMDSCROLL,<h>,<v>` | one line; the title marquee's and the description's speeds, pixels per second, 1..200 and 1..100 |
-| `CMDWRBOOT` | followed by exactly 6912 raw bytes (256x54, 4bpp) |
-| `CMDCLRBOOT` | none - forget the stored boot image |
-| `CMDBOOTINF` | none - replies with the boot image status |
+| `CMDMETA,<kind>,<interval>[,<pinned>[,<compact>]],<title>[\|<label>=<value>]...` | one line |
+| `CMDMETAOFF` | leave metadata mode |
+| `CMDICON` | + 2752 raw bytes (86x64, 4bpp) |
+| `CMDSHMETA` | force the metadata view |
+| `CMDCBOOT,<ms>` | hold the picture just sent 0..10000ms, from when it is up. Console core change only, after the picture, before `CMDMETA` |
+| `CMDDIM,<s>,<contrast>,<wake>[,<dim fade ms>]` | 0s disables; wake -1 = CONTRAST; fade 0..10000, default 6000 |
+| `CMDFADE,<ms>` | contrast fade time 0..4000; before the first `CMDCON` |
+| `CMDBOOTPIC,<core>,<effect>` | boot image as the core's picture (MENU, `BOOTSCREEN_AS_MENU`); no transition if the power-on screen is up |
+| `CMDTFADE,<fade ms>,<blank ms>` | Fade timings 0..4000; before the first picture |
+| `CMDBUSY,<0\|1>[,<label>[,<effect>]]` | sweep in the band; 0 finishes the cycle. A label blacks the panel above and shows alone; same label ignored, new one redraws. `0` with a new label (0.7.0b) swaps it in above the band without the line - the finish - or, with no busy screen up, draws it whole with no bar. Any drawing command stops it |
+| `CMDBUSYLINE,<text>` | the busy screen's status line (5x7, grey, 51 columns), rest of the line; empty removes it; ignored with no label up; waits out a transition (`busyTextDirty`). Quiet for the bar |
+| `CMDMSG,<effect>,<text>` | centred message, transitioned; text is the rest of the line |
+| `CMDFLIP,<s>` | side swap period; 0 disables |
+| `CMDDESC,<bytes>` | + that many raw bytes, printable ASCII, 2048 kept (`DESC_MAX`, same in daemon and importer - `test-scrape.py`), excess discarded. After `CMDMETA`, which clears it |
+| `CMDSCROLL,<h>,<v>` | marquee / description speeds, px/s, 1..200 / 1..100 |
+| `CMDWRBOOT` | + 6912 raw bytes (256x54, 4bpp) |
+| `CMDCLRBOOT`, `CMDBOOTINF` | forget / report the stored boot image |
 
-`,` `|` and `=` are the separators, so `metasanitize` strips them from every
-value along with anything non-printable. A short `CMDICON`/`CMDWRBOOT`
-transfer is dropped rather than half-applied.
+`,` `|` `=` are separators; `metasanitize` strips them and non-printables
+from every value. A short `CMDICON`/`CMDWRBOOT` is dropped, not half-applied.
 
-## The launcher, and why the init script places it
+## Launcher, updater, uninstaller, Scripts menu
 
-**One entry of ours in the Scripts menu**, since 0.6.3b: `tty2oledplus.sh`,
-the launcher. The menu is the user's, shared with update_all and everything
-else they run, and three lines of ours in it was clutter. The launcher is a
-`dialog --menu` - arrows and one button, for the reason every picker in the
-settings editor is one - offering Settings, Update, Scrape metadata and Uninstall, which live
-in the install folder beside everything else (`MANIFEST_APPS`). Over SSH,
-`tty2oledplus.sh update --no-firmware` goes straight to one with its options.
-
-**Settings and Scrape metadata return to the menu; Update and Uninstall are
-`exec`'d.** Uninstall is the last entry, where it is hardest to pick by
-accident. The update replaces the launcher and the uninstall removes it, and
-bash reads a script as it runs it - so nothing of the launcher may run after
-either. With no terminal (`fb_terminal=0`) there is nothing to draw a menu on,
-so it runs the update: the only one of them that asks nothing, and what its
-own Scripts entry did before there was a launcher.
-
-**Run from the launcher, the updater is the file the update replaces.** It
-used to live in Scripts and copy the archive into the install folder
-wholesale; now that copy would overwrite `${INSTALL}/tty2oledplus_update.sh`
-in place while bash is reading it, and bash would go on from the old byte
-offset into the new script. So the copy loop skips it and it goes in by
-rename. `test-installer.sh` runs an update from a shortened installed copy,
-and fails on the in-place copy - checked by putting it back.
-
-**The uninstaller runs from a copy in `/tmp`.** It lives in the folder it
-removes. Unlinking a running script is safe on Linux in principle, but the
-card is exFAT and there is no reason to depend on how its driver handles an
-open file: `relocate` copies itself to `/tmp` and `exec`s the copy, which
-removes itself on exit.
-
-**The launcher is placed by the daemon's start as well as by the installer.**
-It ships in the install folder too, and `place_menu_scripts` in `S60tty2oled`
-copies it into Scripts on every start (`cmp` first, so a boot is not a
-write). That is the only path that works for an existing install: **an update
-is always applied by the previous version of the installer**, so a rule about
-where a new file goes cannot apply to the update that introduces it. 0.4.3b
-shipped the uninstaller and it landed in the install folder, because 0.4.2b's
-installer put every file from the archive there; 0.6.3b's launcher is applied
-by 0.6.2b's installer, which knows nothing of it.
-
-The three entries the launcher replaced, and the pre-0.4.8b names, are swept
-from Scripts once the launcher is there, and never before: a half-finished
-update must not leave a menu with no way to update or uninstall. Two things do
-the sweeping, because two different installers can apply an update:
-
-- `tty2oledplus_update.sh` removes them itself, at the end of a run.
-- `place_menu_scripts` removes them on the next daemon start - which, for the
-  update to 0.6.3b, runs *before* 0.6.2b's installer finishes: that one puts
-  its own `tty2oledplus_update.sh` back in Scripts after starting the new
-  daemon, so the entry stays until the next boot. It is a working updater
-  (the new one, from the release asset), and running it sweeps it.
-
-The release asset keeps the name `tty2oledplus_update.sh`: every installed
-updater and every starter fetches exactly that. `selfupdate_running` in the
-daemon matches the name, not a path, for the same reason.
-
-## The uninstaller
-
-**It asks twice, with `dialog`, and cancel is the default of every path.**
-Once whether to go on at all (`--yesno`, `--defaultno`), then what to do with
-the files that are the user's rather than ours (`--menu`: keep / delete /
-cancel). Both are arrows-and-one-button widgets for the same reason the
-settings editor's pickers are, and a typed "y" is not one: a pad cannot answer
-it. Keeping copies `tty2oled-user.ini`, `coretypes.ini`, `pics/boot.png` and
-`pics/user` into `${FAT}/tty2oledplus-saved` - one folder rather than a
-scatter of `*.saved` files, because what is kept is no longer only two inis.
-`pics/banner`, `pics/arcade` and `pics/icon` are the release's and are not kept;
-a new install brings them back.
-
-With no terminal to ask in - `fb_terminal=0`, where the Scripts menu shows the
-OSD and nothing else - it **refuses** rather than proceeding on silence, and
-says that `--yes` is how to mean it. Proceeding was the old behaviour and is
-the wrong answer for something that cannot be undone.
-
-It removes the install folder, the boot hook and the comment above it, every
-Scripts entry any version put there, the pid file and the logs, and the boot
-image in the display's own flash. It keeps the firmware (an ESP32 with none
-shows nothing), `log_file_entry` (MiSTer's setting), and everything of
-upstream's.
-
-## The Scripts menu names
-
-The menu is alphabetical, so the two entries sort together:
-**tty2oledplus** and **tty2oledplus_install**, the starter, which removes
-itself after a successful install. Before 0.6.3b there were three more -
-`tty2oledplus_settings`, `tty2oledplus_uninstall`, `tty2oledplus_update` - and
-before 0.4.8b those were `TTY2OLEDplus_Installer`, `update_tty2oledplus` and
-`uninstall_tty2oledplus`, which sorted into three different places.
-
-Renaming a script renames a release asset, and that is the part with teeth:
-an installed updater fetches its asset by exact name, so a release without it
-leaves every MiSTer that has not updated yet unable to. 0.4.8b published the
-new updater a second time under the old name for one release. 0.6.3b renamed
-no asset: the updater is still `tty2oledplus_update.sh`, only its place moved.
-
-`selfupdate_running` in the daemon still matches the pre-0.4.8b spelling too:
-an install that has not been updated since has only that.
+- **One Scripts entry**, `tty2oledplus.sh` (plus the starter
+  `tty2oledplus_install`, which deletes itself after success). A
+  `dialog --menu` of Settings, Update, Scrape metadata, Uninstall (last).
+  Settings/Scrape return to it; **Update and Uninstall are `exec`'d**, because
+  they replace/remove the launcher bash is reading. With `fb_terminal=0` it runs
+  the update. Over SSH: `tty2oledplus.sh update --no-firmware`.
+- **The updater installs itself by rename**, never an in-place copy (bash would
+  continue at the old byte offset in the new file). `test-installer.sh` catches
+  it. The asset name stays `tty2oledplus_update.sh`: every installed updater
+  and starter fetches exactly that. Renaming a script renames an asset - an
+  old updater then cannot update (0.4.8b republished under the old name).
+- **An update is always applied by the previous installer**, so
+  `place_menu_scripts` in `S60tty2oled` copies the launcher to Scripts on every
+  start (`cmp` first). Old entries (0.6.2b's three, pre-0.4.8b names) are swept
+  only once the launcher is there, by both the updater and
+  `place_menu_scripts`.
+- **Uninstaller** runs from a copy in `/tmp` (`relocate`; exFAT). Asks twice
+  with `dialog`, cancel the default: `--yesno --defaultno`, then keep / delete /
+  cancel the user's files (`tty2oled-user.ini`, `coretypes.ini`,
+  `pics/boot.png`, `pics/user`, `scraped/` -> `${FAT}/tty2oledplus-saved`).
+  With no terminal it **refuses** unless `--yes`. Removes the install, boot
+  hook + comment, every Scripts entry any version made, pid file, logs, the
+  stored boot image; restores `MiSTer.ini` (below). Keeps the firmware and
+  everything of upstream's.
 
 ## The settings editor
 
-`tty2oledplus_settings` is a `dialog` front end for `tty2oled-user.ini`,
-modelled on MiSTer's own `ini_settings.sh`: a menu per category, a value
-picker per setting, changes held until Save.
+`tty2oledplus_settings`: `dialog` front end for `tty2oled-user.ini`, modelled
+on MiSTer's `ini_settings.sh`.
 
-It edits **only** `tty2oled-user.ini`, and reads `tty2oled-system.ini` solely
-to know what a default is. A setting equal to its default is *removed* rather
-than written, so the user ini stays a list of what this MiSTer actually does
-differently and a later release that changes a default is still followed.
-Everything else in the file - the user's own comments, settings the editor
-does not know about - is left where it was: `ini_put` replaces the one line or
-appends under a header of its own, and never rewrites the file wholesale.
+- Edits **only** the user ini; reads the system ini for defaults. A value
+  equal to its default is **removed**. `ini_put` changes one line or appends
+  under its own header; never rewrites the file. The ini is **parsed, not
+  sourced** (runs as root; tested with a value that would touch a file).
+- Covers every user setting (35, seven categories). `test-settings.sh` checks
+  both ways: every offered key exists in the ini *and* is read by `tty2oled.sh`
+  or `tty2oled-meta.sh`; every user key is offered or on the exclusion list
+  (`BAUDRATE`, `TTYPARAM`, `NAMES_TXT`, `TITLE_INDEX`, `TITLE_INDEX_DIR`),
+  itself checked against the ini.
+- Enforced: `METADATA_PINNED` ⊆ `METADATA_FIELDS`; `ARCADE_PINNED` is a prefix
+  of `ARCADE_FIELDS` (offered as prefixes); lists keep their order
+  (`list_merge`).
+- **Single choice is always `--menu` + `--default-item`, never `--radiolist`**
+  (a radiolist returns the ticked item, not the highlighted one; pads have no
+  Space). Field lists stay checklists. `test-settings.sh` drives a fake
+  `dialog` modelling both.
+- No terminal (`fb_terminal=0`): says so, exits 2.
+- **Boot screen is an action**: `pics/boot.png` -> `png2gsc.py --backend pure`
+  -> `tty2oled-bootimg.sh set`; the `.gsc` is deleted either way, the PNG
+  survives updates and is resent after a reflash. The stdlib backend
+  (`load_grey_pure`: all filters, depths 1-16, colour types 0/2/3/4/6,
+  interlaced refused) is byte-identical to the others (`test-png2gsc.py`):
+  alpha composited per channel before luma, Pillow's rounding.
 
-Since 0.5.0b it covers **every setting a user chooses** - 35 of them, across
-seven categories. `test-settings.sh` holds it there from both directions: every
-key offered must exist in the ini *and* be read by `tty2oled.sh` or
-`tty2oled-meta.sh`, and every key in the ini's user half must be offered or be
-on a short list of deliberate exclusions - `BAUDRATE` and `TTYPARAM`, which
-can only break a link the firmware fixes at 115200, and `NAMES_TXT`,
-`TITLE_INDEX` and `TITLE_INDEX_DIR`, which are where the installer put things
-rather than settings. That list is itself checked against the ini, so a name
-on it that no longer exists cannot hide a real gap behind it.
+## Scrape metadata and the description page
 
-The ini is **parsed, not sourced**. The daemon sources it, but this runs as
-root from a menu, and reading a value should not be able to run anything;
-`tests/test-settings.sh` proves it with a value that would touch a file.
-
-Three constraints the layouts impose are enforced in the editor rather than
-explained to the user:
-
-- `METADATA_PINNED` must name fields that `METADATA_FIELDS` shows, so dropping
-  a field drops it from the pinned list.
-- `ARCADE_PINNED` can only be a **leading run** of `ARCADE_FIELDS` - it is the
-  top row of the grid - so the editor offers the prefixes, not a free choice,
-  and re-ordering the fields re-pins the new leaders.
-- A list keeps the order it had. The order is the order the rows are drawn in,
-  and a checklist hands its answers back in its own order, so `list_merge`
-  re-applies the old one and appends anything newly ticked.
-
-`dialog` needs a terminal. From the Scripts menu that means `fb_terminal=1`
-(the default); with it off the script says so and exits 2, as `ini_settings.sh`
-does, rather than letting dialog fail into the OSD.
-
-**Every picker that chooses one thing is a `--menu`, never a `--radiolist`.**
-A radiolist hands back the tag that is already switched *on* unless Space is
-pressed on the one you want, so arrowing down to a new effect and pressing
-Enter stored the old one and the editor looked as though it were ignoring the
-change - which is exactly how it was reported. The Scripts menu's framebuffer
-terminal is driven by a pad as often as a keyboard, and "arrow and press A" is
-the whole vocabulary there; a menu returns what is highlighted, which is that.
-`--default-item` opens the list on the value in force, since there is no radio
-dot left to mark it. The field lists stay checklists - they choose several
-things and cannot be a menu - and are the only ones that say Space toggles.
-`test-settings.sh` models both widgets with a fake `dialog` and drives the
-editor through them, which is what distinguishes the two.
-
-**The boot screen is an action, not a setting.** It lives in the ESP32's own
-flash, so putting one there is a serial transfer rather than a line in an ini.
-The whole interface is a file: `pics/boot.png`, converted by `png2gsc.py` and
-handed to `tty2oled-bootimg.sh set`. The `.gsc` in between is a build artifact
-and is removed whether the transfer worked or not - leaving it would put 8KB
-of hex beside the user's artwork that nothing reads and no update removes. The
-PNG stays, which is what makes it survivable: no archive carries that name, so
-an update cannot overwrite it, and after a reflash the same entry sends it
-again.
-
-`png2gsc.py` is in `MANIFEST_TOOLS` for this, and needed a third backend to be
-worth shipping: a MiSTer has neither Pillow nor ImageMagick. `load_grey_pure`
-decodes PNG on `zlib` and `struct` alone - IHDR, the five scanline filters,
-bit depths 1/2/4/8/16 and colour types 0/2/3/4/6, interlaced files refused
-rather than half-read. It is held to the *same bytes* as the other two by
-`test-png2gsc.py`, which runs every case through all three; getting there took
-compositing alpha per channel before the luma and rounding both, because that
-is the order Pillow does it in. The settings editor names `--backend pure`
-rather than leaving it to `auto`, so a MiSTer that happens to have Pillow
-converts identically to one that does not.
-
-## Scrape metadata, and the description page
-
-**The launcher's Scrape metadata imports the `gamelist.xml` a scraper left in
-each system's own games folder** - `games/<folder>/gamelist.xml` on every
-`GAME_ROOTS` root, the file name matched without case - and keeps it in
-`scraped/<system>.txt` in the install folder. That is EmulationStation's
-format, what Skraper, ES-DE, Batocera and Skyscraper write, so the scraping is
-done on a PC with their accounts and developer IDs and this only reads the
-result. `tty2oledplus_scrape.sh` is the `dialog` side - which systems -
-and `tty2oledplus_scrape.py` the work, which runs on its own over SSH.
-Python because it is XML; standard library only because Python 3.9 bare is
-what a MiSTer has. It is named for what the user is doing, not for what the
-code does.
-
-**Only consoles with an icon are offered, and Arcade always**, one per
-system: `SYSTEMS` in the importer is keyed by icon name and carries the
-`games/` folders and the extensions. `Genesis` and `NEOGEO` are icons too, and `ICON_ALIASES` keeps
-each system in the menu once. The first folder is the system's own and its
-gamelist is taken whole - it may name an `.m3u` where MiSTer loads the
-`.cue`, and the base name is the same. A later folder is shared - the Game Boy
-Color's games in `GAMEBOY` - and only that system's extensions come from it.
-
-**Arcade is `ARCADE`, outside that list**, because the card needs no icon.
-Its gamelist is `games/mame/gamelist.xml`, beside the zips, which names sets
-(`./dkong.zip`); `games/hbmame` is a shared folder, zips only. **`_Arcade` is
-deliberately not searched** - that is where the `.mra` files are, not where a
-scraper writes. The daemon's `arcade_lookup_scraped` looks up `MRA_SETNAME`,
-then the core name, in `scraped/Arcade.txt`, and resets `SCR_*` first - an
-arcade change that looked nothing up would otherwise show the previous
-game's. The MRA wins everything the two share (Year, Manufacturer, Genre,
-Players) because it describes this very set; the gamelist adds Developer,
-Publisher, Rating, Released, Series and the description. `Developr` and
-`Publishr` are eight letters like `Manufctr`, because the card's value column
-is measured off its widest label and a ninth would move every value on it.
-`_nocomma` folds a gamelist's `", "` to one space before `metasanitize` would
-make it two.
-
-**Keyed on the file name without its extension**, which `<path>` names and
-`CURRENTPATH` carries; the daemon's `lookup_scraped` tries `CURRENTPATH` with
-its extension stripped and as it is (MiSTer strips it for single-extension
-cores). `<releasedate>` `19850913T000000` becomes `1985-09-13`, `<rating>`
-0..1 becomes a /20 that the daemon shows as /10, `<family>` (Batocera) is the
-series. The CRC column is empty; the daemon's CRC fallback is there for a line
-that has one.
-
-**`|`-separated, like the title index, and not tab-separated.** A tab is IFS
-whitespace, and bash's `read` folds a run of them into one, which slides every
-field after an empty one. Everything is folded to printable ASCII on the way
-in - `unicodedata` plus a table for what NFKD does not decompose - since the
-firmware counts a byte as a character when it wraps.
-
-**An import replaces the lines of the games it lists and keeps the rest**, and
-writes each system's file whole and atomically. A gamelist that will not
-parse is reported and skipped, and loses nothing already imported. The
-folder is the user's: no update writes it and the uninstaller's "Keep them"
-saves it.
-
-**The description page** is the last page of the console pager, after the
-fields, so page 0 is always what it was before. It keeps the header, the title
-and the icon and gives the whole field area - pinned rows too - to the text,
-word-wrapped to the column in the 5x7 font (`meta_descWrap`, rewrapped when
-the side swap changes the width) and scrolling up a pixel every
-`metaVStepMs` after a `DESC_HOLD_MS` pause. It does not dwell like a field
-page: `meta_tick` turns it when `meta_descTravel()` says the last line has
-gone past `DESC_TOP`. A turn to or from it fades the whole area, since the
-pinned rows are on one side of it only. The text is drawn first and the rows
-above `DESC_TOP` blacked out before the header and title go on - u8g2 has no
-clipping.
-
-**The arcade card has the same page, last, before the artwork comes back**:
-artwork, the field pages, the description, artwork. It spans the card's full
-width (`meta_descX`/`meta_descW` pick the column by kind, so the wrap follows
-the kind as it follows the side swap), keeps the header, the cell and the
-title, and `meta_drawDesc` is the one renderer for both layouts. It does not
-dwell either: the arcade branch of `meta_tick` scrolls it and calls
-`meta_showPicture` when the travel is done, ignoring `metaInterval` while it
-is up. The turn to it fades the whole field area (`meta_cardPagedRect`'s
-`whole`), and its hold is started by `meta_descRewind` - from the page fade's
-redraw, or from `meta_cardScrollTick`'s arming when the card lands straight on
-it, which is what a card with a description and no fields does:
-`meta_cardFieldPageCount` is 0 then, not an empty page in front of the text.
-
-`CMDDESC` is a length-prefixed transfer rather than a field in `CMDMETA`: two
-kilobytes of line could overflow the 256-byte serial buffer while the firmware
-is animating, where `serial_readTicking` cannot. `CMDMETA` clears it, so the
-daemon's "unchanged, not resending" check includes it; and it redraws a
-layout already on the panel, by the icon's rules, because its page adds a pip.
-
-**Speeds are pixels per second** in the ini and on the wire - bigger is
-faster, which a period is not - and periods in the firmware, because that is
-what a tick compares. 25 is the old 40ms marquee; 6 is a pixel every 166ms,
-which replaced 5 (one every 200ms) as the default as being a shade too slow.
+- **Imports `games/<folder>/gamelist.xml`** (EmulationStation format: Skraper,
+  ES-DE, Batocera, Skyscraper) on every `GAME_ROOTS` root, name matched
+  without case, into `scraped/<system>.txt`. `tty2oledplus_scrape.sh` picks
+  systems; `tty2oledplus_scrape.py` (stdlib, Python 3.9) does the work.
+- Offered: consoles with an icon (`SYSTEMS` keyed by icon, `ICON_ALIASES`
+  dedupes) and Arcade always. A system's first folder is taken whole; later
+  folders are shared, own extensions only.
+- **Arcade** = `games/mame/gamelist.xml` (+ `games/hbmame`, zips only); never
+  `_Arcade`. `arcade_lookup_scraped` tries `MRA_SETNAME` then the core name
+  and resets `SCR_*` first. The MRA wins shared fields; the gamelist adds
+  Developer, Publisher, Rating, Released, Series, description (`Developr`,
+  `Publishr`: eight letters, like `Manufctr`). `_nocomma` folds `", "`.
+- Keyed on the file name without extension; `lookup_scraped` tries
+  `CURRENTPATH` stripped and as-is. Release date -> `YYYY-MM-DD`, rating 0..1
+  -> /20 shown as /10, `<family>` = series. **`|`-separated, not tabs** (bash
+  `read` folds runs of tabs). Folded to printable ASCII. An import replaces
+  only the games it lists, writes atomically, skips a gamelist that will not
+  parse. `scraped/` is the user's.
+- **Description page**: last console page; keeps header, title, icon; text
+  word-wrapped (`meta_descWrap`, rewrapped on side swap), scrolling a pixel per
+  `metaVStepMs` after `DESC_HOLD_MS`; turns when `meta_descTravel()` is done,
+  not on the interval. Turning to/from it fades the whole field area. Text
+  drawn first, then rows above `DESC_TOP` blacked (u8g2 has no clipping).
+- **Arcade card** has it too, full width (`meta_descX`/`meta_descW`),
+  `meta_drawDesc` for both; `meta_showPicture` when travel is done;
+  `meta_descRewind` starts the hold. A card with only a description has
+  `meta_cardFieldPageCount` 0.
+- `CMDDESC` is length-prefixed (a 2KB line could overflow the 256-byte buffer
+  while animating). Speeds are px/s in ini and wire, periods in firmware;
+  default vertical 6.
 
 ## Arcade descriptions from history.xml
 
-**`tools/history2gamelist.py` makes the arcade gamelist without a scraper.**
-ScreenScraper's daily quota is 20000 requests and a full MAME set is ~15000
-zips at several requests each, and Skraper's cache is encrypted and lives
-three days by default - so a whole arcade library does not get scraped. MAME's
-own `history.xml` (Arcade-History, a free download) is keyed by set name, the
-key the daemon looks a description up by, and covers ~1300 of the ~1700 sets
-the MiSTer's MRAs name. The tool enumerates a ROM folder - the MiSTer's
-`games/mame` over a share - and writes a `gamelist.xml` for exactly the sets
-in it, which the importer takes unchanged, and `2048.txt` - named for
-`DESC_MAX` - `set|bytes|kept|ends at|title` for each description it had to
-shorten. Lengths are the importer's own `fold()` and `clip_desc()`, imported
-from `tty2oledplus_scrape.py` rather than copied, so what the file says is
-kept is what reaches the panel.
+`tools/history2gamelist.py` (not shipped, nor its output - the file's licence)
+writes a `gamelist.xml` for the sets in a ROM folder from MAME's `history.xml`,
+because ScreenScraper's quota cannot cover ~15000 zips. Also `2048.txt`:
+`set|bytes|kept|ends at|title` for each shortened entry. Uses the importer's
+own `fold()`/`clip_desc()`.
 
-**A description too long for the firmware is shortened here, not cut.**
-Here is the last place its paragraphs exist - `fold()` makes one line of it.
-Whole paragraphs while they fit, since that is where the text pauses; if that
-keeps under two thirds of `DESC_MAX` (`FILL`), whole sentences of the next
-paragraph. It never ends on a paragraph that does not end a sentence - a
-"*CAST OF CHARACTERS*" heading over what was left out - nor on a list, whose
-items have no full stops and so read as one long sentence (`pdrift` ended
-mid-list of courses). Over the MiSTer's library: 145 over 2048, 128 ending at
-a paragraph, 17 at a sentence, none at a word. History's first paragraph is
-usually the synopsis; what goes is flyer text and stage-by-stage detail.
+- **Shortened here, not cut**: whole paragraphs while they fit; under two
+  thirds of `DESC_MAX` (`FILL`), whole sentences of the next. Never end on a
+  heading or a list. The importer's `clip_desc` cuts at a sentence end in the
+  second half, else at a word with `...`; "Dr. Mario"/"Vs." are not ends
+  (`_NOT_AN_END`).
+- **2048** because reading time, not RAM: at 6px/s it is about a minute (1024
+  cut 615 entries, 2048 cuts 145, 4096 22).
+- An entry keeps only the description (drops "published N years ago", cuts at
+  `- TECHNICAL -`, `- TRIVIA -`...). **Clone pointers** ("see the original
+  ... entry") are followed to the original's description:
+  - a pointer is release notes + "see/visit/refer to" sentences only (`NOTE`,
+    `SEE`), or a first paragraph of only that;
+  - target = the quoted title, else the entry's own, matched against titles
+    and romanisations;
+  - a machine leads only to its own kind (header's first two words); a
+    cartridge only when the pointer names its platform or model ID;
+  - then description > pointer, machine > cartridge, longest wins; a few hops;
+  - an original with no description leaves the clone its own note if it has a
+    sentence of six words or more.
+- **A set with no description is omitted**, never written empty (it would
+  wipe a Skraper import; the two are not merged).
 
-**Why 2048 and not more.** At 1024, 615 descriptions were cut; at 2048, 145;
-at 4096, 22. RAM is not the limit - two copies of the text and a line table,
-~5KB at 2048 against ~57KB of static DRAM in use. Reading time is: the page
-scrolls a line of 8 pixels at `VSCROLL_SPEED` (6px/s), 45-50 characters a
-line on the card, so 2048 is about a minute and the longest entry, `simon` at
-8895, would be four and a half - with the wheel logo not coming back until it
-is done.
+## Tests
 
-**The importer cuts at a sentence too, now**, for any gamelist: `clip_desc`
-keeps whole sentences when one ends in the second half of `DESC_MAX`, and
-only otherwise cuts at a word with `...`. "Dr. Mario" and "Vs." are not
-sentence ends (`_NOT_AN_END`).
+`./tests/run-all.sh` - fourteen suites (metadata, wire, index, version,
+daemon, deploy, settings, png2gsc, scrape, history2gamelist, installer, flash,
+firmware parser, firmware layout). CI runs all with inotify-tools and
+ImageMagick. No shellcheck in `run-all.sh`.
 
-**It is not shipped, and neither is its output.** The file's header asks that
-it be used with MAME or a frontend and not republished; each user converts
-their own download.
+- Installer: builds a real release from the working copy, serves it via
+  `file://` as GitHub does, installs into a fake `/media/fat`.
+- Deploy: runs the real script from a scratch repo copy with recording fakes
+  for `ssh`/`scp`; boot hook sourced with `BOOTHOOK_LIB=yes`.
+- png2gsc: reads output through `tail -n +4 | xxd -r -p`; regenerates
+  `bootlogo.h` and fails on a difference.
+- Daemon: the loop itself (unplugged display, missing `CORENAME`, init
+  start/stop); `/dev/null` stands in for a present display.
+- Firmware: headers compiled against stubs, `-Wall -Wextra -Werror`,
+  ASan/UBSan, a real 8192-byte framebuffer.
 
-**An entry is a whole article** - a "published 45 years ago:" line (dropped,
-it goes stale), the `(c)` title line, the description, then `- TECHNICAL -`,
-`- TRIVIA -` and the rest, which are cut. Half the MRA sets' entries are a
-clone's: "Export release. Game developed in Japan. For more information about
-the game itself, please see the original Japanese release entry; "1941 -
-Counter Attack [B-Board 89625B-1]"." Shown as it is, that is a description
-page telling the player to go and read another one. The rules that turn those
-into the original's description, each found by a set that came out wrong:
+**Every bug here reached hardware first. Add the test and confirm it fails
+against the unfixed code before committing.**
 
-- **A pointer is an entry made of nothing but release notes and "see the
-  original" sentences** (`NOTE`, `SEE`), or one whose first paragraph is only
-  that and which then lists how this release differs. "see", "visit" and
-  "refer to" all occur; so do "Export releases.", "Re-Edition.", "3-Screen
-  ver." and "Bootleg made for the Ambush hardware.". A sentence does not end
-  at the full stop of "Dr. Mario" in quotes, nor at "VS. arcade version".
-- **The target is the quoted title, else the entry's own**, matched against
-  every entry's title and the romanisation a Japanese one gives on its own
-  line ("(Seishun Scandal)").
-- **A machine leads only to a machine of its own kind**, compared on the
-  header's first two words ("Arcade Video game kit" is "Arcade Video"):
-  PlayChoice's Tennis matched a tabletop VFD Tennis on title alone.
-- **A cartridge only when the pointer names its platform or its model ID.**
-  PlayChoice and Vs. sets point at "the original NES version", which is a
-  software-list entry, so those have to be searchable - but "Tennis" is also
-  an Atari 2600 cartridge, a VideoBrain cassette and a dozen more, and "Dr.
-  Mario" an Uzebox homebrew.
-- **Then a description beats a pointer, a machine beats a cartridge, and the
-  longest wins.** The bracket's model ID narrows first, but an arcade model
-  ID turns up in the Famicom port's trivia too, which is why a machine beats
-  a cartridge: `hcastle` got the Famicom Akumajou Dracula. Longest, because
-  same-titled entries are mostly the one real description and its release
-  notes.
-- **Pointers are followed a few hops**: Vs. set -> NES stub -> Famicom.
-- **An original with no description** leaves the clone its own note when a
-  sentence of it has six words or more ("Coin-op pirate version of the Mega
-  Drive game."), and nothing when it is "North American release." alone.
+## Hardware, building, deploying
 
-**A set with no description is left out, not written empty.** The importer
-replaces a game's whole line, so an empty `<desc>` would wipe a Skraper
-import of the same set. That is also why importing this after a Skraper
-gamelist replaces Skraper's Developer and Rating for every set both describe:
-the two are not merged.
-
-Over the MiSTer's 15345 zips: 4552 described, 145 over 2048 bytes, 8772 whose
-entry genuinely has no description (fruit machines, computers, pinballs, and
-arcade entries that are a title and a trivia section). Over the ~1450 MRA sets
-present, 1143.
-
-## Running the tests
-
-```bash
-./tests/run-all.sh
-```
-
-Fourteen suites: metadata extraction, wire protocol, title index, versioning,
-daemon lifecycle, deploy, settings editor, png2gsc, scraper, history2gamelist,
-installer, flashing, firmware parser, firmware layout. CI runs
-all of them on every push (`.github/workflows/ci.yml`), with inotify-tools and
-ImageMagick installed so nothing is skipped there.
-
-The installer suite builds a real release from the working copy - small index,
-small artwork pack, stand-in firmware images - serves it over `file://` laid
-out as GitHub serves releases, and runs the installer against a fake
-`/media/fat`. Only the init script and `flash-mister.sh` are stand-ins. Each of
-its safety properties was checked by breaking the installer on purpose: skip the
-checksum, overwrite `tty2oled-user.ini`, miss upstream's daemon, read the
-display's first line as its answer - the suite fails on every one.
-
-The deploy suite runs `deploy-mister.sh` in full from a scratch copy of the
-repository, with `ssh` and `scp` replaced by fakes that record every call - so
-it checks the order, the options and what would reach the MiSTer, and nothing
-leaves the machine. The scratch copy is so its fake `merged.bin` can never be
-the newest build in the real working copy, which is the one `--flash` picks.
-The boot hook is sourced as a library (`BOOTHOOK_LIB=yes`) and run against
-fixture copies of `user-startup.sh`.
-
-The png2gsc suite runs the tool as a command, on both backends where both are
-installed, and reads what it writes through the daemon's own
-`tail -n +4 | xxd -r -p` rather than a parser of its own. It also regenerates
-`bootlogo.h` with the command recorded in its header and fails if the result
-differs - so a change to the converter that alters the built-in picture is
-caught, and so is a hand edit to a file that says "do not edit".
-
-The daemon suite covers the loop
-itself rather than what it says - the display being unplugged under it,
-`/tmp/CORENAME` not existing yet, and which process the init script starts and
-stops. `/dev/null` is a character device, so it stands in for a display that is
-present, and a path that does not exist for one that is not. One assertion
-needs a real `inotifywait` and reports itself skipped when the workstation has
-none. The firmware suites compile the display headers against stubs under
-`-Wall -Wextra -Werror` with ASan/UBSan and a real 8192-byte framebuffer — no
-Arduino toolchain, no ESP32, no serial port.
-
-**Every bug fixed here reached hardware first.** When fixing another one, add
-the test and confirm it fails against the unfixed code before committing.
-
-## Hardware this was tested on
-
-Wemos LOLIN32 (classic ESP32), USB mode, SSD1322 256x64. Ask the display what
-it is rather than trusting the installer menu — "DevKit" appears twice there,
-and a generic ESP32 DevKit V4 is the `lolin32` profile, not `esp32de`:
+**Hardware:** Wemos LOLIN32 (classic ESP32), USB, SSD1322 256x64. Ask the
+display, don't trust the installer menu (a generic DevKit V4 is `lolin32`,
+not `esp32de`):
 
 ```bash
 . /media/fat/tty2oledplus/tty2oled-system.ini
 stty -F ${TTYDEV} ${BAUDRATE} ${TTYPARAM}
-echo "CMDHWINF" > ${TTYDEV}; read -t5 R < ${TTYDEV}; echo "$R"   # HWLOLIN32;0.4.0b;  <- board;version
+echo "CMDHWINF" > ${TTYDEV}; read -t5 R < ${TTYDEV}; echo "$R"   # HWLOLIN32;0.4.0b;
 ```
 
-## Building the firmware
+**Build:** `./tools/build-tty2oled.sh MiSTer_SSD1322_USB lolin32` (or
+`esp32de`/`esp32s3`) -> `build-out-<board>/MiSTer_SSD1322_USB.ino.merged.bin`,
+flashable at `0x0` (gitignored). Arduino IDE: `WEMOS LOLIN32`; on an S3 set
+**USB CDC On Boot: Disabled**. Flatpak IDE needs
+`flatpak override --user --device=all cc.arduino.IDE2`.
 
-```bash
-./tools/build-tty2oled.sh <sketch dir> lolin32     # or esp32de / esp32s3
-```
-
-Installs arduino-cli, the ESP32 core and every library, then compiles. Produces
-`build-out-<board>/MiSTer_SSD1322_USB.ino.merged.bin`, flashable as one file at
-`0x0` — the merged image already carries the bootloader, partition table and
-boot_app0 at their right offsets, which is what makes the S3's bootloader-at-`0x0`
-versus classic-ESP32-at-`0x1000` difference a non-issue.
-
-Build output is gitignored (`MiSTer_SSD1322_USB/build-out-*/`); those are ~1MB
-binaries that do not belong in history.
-
-The Arduino IDE works too — board profile `WEMOS LOLIN32`, and on an S3 set
-**USB CDC On Boot: Disabled** or `Serial` leaves the UART bridge the MiSTer
-talks to. The Flatpak IDE needs `flatpak override --user --device=all
-cc.arduino.IDE2` before it can see a serial port at all, and the arduino-cli
-route avoids the whole question.
-
-## Deploying
-
-Over SSH from the repo root — no Samba, no git on the MiSTer:
+**Deploy** (SSH, from anywhere; `MISTER=root@192.168.1.206`):
 
 ```bash
 ./tools/deploy-mister.sh                    # scripts, then restart the daemon
 ./tools/deploy-mister.sh --firmware --flash # also copy and flash the newest build
-./tools/deploy-mister.sh --index            # also copy titleindex/*.idx
-./tools/deploy-mister.sh --icons            # also copy pics/icon/*.gsc
-./tools/deploy-mister.sh --pics             # also copy the pics/ artwork pack
-./tools/deploy-mister.sh --all              # index, icons and artwork together
+./tools/deploy-mister.sh --index|--icons|--pics|--all
 ./tools/deploy-mister.sh --dry-run --all    # check and list, touch nothing
 ```
 
-`MISTER=root@192.168.1.50 ./tools/deploy-mister.sh` if mDNS does not resolve.
-`ssh-copy-id root@MiSTer.local` once and it stops asking for a password; until
-then it asks once per deploy, not once per step, because every `ssh` and `scp`
-rides on one multiplexed connection (`ControlMaster`, socket in a `mktemp -d`
-removed on exit).
+- Checks everything local and reachability **before** copying anything; one
+  multiplexed SSH connection. Asks `S60tty2oled status`, never a pid file.
+- Never ships `tty2oled-user.ini`; `coretypes.ini` only when missing;
+  `titleindex/`, `pics/` only by flag. `--pics` is one `tar` stream
+  (`/media/fat` is `sync,dirsync`), **replaces** `pics/banner`+`pics/arcade`,
+  removes `pics/alt`, excludes `pics/user`.
+- By hand: firmware first, then scripts.
+- Debug: `debug="true"` in the user ini, log `/tmp/tty2oled`;
+  `tty2oled-diag.sh` right after loading a game.
 
-It runs from any directory - it `cd`s to the repository from its own path - and
-**checks everything local before touching the MiSTer**: `ssh`/`scp` (and `tar`
-for `--pics`) installed, every file it ships present, and the build, index,
-icons or artwork each flag needs. Then one `ssh ... true` to prove the host is
-reachable, with the `MISTER=` and `ssh-copy-id` hints if not. Only then does
-anything get copied, so a deploy either fails before it starts or runs through.
-It did not use to: `--index` with no index built copied the scripts first, then
-exited before the restart, leaving the old daemon running over new files.
-
-It asks the init script whether the daemon came up (`S60tty2oled status`)
-rather than reading a pid file itself, so the pid file is known to one script.
-
-The full loop is then: edit → `./tools/build-tty2oled.sh MiSTer_SSD1322_USB lolin32`
-→ `./tools/deploy-mister.sh --firmware --flash` → `ssh root@MiSTer.local 'tail -f /tmp/tty2oled'`.
-Script-only changes need neither the build nor the flash.
-
-The folder is created if it is not there, so a first deploy to a MiSTer that
-has never had this fork works. What it does *not* bring is upstream's artwork
-pack or its updaters, so the way to move an existing install is to `mv` the old
-folder to the new name and deploy over it - the README has the three commands,
-including the `sed` over `/media/fat/linux/user-startup.sh`, which still points
-at the old `S60tty2oled`.
-
-`coretypes.ini` is copied only when the MiSTer has none, so edits to it
-survive a deploy. `titleindex/`, `pics/icon/` and the rest of `pics/` move only when
-asked for by flag, because all three are large and none of them changes with
-the scripts.
-
-`pics/` is **vendored into this repo**: the core banners - upstream's,
-converted - and the arcade wheel pack, what `CMDCOR` actually puts on
-screen. It is vendored rather than fetched so a fresh MiSTer needs nothing
-but this repo; upstream's picture repo and its updaters are not part of the
-fork, for the reasons under [Staying out of upstream's way](#staying-out-of-upstreams-way).
-
-`--pics` sends it as one `tar` stream rather than a `scp` per file.
-`/media/fat` is mounted `sync,dirsync`, so every separate file write waits on
-the SD card - the difference is minutes against seconds. It **replaces**
-`pics/banner` and `pics/arcade` on the MiSTer rather than unpacking over
-them, as the updater does, so a picture dropped here goes from the card too;
-`pics/alt` is removed in the same command.
-
-**One format, one folder per kind.** Upstream shipped five - `GSC_US`,
-`XBM_US`, `GSC`, `XBM`, `XBM_TEXT` - searched in that order, with three ini
-settings choosing between them. That was an unfinished migration, not a
-feature: `.gsc` arrived after `.xbm` and `USE_GSC_PICTURE` defaulted to `no`
-until upstream's ini v1.7. 0.4.10b finished it, leaving `pics/GSC` and
-`pics_pri`; 0.5.8b flattened what was left into `pics/{banner,alt,icon,user}`.
-See [The four artwork folders](#the-four-artwork-folders) below.
-
-What the other four were worth, measured before deleting them: `GSC_US` held
-one file, `1941.gsc`, byte-identical to `GSC/1941.gsc`. `XBM_US` held three
-real alternatives - US branding, Genesis for Mega Drive - but all three also
-existed in `GSC`, and `xbm_us` sorted *before* `gsc`, so turning
-`USE_US_PICTURE` on downgraded those cores from 16 greys to 1bpp to get it.
-`XBM_TEXT` was not searched at all by default (`USE_TEXT_PICTURE="no"`), and
-its eight exclusive cores already fell through to the firmware drawing the core
-name as text - which is what an `XBM_TEXT` picture is. Of `XBM`'s 373 files,
-351 were duplicates of a `.gsc` found first and 7 were `_alt` variants that
-could never be picked (the alt search looks in the directory the *base*
-picture came from, and those bases are in `GSC`). The 15 that were genuinely
-XBM-only were converted, LSB-first 1bpp to high-nibble-first 4bpp, every lit
-pixel to level 15 - the same picture in the container the firmware reads as
-greyscale.
-
-**`tty2oled-user.ini` is deliberately not in the deploy list.** It holds the
-user's own settings and is sourced after `tty2oled-system.ini`, so copying the
-repo's copy over it would wipe their configuration.
-
-Firmware first, then scripts, when doing it by hand. New firmware with old
-scripts behaves exactly like upstream; the reverse sends commands the firmware
-cannot parse. (`deploy-mister.sh --firmware --flash` gets this order right.)
-
-Debug with `debug="true"` in `tty2oled-user.ini`, log at `/tmp/tty2oled`.
-`./tools/tty2oled-diag.sh` on the MiSTer dumps every state file with mtimes and
-shows what `build_meta` made of them — run it right after loading a game. That
-is what found the `FULLPATH` bug.
-
-## The four artwork folders
-
-`pics/` holds one folder per kind of picture, lower case:
+## Artwork folders
 
 | folder | what | size | whose |
 |---|---|---|---|
-| `pics/banner` | console, computer and utility core banners, one file per core | 256x64 | the release's |
-| `pics/icon` | the console icons for the split layout | 86x64 | the release's |
-| `pics/arcade` | the arcade wheel logos, packed: `wheels.bin`, `wheels.idx` | 256x64 | the release's |
-| `pics/user` | banners of the user's own, by core or by arcade set | 256x64 | **theirs** |
+| `pics/banner` | console/computer/utility core banners (192) | 256x64 | release |
+| `pics/icon` | console icons (27 core names, 26 systems) | 86x64 | release, in the scripts archive |
+| `pics/arcade` | `wheels.bin` + `wheels.idx` | 256x64 | release, in `tty2oledplus-pics.tar.gz` |
+| `pics/user` | the user's own banners, by core or set | 256x64 | **theirs** - nothing writes it |
 
-The first three are replaced by every update; `pics/user` is never written to
-by one. That is the whole point of it, and it is `tty2oled-user.ini`'s
-argument applied to artwork: `pics_pri` had the same job, but nothing said so
-in its name, and the pack folder sat one level up from it looking equally
-editable.
+**Finding a picture** (`findpicture`):
 
-History, since it explains what `migrate_pics` still does: 0.5.8b flattened
-upstream's `pics/GSC` + `pics_pri` into `pics/{banner,alt,icon,user}`, with
-the `_altN` alternatives split out of the banners. The wheel pack then
-replaced the arcade marquees - 1570 of the 1768 banners, every one named
-after an arcade game - and the alternatives went with them, and so did
-`RANDOMIZE_ALT_BANNERS` and `randomalt`, the dice between a banner and its
-alternatives. `deferred_setup` says so in the log if a user ini still sets
-that name (or upstream's `USE_RANDOM_ALT`), like `DIM_PERCENT` before it.
+- **Arcade** (`classify_core`; `core_kind` asks it even with metadata off):
+  `pics/user`, then the wheel index by the **whole** lower-cased set name.
+  **Never `pics/banner`, never a trimmed name** - trimming finds a different
+  game's wheel for 367 sets. Otherwise the name as text.
+- **Everything else** (`findbanner`): `pics/user`, `pics/banner`, trimming a
+  character at a time **per folder**.
+- `PRIORITIZE_USER_BANNERS` picks which folder is first; the priority is
+  absolute.
+- Icons have no user folder (an 86x64 icon would be indistinguishable from a
+  banner). No blank stub icons: the files are the list.
+- `test-wire.sh` fails if a banner is named after a wheel set that is not a
+  core.
 
-**Which banners went.** Everything named after a set in the wheel index,
-unless `coretypes.ini` names it a core (`N64`, `NEOGEO` and `Saturn` are MAME
-set names too); then the arcade titles among the rest, by name - lower-case
-MAME-style set names, upstream's `A.ARKANOID`-style arcade names, `Yie Ar
-Kung Fu` and the like. Seven names were unclear and went to a person rather
-than a guess: `anpanman`, `ares`, `mazeman`, `titan`, `xenocrisis` and `Clean
-Sweep` were arcade and went too; `System1` is a core and stayed. 192 are
-left. A stray arcade banner would be unreachable from an arcade core anyway -
-see below - and cost 128KB of card and nothing else. `test-wire.sh` fails if
-a banner is named after a wheel set that is not a core.
-
-**How a core's picture is found** (`findpicture` in `tty2oled.sh`):
-
-- An **arcade** core - `classify_core` says so, which a `.mra` in
-  `STARTPATH` makes definitive - is a game, and its picture is the game's
-  wheel: `pics/user`, then the wheel index by the whole set name, lower-cased.
-  **Never `pics/banner`**, and never a trimmed set name: that folder holds
-  cores, not games, and trimming finds a different game's wheel for 367 sets
-  (see the section below). A set with neither shows its name as text.
-  `core_kind` asks `classify_core` itself, shadowing `META_KIND`, because the
-  picture has to know the kind whether or not the metadata display is on.
-- **Every other core**: `findbanner`, `pics/user` then `pics/banner`, with
-  the name trimmed a character at a time, as before.
-
-`PRIORITIZE_USER_BANNERS="yes"` puts `pics/user` first in both, and `no`
-puts the shipped artwork first; either way the other is the fallback. The
-trimming runs **per folder**, not across both, which makes the priority
-absolute: a user banner for a shorter prefix beats the pack's longer match,
-rather than the most specific filename winning wherever it lives.
-Cross-folder trimming is not wrong so much as unpredictable from the
-setting's name - a user's `MegaDrive.gsc` would be ignored because the pack
-ships a `MegaDriveX`.
-
-**Icons have no user override folder.** `pics/user` holds 256x64 banners named
-after the core, and an 86x64 icon of the same name in there would be
-indistinguishable from one until the firmware had read 2752 bytes of an
-8192-byte picture. One folder, `pics/icon`.
-
-**The migration is renames, not a download** (`migrate_pics` in `S60tty2oled`).
-It is there for the reason `place_menu_scripts` is: the update that introduces
-a new layout is applied by the *previous* updater, which knows nothing about
-moving anything. `pics/GSC` and `pics/banner` hold byte-identical files, so
-the 0.5.8b move is `mv` on the SD card, with the `_alt` pictures now dropped
-rather than moved; and `pics/alt`, where an install from between the two
-keeps them, is removed on every start - nothing reads it. A folder is only
-otherwise removed once its replacement is already there, so a half-finished
-update never leaves a MiSTer with no artwork; a user banner already in
-`pics/user` is never overwritten, because this runs on every start and has
-to be safe to run twice.
-
-**The wheel pack arrives one Update late on an existing install.** The
-updater that installs the wheel release is the previous one, and it decides
-whether to fetch the artwork by asking whether `pics/banner` exists - which
-it does, full of marquees. So it fetches nothing, and until the next Update
-every arcade core shows its name as text; `deferred_setup` logs why and what
-to do. The new updater asks for `pics/arcade/wheels.idx` and `.bin` as well,
-so that next Update - even one with no new version, which otherwise does
-nothing - fetches the pack. It then **replaces** `pics/banner` and
-`pics/arcade` whole, unpacking beside the install first, and removes
-`pics/alt`: unpacked over the old folders, the 1570 marquees would stay on
-the card for good, 128KB each. `test-installer.sh` plays exactly this -
-marquee and `pics/alt` present, no wheels, same version.
-
-**The icons ship in the scripts archive, the banners and wheels in the
-pack.** 27 small files that every update should carry, against a pack
-fetched only when it is missing. `pics/user` ships in neither, and
-`deploy-mister.sh --pics` excludes it from its tar - the repo's copy is
-empty, and sending it would be this fork's version of copying
-`tty2oled-user.ini` over the user's. `make-release.sh` refuses to build
-without `wheels.bin` and `wheels.idx`.
+**`migrate_pics`** (in `S60tty2oled`, every start, idempotent - the previous
+updater knows nothing of new layouts): renames `pics/GSC` -> `pics/banner`
+etc., removes `pics/alt`, removes an old folder only once its replacement
+exists, never overwrites `pics/user`. The wheel pack arrives one Update late on
+an existing install (the old updater sees `pics/banner` and fetches nothing;
+`deferred_setup` logs it); the new updater also checks for the wheels and
+**replaces** `pics/banner`/`pics/arcade` whole. `make-release.sh` refuses to
+build without the wheels.
 
 ## Arcade wheel logos
-
-An arcade core shows its game's wheel logo. `tools/wheels2gsc.py` converts a
-folder of MAME wheel logos (the 0.277 set: 12235 transparent colour PNGs,
-named by MAME set) into 256x64 `.gsc` banners, `tools/gscpack.py` packs them
-into `pics/arcade`, and `tools/mistergscpreview` shows any `.gsc` on the real
-panel. They replaced upstream's marquee scans, which were busy, mostly white,
-and 256x64 of lit pixels, where a wheel is a logo on black. To rebuild the
-pack from a new wheel set:
 
 ```bash
 ./tools/wheels2gsc.py ~/Downloads/MAME0.277Wheels -o /tmp/wheels-gsc --nodupes --report /tmp/wheels.csv
 ./tools/gscpack.py /tmp/wheels-gsc -o pics/arcade
 ```
 
-**Converted on the workstation, not on the MiSTer.** Measured: `png2gsc.py`'s
-standard-library backend takes 4-16s per wheel on the DE10-Nano (6.0s for
-`pacman`, 16.0s for `mslug`) before any of the cropping or level work, and
-refuses the 1136 interlaced ones. Pillow does the whole job in 5ms. An arcade
-core change cannot wait a quarter of a minute for its picture.
+- Converted on the workstation (Pillow, 5ms) - the MiSTer's stdlib decoder
+  takes 4-16s a wheel.
+- **Levels**: 2nd..99th percentile stretched over `--floor`..255 with
+  `--gamma`, plus: a span under `MIN_SPAN` widened downwards (flat-colour
+  logos); a peak short of 15 lifted **at most two levels** (`MAX_LIFT`);
+  nothing above level 4 (`DARK_TOP`) -> reconverted inverted. Anything
+  cleverer (body-to-15) looked worse on glass; the contact sheet is not the
+  panel. Panel levels 0 and 1 look identical; `--floor 40` = level 2.
+- **`--nodupes`**: 7614 of 12235 are identical after conversion (hashed on the
+  `.gsc`); shortest name kept; `duplicates.txt` = `<removed>|<kept>`,
+  cumulative across runs. exFAT here has **128KB clusters**.
+- **Pack**: `wheels.bin` = 4621 raw 8192-byte frames; `wheels.idx` =
+  `<set>|<frame>` for all 12235 sets, lower-cased, with a `# frames N` header
+  (`.bin` size must be N*8192). The packer reads `.gsc` via `xxd -r -p`.
+- **Daemon** (`findwheel`, then `senddata`, after `CMDCOR` + `WAITSECS`):
 
-**Brightness: a level stretch, two narrow fixes, and nothing cleverer.**
-Each logo's 2nd..99th percentile is stretched over `--floor`..255 with
-`--gamma`. Two fixes sit on top, and only change what they are aimed at:
+  ```bash
+  frame="$(awk -F'|' -v c="${core,,}" '$1 == c { print $2; exit }' "${WHEEL_IDX}")"
+  [ -n "${frame}" ] && dd if="${WHEEL_BIN}" bs=8192 skip="${frame}" count=1 2>/dev/null >"${TTYDEV}"
+  ```
 
-- A logo in one flat colour has nothing between its two percentiles, and
-  the stretch put its body on the floor - Cloud 9, VS. Tennis and Wall St
-  came out near black with a white rim of resampling ringing. A span under
-  `MIN_SPAN` is widened downwards, so the colour itself is the top.
-- A logo whose brightest pixel still falls short of level 15 has every
-  non-black pixel raised by the shortfall, **at most two levels**
-  (`MAX_LIFT`). 171 of the 12235 are lifted.
-- A logo with nothing above level 4 (`DARK_TOP`) is dark lettering drawn for
-  a light background, invisible on a black panel however far it is lifted.
-  It is converted again with its greys inverted. In the 0.277 set that is
-  13 sets, all of which came out at exactly level 2 - the floor - with the
-  next-dimmest logo at level 8, so the line is not a fine one.
+  Whole-field `awk`, not `grep` (a setname is not a regex). `findwheel`
+  checks the frame against the `.bin`'s real size.
+- Open: where the PNGs come from - redistributing 12k third-party logos.
 
-`--report` lists each set's brightest level, its lift and whether it was
-inverted. Left dim on purpose: logos like The Goonies and Marine Boy, whose
-lettering sits around level 5-7 because a small white detail (the skull, the
-hearts) already takes 15. Lifting the lettering to meet the detail is what
-flattened the hearts in the body-anchored version.
+## Artwork formats
 
-Everything else comes out byte-identical to the plain stretch. A version
-that mapped each logo's *body* - its most prominent colour - to level 15
-was built and thrown away: on the panel it read as less contrast and
-gradients squashed together, even where every part of the logo stayed
-distinct on a contact sheet. The contact sheet was not the panel. What that
-experiment did measure on the real SSD1322 (`mistergscpreview -r`, the grey
-ramp): every pair of neighbouring levels is visible except 0 and 1, so
-level 1 is black and `--floor` 40, which lands on level 2, is the dimmest
-grey a dark outline can usefully have.
-
-**`--nodupes` and `duplicates.txt`.** A set's clones and bootlegs mostly share
-the parent's wheel: 7614 of the 12235 pictures are byte-identical to another,
-in 2406 groups (the largest is 416 IGT poker sets), leaving 4621 files. That
-matters on the card - `/media/fat` here is exFAT with **128KB clusters**, so
-every file costs 128KB whatever its size, and 12235 of them would be 1.5GB.
-The duplicates are found by hashing the *converted* `.gsc`, so two different
-PNGs that come out as the same picture count as one. Of each group the
-shortest name is kept (then alphabetical) - nearly always the parent, since a
-parent's name is a prefix of most of its clones'. Every name removed goes into
-`duplicates.txt` in the same folder as `<removed set>|<kept set>`. Runs are
-cumulative: an entry whose kept set is later removed follows it to the new
-one, and an entry is dropped once its set has a file of its own again.
-
-**Packed: `tools/gscpack.py` makes `wheels.bin` and `wheels.idx`.** The
-converted folder is the working copy; what goes to the MiSTer is one pack.
-`wheels.bin` is the 4621 pictures back to back, raw, 8192 bytes each - what
-`tail -n +4 | xxd -r -p` makes of a `.gsc`, so no `xxd` at run time - and
-`wheels.idx` is `<set>|<frame>`, one line for **every** set, 12235 of them:
-a set whose picture is shared points at the one frame, which folds
-`duplicates.txt` into the index. 37.9MB and 164KB, about 10MB gzipped, where
-4621 loose files would take ~590MB of 128KB clusters on this card and minutes
-to copy onto a `sync` mount. Set names are lower-cased in the index, because
-the file names they replace were matched without case on exFAT. The packer
-reads every `.gsc` through `xxd -r -p` rather than its own parser, for the
-reason under [Artwork](#artwork-icons-and-the-boot-screen). Checked: every
-one of the 12235 sets, looked up and cut out of the pack, is byte-identical
-to its own unpacked conversion.
-
-**How the daemon shows a set's picture** (`findwheel`, then `senddata`):
-
-```bash
-frame="$(awk -F'|' -v c="${core,,}" '$1 == c { print $2; exit }' "${WHEEL_IDX}")"
-[ -n "${frame}" ] && dd if="${WHEEL_BIN}" bs=8192 skip="${frame}" count=1 2>/dev/null >"${TTYDEV}"
-```
-
-after the `CMDCOR,<core>,<effect>` header and `WAITSECS`, exactly where
-`senddata` now does `tail -n +4 "${picfnam}" | xxd -r -p`. Measured on the
-DE10-Nano: the lookup is ~100ms at worst over the 12235 lines, against the
-~0.7s the 8KB transfer takes; GNU `dd` (coreutils, not busybox) seeks to the
-frame. Match the whole field with `awk` - not `grep "^${core}|"`, which makes
-an MRA's setname a regex. The `# frames N` header line is there to check
-the `.bin` against: its size must be N * 8192, or the two are from different
-runs.
-
-The order of lookups:
-
-1. `pics/user/<core>.gsc`, as for every banner - the user's own beats the
-   pack, as the priority rules under [The four artwork
-   folders](#the-four-artwork-folders) already say.
-2. The wheel index, whole name only. `findwheel` also checks the frame
-   against the size of the `.bin` actually there, so an index from one run
-   beside a pack from another sends nothing rather than a picture cut out of
-   the middle of two, or a read past the end the firmware waits on forever.
-3. Nothing else: the name as text. `pics/banner` is not searched for an
-   arcade core - it holds cores, not games, since the marquees went - so an
-   MRA whose set name is not a MAME name gets its name, or a picture of the
-   user's own in `pics/user`.
-
-**Never trim a name to search the index.** Measured over the sets that share
-a picture: trimming finds the identical picture for 4897 of them, a
-*different game's* wheel for 367 (`hook_408` -> `hook`, `spyhuntsp` ->
-`spy`, `topgunbl` -> `topgun`), and nothing at all for 2350 (`rayforcej`'s
-wheel is kept as `gunlock`, `trvmstrb`'s as `trvgns`). An index entry is a
-statement about the pixels; a shared prefix is only a statement about the
-name.
-
-It ships in the artwork archive, `tty2oledplus-pics.tar.gz`, with the core
-banners - about 10MB of the archive, fetched only when missing. Still open:
-where the PNGs come from - redistributing 12k third-party logos is not the
-question vendoring upstream's pack was.
-
-## Things that cost time, recorded so they do not again
-
-- **`/media/fat` is exFAT, and exFAT ignores case.** `pics/ICON` *is*
-  `pics/icon` there. 0.5.8b's `migrate_pics` swept the pre-0.5.8b `pics/ICON`
-  "once `pics/icon` exists", which on the card meant deleting the icons on
-  every daemon start - for four releases, each update restoring them and its
-  own daemon restart removing them again. The tests ran on ext4, where the two
-  names are two folders. Before removing anything by an old spelling, check
-  it is not the new one (`-ef`); and never ship two files whose names differ
-  only in case - `pics/icon` has `NEOGEO.gsc` and `NeoGeo.gsc`, harmless only
-  because they are identical.
-- **CI shellchecks; `run-all.sh` does not.** `v0.6.1b` was spent on a test
-  that defined a function named `rm` - SC2218 then flags every `rm` above it
-  as calling a function not yet defined. Stub a command with an executable
-  first on `PATH`, not a function. Before tagging, run CI's own line:
-  `shellcheck -S error -s bash tty2oled.sh tty2oled-meta.sh tty2oled-read.sh
-  S60tty2oled tools/*.sh tests/*.sh` (a static binary from shellcheck's GitHub
-  releases works if the workstation has none).
-- **A `--radiolist` answers with what is already ticked, not what is
-  highlighted.** Every single-choice picker in the settings editor was one, so
-  arrowing to a new transition and pressing Enter saved the old value and the
-  editor read as broken. dialog needs Space to move a radio dot, and the
-  Scripts menu is driven by a pad that may not have one. `--menu` returns the
-  highlighted tag, which is what the interaction actually is. Not caught
-  because nothing drove dialog at all - `test-settings.sh` covered the file it
-  writes, on the assumption that the widget handed over the right value. It
-  models both widgets now.
-- **An uninstaller that cannot ask must not proceed.** With `fb_terminal=0`
-  there is no terminal, `[ -t 0 ]` is false, and the old code took that as
-  permission - it removed the install without a word. Silence is not consent
-  for something that needs a reinstall to undo.
-- **The MiSTer has no image library.** Neither Pillow nor ImageMagick, so
-  anything that converts a picture *there* rather than on the workstation
-  needs its own decoder; `png2gsc.py` grew a standard-library PNG backend for
-  the boot screen. Holding it to byte-identical output against the other two
-  is what found the parts that are easy to get subtly wrong: alpha has to be
-  composited per channel *before* the luma, and both roundings have to match
-  Pillow's, or a transparent PNG comes out a level off in places.
-- **`FULLPATH` is the containing folder, not the ROM path.** The file name is
-  in `CURRENTPATH`. Reading `FULLPATH` titles every game after its folder.
-- **Loading a ROM does not modify `/tmp/CORENAME`.** Watching that file alone
-  can never notice a game change. The daemon watches the game-state files too.
-- **MiSTer never clears `FULLPATH`/`FILESELECT`/`GAMEID`.** They outlive the
-  core that wrote them, so a core started from the menu inherits the previous
-  core's game. Trusted only when newer than `CORENAME`.
-- **`bash`'s `-nt` compares whole seconds.** It reads `st_mtime`, not the
-  nanoseconds, and MiSTer writes `CORENAME`, `CURRENTPATH`, `FULLPATH`,
-  `FILESELECT` and `GAMEID` inside one second. Any guard phrased as "the
-  selection must be newer than the core name" therefore answers *no* on every
-  core that rewrites `CORENAME` as the ROM loads - GBA, Game Gear, Virtual
-  Boy, NeoGeo, 32X, PC Engine CD - and those systems never showed a game at
-  all. Phrase it the other way round (`CORENAME` strictly newer than the
-  selection) so same-second writes count as current, and **latch** the
-  decision: the guard runs only on a core change, and the polls that follow
-  keep rejecting that exact selection (`META_STALE_REF`, content plus mtime)
-  until a different one arrives. Re-running a timestamp test on every poll
-  cannot tell leftover state from a freshly loaded game.
-- **`GAMEID` needs a different freshness test from the rest.** Checking it
-  against `CORENAME` is useless within one core: the *previous* game was also
-  loaded after the core started, so its CRC passes. MiSTer writes the selection
-  first and the CRC a few hundred ms later, which is long enough for the daemon
-  to wake on the selection and display the previous game's year and publisher
-  beside the new game's title - then replace them when the real CRC lands. The
-  test that works is against the selection: a `GAMEID` older than
-  `CURRENTPATH` belongs to the game before this one. Equal mtimes count as
-  fresh, or good CRCs get thrown away.
-- **The CRC misses the index on whole systems.** MiSTer and No-Intro do not
-  always hash the same bytes - an iNES header counted by one and not the other
-  is enough. `lookup_name` is the fallback: the index stores the cleaned title,
-  `clean_romname` produces the same cleaned title from the filename, and
-  `tests/test-index.sh` pins the two together so the fallback is an exact match
-  rather than a fuzzy one. The TITLE INDEX block in `tty2oled-diag.sh` reports
-  which path resolved the game.
-- **`FILESELECT` is written while merely browsing**, value `active`, and
-  `FULLPATH` is rewritten with it. Only `selected` counts, and identical
-  metadata is not resent or the marquee restarts on every keypress.
-- **`log_file_entry=1` is required in `MiSTer.ini`** and defaults to off.
-  Without it MiSTer publishes nothing but the core name.
-- **Core names are not index names.** `CORENAME` is whatever the core's
-  confstr says, not what libretro calls the system: `MEGADRIVE` vs `GENESIS`,
-  `GBC` vs the Game Boy core's combined index. `_index_alias` maps them and
-  `_index_file` also matches case-insensitively; a core with no data at all
-  falls through to the filename. Add an alias when a system shows only
-  System/Region/Format.
-- **The Neo Geo is arcade hardware as far as the data is concerned.** None of
-  libretro's four metadata categories carry SNK Neo Geo - only Neo Geo Pocket
-  - so its year and publisher come from the MAME set instead
-  (`mamexml2index.awk`, games with `romof="neogeo"`). MAME descriptions carry
-  both regional titles as "Aero Fighters 3 / Sonic Wings 3", and a romset may
-  use either, so one record is emitted per alias.
-- **The TurboGrafx core reports `TGFX16` for cartridges and CDs both**, so its
-  index merges the cartridge dats with the redump PC Engine CD set. A core
-  whose index needs several sources gets them in one file; `harvest` in the
-  builder takes a system list plus the categories to pull for it.
-- **Disc systems have no year or publisher upstream.** libretro's
-  `metadat/{releaseyear,publisher,genre,developer}` cover 47 cartridge systems;
-  PSX, Saturn, Sega CD, 3DO and PC Engine CD appear only under
-  `metadat/redump`, which carries name, region and serial but none of the four.
-  Those indexes are built from redump and keyed on the serial MiSTer writes to
-  `GAMEID` (`lookup_serial`), giving a canonical title and region but empty
-  Year and Company columns. The index line is eight fields now - the serial is
-  the eighth - so every reader has to absorb it or it lands in Developer.
-- **`classify_core` needs `STARTPATH`, and not every core publishes one.**
-  Without it the folder guess cannot run and the core lands on `unknown`,
-  which turns the metadata display off entirely - the artwork stays
-  full-screen and no game is ever shown, whatever the selection says. The
-  shipped `coretypes.ini` states the kind outright for every core we know of
-  and is consulted first. `deploy-mister.sh` installs it only when the MiSTer
-  has none, so edits survive.
-- **ESP32 core 3.x removed the channel-based LEDC API.** Upstream's stable
-  sketch does not build on current cores. A guarded macro block maps the old
-  spelling onto `ledcAttach`/`ledcDetach`; 2.x is unaffected.
-- **A daemon started over `ssh -t` died when the connection closed.**
-  `S60tty2oled start` used a bare `&`, which left the daemon in the caller's
-  process group and on its terminal. `deploy-mister.sh --flash` runs
-  `flash-mister.sh` over `ssh -t` so esptool's progress shows, and
-  `flash-mister.sh` restarts the daemon on its way out - so the kernel's SIGHUP
-  to the terminal's foreground group killed it the moment ssh disconnected. The
-  display, reset by the flash, sat in its boot animation waiting for a daemon
-  that no longer existed; a cold reboot "fixed" it, because the boot hook has
-  no terminal. Found on hardware: plain `ssh` keeps the daemon, `ssh -tt` kills
-  it, every time. The same missing detach was why `ssh host S60tty2oled start`
-  never returned - the daemon held ssh's stdout - which callers had each worked
-  around with `</dev/null >>log`. `start` now runs the daemon under `setsid`,
-  with its own stdio (`DAEMONLOG`), and ignores SIGHUP around the fork: between
-  fork and `setsid` the child is still in the caller's group, and the test
-  that plays the hangup (`kill -HUP 0` from the starter's group) caught exactly
-  that window. `setsid` execs rather than forks when its caller is not a group
-  leader, so `$!` stays the daemon's pid.
-- **A merged firmware image is the whole chip, and writing it erases the
-  data partitions.** It is 4MB of a 4MB flash, and `nvs` (Preferences) and
-  `spiffs` (the LittleFS the boot image lives on) are `0xFF` in it because the
-  build has nothing for them. Written at `0x0` it wiped both, so every flash
-  forgot the stored boot screen. `fw-segments.py` plans the write instead:
-  the bootloader and partition table, then each partition that has data,
-  trimmed to where the data ends - 520KB rather than 4MB. Only when the
-  display's own partition table, read first with `esptool read_flash 0x8000
-  0xC00`, matches the image's; any doubt - unreadable table, moved
-  partitions, data outside them - and it writes the whole image as before.
-  `tests/test-flash.sh` applies the plan to a simulated chip and compares.
-- **CI builds three boards against today's libraries; a local build is one
-  board against whatever was installed.** `v0.4.0b` was tagged with the
-  esp32de and esp32s3 builds broken: Adafruit GFX 1.12.6 made upstream's
-  `round(<int>)` in the GSC path an ambiguous overload, and the workstation
-  still had 1.12.3 and only ever built lolin32. The release job never ran, so
-  nothing was published, but the tag was spent - hence 0.4.1b. Before tagging,
-  `arduino-cli lib upgrade` and build all three boards, **lolin32 last**:
-  `deploy-mister.sh --firmware` takes the newest `merged.bin` in any
-  `build-out-*`, so an S3 image built after it is what gets flashed.
-- **GitHub release asset names are case-insensitive.** `v0.4.1b`'s release
-  job created the release, then failed uploading `tty2oledplus_installer.sh`
-  beside `TTY2OLEDplus_Installer.sh` with "ReleaseAsset.name already exists",
-  and `gh` deleted the half-made release - another tag spent. (Those are the
-  names of the day; everything is lower case since 0.4.8b.) `test-installer.sh`
-  fails on any two assets that differ only in case. The same pair would also
-  have collided in a clone on macOS or Windows.
-- **`CMDBOOTPIC` draws, whatever the boot screen thinks.** It is on
-  `boot_quietCommand`'s list because at power-on the picture it draws is the
-  boot screen already on the panel. The busy bar shared that list, so after
-  `tty2oledplus_update` finished, the menu picture went up *under* a bar that
-  nothing would ever stop - the MENU core sends `CMDBOOTPIC` and no `CMDCOR`.
-  The bar keeps the list minus that one command, and the daemon stops the bar
-  itself when the updater exits: a screen that says "busy" has to be taken
-  down by whoever put it up.
-- **A theory that fits is not a cause.** The flash hang first looked like the
-  firmware formatting LittleFS after the erase and missing the daemon's
-  handshake meanwhile. Reproducing it - erase the region, reset, start the
-  daemon - showed the display answering fine. The difference between the
-  reproduction and the real run was `ssh -t`, and that was it.
-- **`/tmp/tty2oled_sleep` is a mutex, not a courtesy.** It reads like a "be
-  quiet" flag, and upstream's comment ("touch it and the daemon goes to
-  sleep") encourages that reading. It is not: MiSTer SAM's own module
-  (`Scripts/.MiSTer_SAM/MiSTer_SAM_tty2oled`) *sources this fork's ini to learn
-  `TTYDEV`* and then drives the panel itself - `CMDCOR` with raw picture bytes
-  through the same `tail -n +4 | xxd -r -p` idiom, `CMDTXT`, `CMDCLST` - and
-  reads the `ttyack;` tokens back off the port. Two writers pushing 8KB
-  payloads and both consuming one ack stream is the `waitforack` corruption
-  upstream chased through three rounds of `cDelay` tuning. So nothing may write
-  to the port while the file exists, and "let the update screens draw anyway"
-  is exactly the wrong fix - `tty2oledplus_update.sh` refuses instead, because
-  a flash landing mid-write is the one failure here that needs a USB cable and
-  a workstation to undo.
-- **SAM writes a deadline into that file and nobody ever read it.**
-  `tty_display` puts an epoch - the running game's start, its timer, ten
-  seconds' grace - into the file on every game change. Neither side reads it
-  back, so a SAM that is killed or crashes left the daemon blocked on an
-  `inotifywait -e delete` that never fires: the panel frozen until somebody
-  removed the file by hand. `sleepmode_pass` honours it now, with
-  `SLEEP_STALE_GRACE` (60s) on top, because the deadline only covers the game
-  that was running when it was written and so falls due during any slow core
-  load while SAM is perfectly healthy. Releasing early hands the port back to
-  two writers, which is the thing the file exists to prevent.
-- **Coming back from sleep is a full redraw, like a re-enumeration.** SAM draws
-  its own pictures and text over everything for the whole session and clears
-  the panel on its way out (`CMDCLST`), so nothing on it came from us.
-  `oldcore`, `META_WIRE_LAST` and `DEFERRED_DONE` are all cleared on release
-  for the same reasons `serialready` clears them.
-- **SAM's paths are hardcoded to upstream**, `/media/fat/tty2oled`, including
-  the two inis it sources for `TTYDEV`. On a tty2oled+ install its module dies
-  in `tty_init` - but `tty_start` has already touched the sleep file, and the
-  module's exit trap does not remove it. So with SAM's `ttyenable="Yes"` the
-  panel went dead for the whole session: daemon parked, SAM's driver dead.
-  The stale-deadline release is what recovers it. `ttyenable` ships `"No"`, so
-  this only reaches users who turned it on.
-- **A setting in the ini is not a setting that works.** `SHOW_CONSOLE_SPLIT`
-  was in the ini, in the README's table and in the settings editor's menu for
-  three releases, and *no script ever read it*: turning it off did nothing.
-  `test-settings.sh` only checked that an offered key existed in the ini, which
-  it did. It now also requires a consumer in `tty2oled.sh` or
-  `tty2oled-meta.sh`. Existing is not the same as being read.
-- **A ROM set lives on the SD card or on USB, and the path does not say
-  which.** MiSTer reports `FULLPATH` relative to the SD card - `games/GBA` on
-  the SD, `../usb0/games/PSX` on USB - so resolving from `/media/fat` alone
-  finds only one of them. `find_rompath` tries the same relative path under
-  every root in `GAME_ROOTS` (SD, usb0-usb5, cifs). It is used to recover the
-  extension MiSTer stripped, which is the only thing the daemon needs an
-  actual file for; a selection that is not on disk still displays, just
-  without a Format field. Quote the name everywhere: `After Burner 32X (JU)
-  [!]` is a bracket expression if it reaches pathname expansion.
-- **MiSTer strips the extension from `CURRENTPATH`** for any core that
-  declares a single ROM extension. `3-D Tetris (USA)`, `Aladdin (USA,
-  Europe)`, `Aero Fighters 3` are whole selections, not menu labels. A rule
-  requiring a game to have an extension therefore rejected every load on Game
-  Boy Advance, Virtual Boy, Game Gear, NeoGeo, 32X and PC Engine CD, while
-  disc cores kept working because they accept several extensions and so keep
-  the `.chd`. What actually separates a core launch from a game is
-  `FULLPATH`: the core browser sets it to `_Console`, a game sets it to
-  `games/GBA` or `../usb0/games/PSX`.
-- **`FILESELECT` does not stay `selected`.** Opening and closing the OSD after
-  a load rewrites it to `cancelled`, and browsing sets `active`, both with
-  `CURRENTPATH` still naming the running game. Requiring `selected` on every
-  poll made the card vanish as soon as the menu was touched, so the loaded
-  selection is latched (`META_LAST_SELECTED`) until a different one is chosen.
-- **A core can be launched through a `.mgl`**, not just a `.rbf` - the Game
-  Gear entry is `_Console/Game Gear.mgl`, and that core reports `CORENAME`
-  `GameGear` with `RBFNAME` `SMS`.
-- **The selection is written ~3.3s before `CORENAME` is.** Launching a core
-  from the menu writes `CURRENTPATH="Nintendo GameBoy"` (the menu *label*) and
-  `FULLPATH="_Console"` at t=0, and `CORENAME` only at t=3.3. The daemon wakes
-  on `FULLPATH`, finds the core name unchanged, and the freshness guard then
-  compares the selection against the *previous* core's `CORENAME` - older
-  still, so it passes. For those three seconds an empty core showed the split
-  layout titled with its own menu label. The guard against leftover state
-  cannot help here; what does is that a game is a file: `build_meta` requires
-  the selection to have an extension, rejects `.rbf`/`.mra`, rejects anything
-  matching `STARTPATH`, and rejects any selection whose `FULLPATH` folder
-  starts with `_` (`_Console`, `_Computer`, ... are core folders).
-- **Nothing draws the console layout on its own.** It is drawn by `CMDCOR` on
-  a core change, by `CMDICON` when an icon arrives, or by a scroll tick that
-  found something to animate. A *game* change is none of those - the core has
-  not changed and almost nothing ships an icon - so short-titled games with few
-  fields (`Airwolf`, two fields) never reached the screen while long-titled
-  ones did, because only their marquee made the tick redraw. `meta_parse` now
-  sets `metaNeedsDraw` for console kinds and the next `meta_tick` honours it.
-- **Upstream's updater wired the boot line by grepping for the string
-  `tty2oled`**, not for the path, so on a MiSTer that has ever had upstream
-  installed it saw the old line, decided the work was done, and never added
-  ours. `deploy-mister.sh` does this now and matches on the full path.
-  `/media/fat/linux/user-startup.sh` is the one file outside the install
-  folder that names it.
-- **The panel boots at contrast 5 unless something says otherwise.** That is
-  upstream's initial value for `contrast`, and it is almost off. Everything on
-  the boot screen - picture, sweep, version - happens before the daemon's
-  `CMDCON` can arrive, so the one stretch of the session nobody could read was
-  the one that says which firmware is running. It starts at 255 now; `CMDCON`
-  still replaces it with the user's stored level the moment the daemon
-  connects.
-- **`loop()` does not run until `setup()` returns, and the start screen was
-  inside `setup()`.** The firmware ignored the serial port for the length of
-  the whole boot animation - 2s hold plus 8 sweep cycles plus 0.5s, near enough
-  eight seconds - while the daemon, which never waited for `ttyrdy;` and has no
-  reason to, sent its entire startup handshake into a chip that was not
-  listening. The animation exists to fill the wait, so the wait has to be what
-  ends it: `boot_waitOrCommand` returns on `Serial.available()`, and `ttyrdy;`
-  now goes out *before* the screen so it means "I will answer you" rather than
-  "the animation finished". A `CMDCOR` landing in that window was worse than
-  slow: 8192 bytes into a 256-byte RX ring is a short `readBytes`, which draws
-  the transfer-error bitmap.
-- **Startup order is boot time.** The daemon used to run `checkversion`, the
-  clock, the dimming and the side-swap settings in front of
-  the first picture. None of them change what that picture looks like, and
-  `checkversion` blocks for up to two seconds when the display cannot answer
-  `CMDHWINF` yet. Contrast and rotation are the only two the picture depends on
-  - the rest is `deferred_setup`, run once the artwork is already on the panel.
-- **`WAITSECS` is two different waits.** After a picture header it is a
-  transfer sync; after a single-line command it is just a pause, and the
-  firmware acks those after `cDelay` = 15ms. `CMDWAITSECS` (0.05) is the second
-  one, which took about a second out of the startup handshake. `cmdwait` falls
-  back to `WAITSECS`, so an ini that predates the setting still works.
-- **A loop branch with nothing in it is a loop that eats a core.** Every branch
-  of the daemon's main loop ends in something that blocks - an `inotifywait`,
-  or a sleep - except the one for a missing `/tmp/CORENAME`, which used to end
-  in a `dbug` and nothing else. The file really can be missing: `S60tty2oled`
-  waits for the serial device but not for MiSTer's `Main`, so the daemon can
-  reach the loop first, and it then span at 99% of a core until `Main` wrote
-  the file - writing the same debug line into `/tmp` for the whole of it when
-  `debug="true"`. `waitforcorename` watches the *directory*, because
-  `inotifywait` on a path that does not exist returns immediately, which is the
-  spin again; and it falls back to a plain sleep on any exit code that is
-  neither an event nor the timeout, because a machine with no inotify-tools is
-  the spin a third time.
-- **The device check ran once, in front of the loop.** `${TTYDEV}` disappears
-  when the ESP is unplugged, when the USB bus re-enumerates it, and when a
-  flash resets the board; after that every `echo >${TTYDEV}` fails silently,
-  one per command, while the loop carries on and the panel keeps whatever was
-  last drawn. Nothing recovered short of restarting the daemon. `serialready`
-  is the per-pass check, and it does two jobs: while the port is absent it is
-  the loop's only brake, and when the port comes back it re-runs the handshake
-  and clears `oldcore`, `META_WIRE_LAST` and `DEFERRED_DONE`. All three,
-  because a re-enumerated board has rebooted into its boot screen with the
-  firmware's own defaults - so the core picture, the metadata line that
-  `sendmeta` de-duplicates, and the time/dimming/flip settings that
-  lived in the RAM the reset cleared all have to go out again.
-- **A pid file is not evidence, and this one was shared with upstream.**
-  `S60tty2oled` wrote `/run/tty2oled-daemon.pid`, which is the path upstream's
-  copy writes, and checked only that `/proc/<pid>` existed. Side-by-side
-  installs is the whole point of the fork's own folder, and that one path undid
-  it: a live upstream daemon in the file read as "already running" and stopped
-  ours from starting, and `stop` then killed it. `stop` was worse than the
-  sharing - it found the inotify child by grepping `ps` for the string
-  `tty2oled` and taking a line by position, so on a machine running two
-  installs it could name either. Proved rather than reasoned: the unfixed
-  `stop()` kills an unrelated `sleep 60` whose pid is sitting in that file.
-  `daemonpid` now believes a number only when `/proc/<pid>/cmdline` names
-  *this* install's `${DAEMONSCRIPT}`, which also covers a recycled pid; the old
-  path is still swept, safely because of that check, so a deploy can still stop
-  a daemon the previous version of the script started. `children` reads ppids
-  out of `/proc` instead of parsing `ps`.
-- **Two scripts placing the same file, and only one of them told.** The menu
-  scripts (the launcher alone, since 0.6.3b) have to be in `/media/fat/Scripts` *and* in the install folder:
-  `place_menu_scripts` in `S60tty2oled` copies install folder -> Scripts on
-  every daemon start (`cmp` first), which is the only thing that can give the
-  new names to a MiSTer updated by an installer older than them.
-  `deploy-mister.sh` copied them to Scripts **only**, so the daemon restart at
-  the end of its own run found the install folder's older copy different and
-  put that back: every deploy silently reverted its own menu scripts to
-  whatever a release had last left there. `make-release.sh` packs them into the
-  install folder, so the release path was always right and only the deploy was
-  wrong - which is why it survived three releases. Found by running the
-  editor on the MiSTer after deploying it and counting the settings: 25, from a
-  version that had 35, still listing a setting deleted two releases earlier.
-  `test-deploy.sh` had **pinned the bug** with an assertion that the menu
-  scripts go to Scripts "and not into the install folder". A test can be wrong;
-  when behaviour and test agree and reality does not, suspect both.
-- **A remembered label outlived the screen it was on.** The busy bar skips a
-  label it is already showing, so a poll every couple of seconds does not
-  redraw the panel. It forgot the label only when a drawing command arrived
-  *while the bar ran* - and update_all runs its downloader twice. Between the
-  two the daemon stops the bar, which drains off the edge in a third of a
-  second, then sends `CMDMETAOFF`, waits 0.2s and redraws the update_all
-  screen over the label: the bar has already stopped, so nothing is
-  forgotten, and the second run's "Updating System ..." was taken for a
-  repeat. The bar swept along under the update_all screen with no message.
-  `busy_noteCommand` forgets the label on any drawing command now, running
-  bar or not. Its test passed against the bug at first - `resetProbe` does
-  not clear `lastPrint`, so it read the first run's label - and only failed
-  once it counted draws instead.
-- **ScreenScraper refuses every call without developer credentials.** A
-  scraper for its API was built with the gamelist importer and taken out
-  again before release: `jeuInfos.php` wants the *program's* `devid` and
-  `devpassword` beside the user's account, and answers 403 "Vérifier vos
-  identifiants développeur" to anything else - measured, not assumed. The
-  frontends that let a user scrape with a name and password ship their own
-  developer ID inside the program; this fork has none. The gamelist route
-  gets the same data through the tools that do.
-- **Two things drawing into one ten-row band is one thing too many.** The
-  power-on outro ran the comet's last sweep and the version's fade together.
-  Every version step blacks the left half of the band and re-renders the text
-  into it; the bar redraws a few columns. Sharing a tick between them made the
-  comet stutter as it ran off the edge on real hardware. They are sequential
-  in time anyway, so `boVerStart` is stamped when the bar finishes rather than
-  when the outro begins. A test that measured the version fade from the start
-  of the outro had to be rewritten - it drove the clock in two 500ms ticks and
-  the bar only moves one step per tick however much clock it carries.
-- **A picture made of several transfers cannot be decided when the fade is
-  asked for.** The console layout needs the icon, which the daemon sends *after*
-  the metadata - so the snapshot `meta_showCard`'s idiom takes at request time
-  faded in with a black panel beside the text, and the icon appeared on top of
-  it afterwards. `tfRenderHook` composes it again at `TF_BLANK` instead: the
-  bottom of the fade is the latest possible moment and the panel is black and
-  idle there anyway, so a transfer still on the wire has the whole fade-out and
-  blank to land in. Taken into `tfRender` when the fade starts, exactly as
-  `srcBin` is, because the fade outlives the call that asked for it. The
-  snapshot is still what a wipe animates towards.
-- **A blocking read is a stopped animation.** `Serial.readBytes()` holds
-  `loop()` until the bytes arrive, and a transfer is not one stream: the daemon
-  writes the header, sleeps `WAITSECS`, then writes the payload, so a 2752-byte
-  icon owns the firmware for ~440ms at 115200 baud. The icon lands immediately
-  after the metadata that started a fade, so every game change showed two or
-  three palette steps, a freeze, and then a jump to black when `tf_stepsDue()`
-  returned 16 at once. `serial_readTicking` drains what is available and runs
-  `contrast_tick`/`transition_tick` while the port is quiet and every 16ms
-  while it is not - about 34 bytes of arrival against a 256-byte hardware
-  buffer. **The icon only**: `logoBin` and `metaBin` are what a transition
-  renders from at its black phase, so advancing one while overwriting them
-  could draw half a picture. Diagnosed from the symptom's shape - "2-4 steps of
-  16, then a freeze under a second, then a clear" is a stalled ticker, not bad
-  arithmetic; the arithmetic simulated perfectly.
-- **MiSTer publishes the core seconds before the game, so "a core launched
-  with its game" is not a thing the daemon ever sees.** The log of a real load
-  is `CMDMETAOFF (kind=console game=no)`, `CMDCOR`, and only then - a second or
-  two later - `CMDMETA`. `sendcoreboot` required `META_GAME=yes`, so
-  `CMDCBOOT` was never sent on this hardware at all and the pause before the
-  details appeared was MiSTer's own delay, not the setting. It is armed on
-  every console core change now, and the hold is timed from when the *artwork*
-  reaches the panel rather than from when the game arrives - which also means a
-  game that turns up after it has elapsed is drawn at once. Read the daemon's
-  own debug log before believing a feature fires.
-- **An icon landing mid-transition put the layout on the panel at full
-  brightness for a frame.** The daemon sends the icon just after the metadata,
-  and the metadata has by then started a transition towards that very layout,
-  so `oled_readicon` composing it "because nothing is owed a first draw" was a
-  flash in the middle of a fade. It waits for `tfState == TF_IDLE` and no page
-  fade, and sets `metaIconRedraw` otherwise - a plain redraw afterwards, not
-  another transition, because it is the same picture with the icon in it.
-- **The icon arrives after every CMDMETA, not just on a core change.**
-  `refreshmeta` sends one too, so `oled_readicon` composing the split layout
-  the moment an icon landed cut straight to the new game and cleared
-  `metaNeedsDraw` before `meta_tick` could transition into it. Loading a ROM
-  into a running core therefore changed the screen with no transition however
-  much the tick was taught to fade. That redraw is for an icon turning up for a
-  layout that is *already* on the panel, so it is guarded on `!metaNeedsDraw`
-  as well as on the core-boot hold. Found by replaying the daemon's exact
-  command order against the firmware rather than reading either in isolation -
-  the firmware's own tick logic was correct in simulation the whole time.
-- **Moving a path means finding everything that reads it.** The daemon's pid
-  file moved to its own name, and `deploy-mister.sh` went on checking the old
-  one by hand - every plain deploy would have reported a healthy daemon as "did
-  not start" and exited 1. Nothing tested the deploy, so nothing noticed until
-  it was read. It asks `S60tty2oled status` now, and `test-deploy.sh` fails if
-  any command it sends names a `.pid` file.
-- **`png2gsc.py` had two backends that disagreed, and Pillow's was the
-  worse.** Found by writing the tests, and the first three on the default path:
-  `--dither` turned pictures **almost entirely black** - quantizing a greyscale
-  image to a palette reads each grey as a palette *index*, so only greys 0-15
-  found their entries and everything brighter hit the black filler, and it has
-  to go through RGB first. **16-bit PNGs**, which GIMP and Krita write at
-  16-bit precision, came out in two tones, because `convert("L")` on `I;16`
-  clips at 255 instead of scaling. `thumbnail()` never enlarges, so an icon
-  drawn at half size stayed a postage stamp while ImageMagick filled the frame.
-  And ImageMagick's `-colors 16` chose sixteen greys to suit the image rather
-  than the panel's sixteen, so a ramp used ten levels. Truncating with `>> 4`
-  became rounding to the nearest level at the same time, which is what made the
-  two agree; it moved 146 anti-aliased edge pixels of the built-in boot logo
-  up by one level, and `bootlogo.h` was regenerated for it.
-- **Three scripts read the pid file by hand**, and moving it broke all three.
-  The deploy was found by reading it; `flash-mister.sh` and
-  `tty2oled-bootimg.sh` were found only when a test grepped the whole repo for
-  the path. Both stop the daemon to free the serial port and restart it "if it
-  was running" - judged by the old path, so after the move they concluded it
-  never was, and a successful flash or boot-image upload left the display with
-  no daemon at all. `test-daemon.sh` now fails if any script but the init
-  script and the ini names a pid file. Grep for every reader before moving a
-  path; the tests only cover what they were written to cover.
-- **`EPOCHREALTIME` is punctuated by the locale.** Under `el_GR` it reads
-  `1790041391,629355`, and bash arithmetic takes that comma as the comma
-  operator rather than failing - so a timing assertion built on it silently
-  measured nothing and passed. `tests/test-daemon.sh` pins `LC_ALL=C`.
-- **Renaming a variable mid-function is how the staleness guard silently
-  stopped working** — it kept testing the old name while the value had moved.
-  Its test passed for an unrelated reason. Check that a test fails without its
-  fix.
-
-## The title index
-
-MiSTer writes the CRC32 of the loaded ROM to `/tmp/GAMEID`. `lookup_crc` turns
-that into a canonical title plus year, publisher, genre and developer - the
-things a filename cannot tell you.
-
-```bash
-./tools/build-title-index.sh            # every mapped core, ~1.8MB, 24.5k games
-./tools/build-title-index.sh NES SNES   # or just these
-./tools/build-title-index.sh --list     # core name -> libretro system map
-./tools/deploy-mister.sh --index
-```
-
-The source is [libretro-database](https://github.com/libretro/libretro-database)
-`metadat/{releaseyear,publisher,genre,developer}` - CRC-keyed, offline, no API
-key, no account. Downloads are cached in `.index-cache/`; `--force` refreshes.
-
-One file per core name, `titleindex/<CORENAME>.idx`, each line
-`CRC32|Title|Region|Year|Publisher|Genre|Developer|Serial`. Per-core rather than one
-combined file because the MiSTer greps it on every game load: 200KB per core
-instead of 1.8MB. A five-field line still parses, so the old single-file
-`TITLE_INDEX` keeps working as a fallback when there is no per-core file.
-
-`METADATA_FIELDS` in the ini picks which fields reach the screen and in what
-order. The split layout has four rows and pages the rest every
-`METADATA_INTERVAL` seconds, so the first four listed are the ones seen at a
-glance. Arcade cores have their own
-vocabulary and ignore the setting.
-
-**The index titles must match `clean_romname`.** A CRC hit replaces the
-filename-derived title, so if `index-emit.awk` cleaned names differently the
-same game would be called two different things depending on whether its CRC
-happened to be indexed. `tests/test-index.sh` runs both implementations over
-the same names and compares.
-
-**If a core is missing**, add it to `sysmap()` in `tools/build-title-index.sh`;
-the core names there are what MiSTer writes to `/tmp/CORENAME`, which
-`tty2oled-diag.sh` prints. Cores with no libretro data (`STUDIO2`) warn and
-skip.
-
-## Core names on screen
-
-`names.txt` is MiSTer's own core-renaming file, `<key>:<display name>`, and the
-menu shows those names - so a display reading `GBA` while the menu reads
-`Nintendo GameBoy Advance` is showing the wrong one. `display_corename` looks
-the running core up there and the `System` field and the no-game title use the
-result; `META_ICON` deliberately does not, because icons are named by core.
-
-The file is keyed on the core file and we hold the core name, so four keys are
-tried: `CORENAME`, `RBFNAME`, the `STARTPATH` basename, and that basename with
-its `_YYYYMMDD` build date removed. `GBA_20260530.rbf` is keyed `GBA`;
-`Game Gear.mgl` is keyed `Game Gear`. Arcade is left alone - its "core name" is
-an MRA setname, which is not a core file. `USE_NAMES_TXT="no"` turns it off.
-
-## Artwork: icons and the boot screen
-
-**Two spellings of `.gsc`, one wire format.** This tool writes three header
-lines then one hex character per pixel; the vendored artwork pack writes three
-header lines then `0X1f,0Xa2,` bytes. They are interchangeable, because the
-daemon sends either with `tail -n +4 | xxd -r -p` (`tty2oled.sh:191`), and both
-reduce to the same 8192 bytes. Not because `xxd` "keeps the hex digits and
-ignores the rest" - it does not, and writing a converter on that assumption
-produces 3072 bytes from a 2048-byte picture. `xxd -r -p` **restarts a token at
-every non-hex character**, so `0X1f,` is the single byte `0x1f`: the leading
-`0` is its own one-digit token, `X` ends it, `1f` is the next. Anything reading
-these files must shell out to `xxd -r -p` rather than reimplement it. What is *not* negotiable is the header being exactly three lines, since
-that `tail -n +4` is hardcoded.
-
-All of them are `.gsc`: three header lines, then the pixels, row
-major. So the panel has **16 grey levels**, `0` black to `f` white - no colour,
-no alpha. Sizes are fixed and the firmware reads an exact byte count, so a
-file one byte out is dropped as truncated.
+`.gsc` = three header lines, then pixels row-major, 16 greys (`0`..`f`). Two
+spellings exist (one hex char per pixel; `0X1f,` bytes); both work because the
+daemon sends `tail -n +4 | xxd -r -p`, and **`xxd -r -p` restarts a token at
+every non-hex character** - anything reading these must shell out to it. The
+header is exactly three lines.
 
 | | size | bytes | where |
 |---|---|---|---|
-| core banner | 256x64 | 8192 | `pics/user/` then `pics/banner/<CORENAME>.gsc` - what `CMDCOR` shows |
-| console icon | 86x64 | 2752 | `pics/icon/<CORENAME>.gsc` |
-| blank icon | 86x64 | 2752 | `png2gsc.py --blank --out ...`, all pixels `0` |
-| boot screen | 256x54 | 6912 | the ESP's own flash, via `CMDWRBOOT` |
-| built-in boot logo | 256x54 | 6912 | `bootlogo.h`, compiled into the firmware |
-
-Draw at the target size in Aseprite or Pixelorama with a 16-step greyscale
-palette, export PNG, then:
-
-The icon set is **curated, and the files are the list**: `pics/icon` holds
-one drawn icon per system this fork supports - 27 of the 47 console cores in
-`coretypes.ini`. The other 20 still get the split layout and everything in it;
-`findicon` simply finds nothing and the panel beside the text stays black.
-There is no stub generator any more: a blank file in there would be
-indistinguishable from a drawn one and would quietly make the list wrong.
+| banner | 256x64 | 8192 | `pics/user`, `pics/banner/<CORENAME>.gsc` |
+| icon | 86x64 | 2752 | `pics/icon/<CORENAME>.gsc` |
+| boot screen | 256x54 | 6912 | ESP flash via `CMDWRBOOT` |
+| built-in boot logo | 256x54 | 6912 | `bootlogo.h` |
 
 ```bash
-./tools/png2gsc.py --banner --out pics/banner/NES.gsc nes.png   # 256x64 banner
-./tools/deploy-mister.sh --pics
-
-./tools/png2gsc.py --out pics/icon/NES.gsc nes.png
-./tools/deploy-mister.sh --icons
-
-./tools/png2gsc.py --boot splash.png                    # 256x54 boot screen
-# copy splash.gsc to the MiSTer, then ON THE MISTER:
-/media/fat/tty2oledplus/tty2oled-bootimg.sh set splash.gsc
-/media/fat/tty2oledplus/tty2oled-bootimg.sh status
-/media/fat/tty2oledplus/tty2oled-bootimg.sh clear
+./tools/png2gsc.py --banner --out pics/banner/NES.gsc nes.png
+./tools/png2gsc.py --out pics/icon/NES.gsc nes.png          # name = CORENAME
+./tools/png2gsc.py --boot splash.png                         # then, on the MiSTer:
+/media/fat/tty2oledplus/tty2oled-bootimg.sh set|status|clear splash.gsc
 ```
 
-The icon filename is the **core name**, the one `CORENAME` reports and
-`tty2oled-diag.sh` prints - `GBA.gsc`, `MegaDrive.gsc`, not `GameBoyAdvance`.
-Icons need no firmware flash and no upload: the daemon reads the file off the
-SD card and sends it with `CMDICON` on every core change.
-
-`png2gsc.py` fits and centres on black by default rather than stretching -
-scaling up as well as down; `--stretch` fills, `--dither` helps photos and
-hurts flat pixel art, `--invert` is for art drawn dark-on-light. Pillow is used
-if installed, ImageMagick otherwise, and `--backend pillow|magick` picks one.
-
-The two backends are held to the same output. Each 8-bit grey goes to the
-**nearest** of the sixteen levels 0, 17, 34 ... 255 (`level()` in the tool,
-`-posterize 16` in ImageMagick), so art drawn in that palette converts exactly
-either way, and a smooth ramp comes out identical pixel for pixel.
+Fit-and-centre by default; `--stretch`, `--dither`, `--invert`,
+`--backend pillow|magick|pure`. Each grey goes to the **nearest** of 0, 17 ..
+255, identically in every backend.
 
 ## The boot screen band
 
-The bottom **10 rows** of the panel are the firmware's, not the picture's, so a
-user boot image is **256x54** and `BOOTIMG_BYTES` is 6912.
+The bottom **10 rows** belong to the firmware, so a boot image is 256x54
+(`BOOTIMG_BYTES` 6912 - a literal in `png2gsc.py`, `tty2oled-bootimg.sh` and
+`bootscreen.h`; `test-index.sh` checks they agree).
 
 ```
-row  0..53  picture              stock logo at x=82, or the stored image
-row 54      blank                        BOOT_GAP_BAND
-row 55..62  sweep bar                    BOOT_BAR_Y, BOOT_BAR_H
-row 57..63  build version        baseline BOOT_VER_Y, 5x7 font
+row  0..53  picture              stock logo or the stored image
+row 54      blank                BOOT_GAP_BAND
+row 55..62  sweep bar            BOOT_BAR_Y, BOOT_BAR_H
+row 57..63  build version        BOOT_VER_Y, 5x7 font
 ```
 
-Ten rows is measured off the stock screen rather than guessed: the sweep and
-the version overlap because they are sequential in time, their union is rows
-55..63, and the tenth is the blank row that keeps the picture off the bar.
-Every constant is placed off `BOOT_BAND_Y`, and
-`tests/firmware/test_meta_layout.cpp` derives the gaps back out of them, so the
-band cannot be resized without the bar and the version moving with it.
+- Picture and version in the first frame; after `BOOT_HOLD_MS` (1s) the sweep
+  runs until the daemon speaks. Constants hang off `BOOT_BAND_Y`, checked by
+  `test_meta_layout`.
+- **The sweep is a comet**: white head, tail dropping a level every
+  `BOOT_BAR_SEG` (4) px to black (`BOOT_BAR_TAIL` 64). `BOOT_BAR_PX_STEP` (2)
+  px every `BOOT_BAR_PX_MS` (2ms), **one step per tick, never a catch-up
+  burst** (a jump past the tail's black end smears; step < seg is tested).
+  The tail erases itself; a run to `BOOT_BAR_SPAN` leaves the band empty.
+  `boot_barDraw` (in `bootoutro.h`) is the one drawer; `boot_barClear` on end.
+- **`boot_waitOrCommand`** replaces every `delay()` and returns on
+  `Serial.available()`; `ttyrdy;` goes out *before* the screen. At power-on the
+  sweep repeats indefinitely; re-shows (`CMDSORG`, tilt) are bounded.
+- **At power-on the boot screen becomes the menu's picture**
+  (`BOOTSCREEN_AS_MENU`, `CMDBOOTPIC,MENU,<effect>`): nothing transitions; the
+  outro (from `loop()`) finishes the sweep cycle, then fades the version over
+  `BOOT_VERFADE_MS` (after the bar, not concurrently - that stuttered). It
+  waits for the fade-in and stops on anything else.
+- `bootHolding`: `boot_quietCommand`s (contrast, fades, dim, clock, version,
+  `CMDMETAOFF`, `CMDBOOTPIC`) leave it set; everything else clears it.
+- One path for built-in and stored image; composed into `metaBin` (`logoBin`
+  on ESP8266), blacked from `BOOTIMG_BYTES` to 8192 first.
+- `bootlogo.h` is **generated**:
+  `./tools/png2gsc.py --boot --header -o MiSTer_SSD1322_USB/bootlogo.h MiSTer_SSD1322_USB/bootlogo.png`
+- Legacy 8192-byte stored images are cropped; `CMDBOOTINF` says `BOOTIMG,legacy`.
+- `tty2oled_logo` in `bitmaps.h` is upstream's, unused, kept commented.
 
-The sequence is the same whatever is stored: **picture and version together in
-the first frame**, then after `BOOT_HOLD_MS` (1s) the sweep starts and cycles
-until the daemon says something. That is the point of the band - the first
-version of this module let a stored image replace the whole screen, and a
-display booting into somebody's artwork could no longer say which firmware it
-was running. The version used to be drawn when the sweep *finished*, which
-answered that question only after the ten seconds somebody was actually
-looking.
+## Releases, installer, MiSTer.ini
 
-**The sweep is a comet.** A head one pixel wide at white, and behind it a tail
-that drops one grey level every `BOOT_BAR_SEG` (4) pixels until it reaches
-black - all sixteen levels, `BOOT_BAR_TAIL` (64) pixels of them. It was whole
-16-pixel blocks whose grey was their position, which showed as four or five
-visible steps, the dark end being invisible against the panel, and it jumped a
-block at a time.
+- Users copy `tty2oledplus_install.sh` to Scripts; over SSH:
+  `curl -fsSL --cacert /etc/ssl/certs/cacert.pem https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_update.sh | bash`.
+  **MiSTer's curl needs `--cacert /etc/ssl/certs/cacert.pem`.**
+- **Asset names carry no version**; `/releases/latest/download/<name>` finds
+  them, which skips pre-releases - so CI never marks one, `b` or not.
+- The installer checks every download against `SHA256SUMS` **before changing
+  anything**; installs `tty2oled-user.ini`/`coretypes.ini` only when missing;
+  flashes only on a version mismatch and only for the board the display names
+  (or `--board`); refuses while upstream is installed or its daemon holds the
+  port; restarts the daemon however it ends. No "press a key" - MiSTer's
+  Scripts wrapper already does.
+- The starter fetches and verifies the latest updater, runs it, and deletes
+  itself only after success left the launcher beside it. Its temp dir is a
+  global (the `EXIT` trap runs after `main` returns). Everything is in `main()`
+  called on the last line, so a truncated `curl | bash` runs nothing.
+- `CMDHWINF` answers are parsed as `;` tokens - queued `ttyack;`s precede them
+  (`checkversion` does the same).
+- `ESP32_CORE_VERSION` in the workflow pins the core; libraries are CI's
+  current ones.
+- **`log_file_entry=1`** is set by the installer **inside `[MiSTer]`** (per-core
+  sections follow it). `.misterini.state` records `present`/`changed`/`added`/
+  `created`, written only on the run that changed something; the uninstaller
+  reads it first and undoes accordingly, leaving a value the user has since
+  set themselves.
+- **Boot hook**: `[ -e /media/fat/tty2oledplus/S60tty2oled ] && /media/fat/tty2oledplus/S60tty2oled $1`
+  at the **top** of `user-startup.sh` (created from `_user-startup.sh` if
+  absent), matched on the full path. An existing hook elsewhere, or commented
+  out, is reported and left alone. Warns if upstream's hook and `S60tty2oled`
+  are both live.
 
-The head moves `BOOT_BAR_PX_STEP` (2) pixels every `BOOT_BAR_PX_MS` (2ms), so
-a run is 160 frames rather than 32 and takes about a third of a second. It
-costs little because only the bar's own rows are drawn into and the panel
-library sends only the rows that changed - about 1KB a frame, not the 8KB
-panel.
+## Title index and core names
 
-**One step per tick, never a catch-up burst**, and that is the whole reason
-the pair of numbers exists rather than "a pixel every millisecond". A frame
-costs about a millisecond of SPI whatever it draws, so a cadence the wire
-cannot keep makes the bar's speed whatever the panel and the rest of `loop()`
-leave over - and then any tick that arrives late advances the head by however
-many pixels the clock is owed. That lurched the moment the daemon spoke (the
-handover from the blocking power-on loop to `loop()` is exactly such a late
-tick) and it **smeared**: a head that jumps further than the black segment at
-the end of its own tail leaves the pixels in between lit behind it. A step of
-2 against `BOOT_BAR_SEG` of 4 cannot outrun that black end, and
-`test_meta_layout` holds both - the step against the segment, and no drawn
-frame moving further than a step.
+- `/tmp/GAMEID` (CRC32) -> `lookup_crc` -> title, year, publisher, genre,
+  developer. Built from libretro-database `metadat/*` (cached in
+  `.index-cache/`, `--force` refreshes):
+  `./tools/build-title-index.sh [CORE...] | --list`, then `deploy --index`.
+- `titleindex/<CORENAME>.idx`, lines
+  `CRC32|Title|Region|Year|Publisher|Genre|Developer|Serial`; five-field lines
+  and the single-file `TITLE_INDEX` still parse.
+- **Index titles must equal `clean_romname`'s** (`test-index.sh` compares the
+  two implementations) - the CRC hit and the `lookup_name` fallback must agree.
+- Missing core: add it to `sysmap()`; keys are `CORENAME` values.
+- `names.txt` renames `System` and the no-game title (`display_corename`;
+  tries `CORENAME`, `RBFNAME`, `STARTPATH` basename, and that without
+  `_YYYYMMDD`). Not for icons or arcade. `USE_NAMES_TXT="no"` disables.
 
-`boot_barClear` blacks the bar's whole width when a run ends, so a frame cut
-short by the ending cannot leave anything behind either.
-`boot_barDraw` is the one thing that draws it, shared by the power-on sweep,
-the outro and the busy bar; it lives in `bootoutro.h` rather than beside its
-constants in `bootscreen.h` because it draws, and `bootscreen.h` is included
-before the display object exists so the tests can compile its geometry alone.
+## Things that cost time
 
-There is **no clearing pass** any more: the tail's last segment is level 0, so
-the comet rubs out what it leaves behind, and a run that reaches
-`BOOT_BAR_SPAN` - the panel plus a tail's length - has drained off the right
-edge and left the band empty. That is what "finish the cycle" now means for
-both `CMDBUSY,0` and the power-on outro.
-
-`boot_barStartX` still keeps the bar off the version text, but no longer
-rounds: a pixel's grey is its distance behind the head, not its absolute
-position, so the comet looks the same wherever it starts. `BOOT_BAR_X_MAX`
-caps it so a pathological string cannot leave no bar at all.
-
-**The sweep ends when the wait ends, not after a count.** `boot_waitOrCommand`
-replaces every `delay()` in the sequence and returns early the moment
-`Serial.available()`, so the first byte the daemon sends stops the animation
-wherever it is. `oled_showStartScreen(true)` from `setup()` therefore repeats
-for as long as the MiSTer takes; the default `false` used by `CMDSORG` and the
-tilt sensor keeps the bounded `BOOT_SWEEP_REPEATS`, because on a re-show the
-daemon is connected and silent and nothing would ever arrive to stop it. On a
-re-show's exit the bar's own columns are blacked out - an aborted sweep stops
-half-drawn - and the version is left alone, which the column reservation makes
-safe.
-
-**At power-on the boot screen is not left - it becomes the menu's picture**
-(`bootoutro.h`, `BOOTSCREEN_AS_MENU`, on by default). The daemon sends
-`CMDBOOTPIC,MENU,<transition>` for the MENU core instead of a picture, and the
-firmware composes the boot image (stored, or built-in) with a black band into
-`logoBin`, like any core picture, and transitions to it. At power-on it is
-already on the panel, so nothing transitions at all. Instead, the moment the
-daemon speaks, the power-on screen hands over to an outro: the sweep finishes
-the cycle it was in - on to the edge, then clearing back - and the version
-fades out over `BOOT_VERFADE_MS` (1s), its grey stepping 15 to 0. The band
-ends empty under the picture.
-
-The outro runs from `loop()`, not in `setup()` where the power-on screen is:
-the daemon's handshake is arriving, and not reading the port for a few hundred
-milliseconds overflows its 256-byte buffer. The sweep's position is handed
-over as the next segment and which half of the cycle; `-1` means the daemon
-spoke during the hold and there is no cycle to finish. The outro waits for the
-power-on fade-in if that is still running - its palette steps redraw the whole
-frame from a copy and would undo it - and stops dead the moment anything else
-takes the panel.
-
-`bootHolding` is what says the power-on screen is still up. The daemon's setup
-commands leave it set (`boot_quietCommand`: contrast, fade times, dimming,
-clock, version query, `CMDMETAOFF`, `CMDBOOTPIC`); **everything else clears
-it, commands nobody has heard of included**, and so does any re-show. The asymmetry is deliberate: a stale "still up"
-would make the next `CMDBOOTPIC` skip its transition and leave whatever had
-been drawn meanwhile as the menu's picture, while a wrongly cleared one only
-costs a transition.
-
-**The built-in picture is the same shape as a stored one.** Upstream drew a
-120x46 1bpp XBM at x=82; this fork compiles in a full-width 4bpp picture
-(`bootlogo.h`) and `oled_showStartScreen` has one path for both - a stored
-image is simply preferred, and everything after the picture is identical. A
-16-grey wordmark reads as artwork on this panel in a way a monochrome bitmap
-does not, and one path means the band cannot be right for one and wrong for
-the other.
-
-`oled_showStartScreen` composes into `metaBin` (`logoBin` on the ESP8266, the
-only framebuffer that build has - both are idle at power-up and on `CMDSORG`)
-and blacks it from `BOOTIMG_BYTES` to `BOOT_PANEL_BYTES` before
-`draw4bppBitmap`, which copies all 8192 bytes whatever the picture is. Short
-and the sweep runs over a strip of stale buffer - on a re-show, the last
-metadata card.
-
-`bootlogo.h` is **generated, not edited**, from `bootlogo.png` beside it; the
-command is written into the header's own first lines:
-
-```bash
-./tools/png2gsc.py --boot --header -o MiSTer_SSD1322_USB/bootlogo.h \
-                   MiSTer_SSD1322_USB/bootlogo.png
-```
-
-`--header` emits the same pixels as `--boot` does, packed two per byte with the
-high nibble on the left, which is the SSD1322 framebuffer layout and exactly
-what `xxd -r -p` makes of a `.gsc`. `test_meta_layout` checks the array is
-`BOOTIMG_BYTES` long, so regenerating it at the wrong size fails the suite
-rather than drawing a strip of stale buffer above the band.
-
-`tty2oled_logo` in `bitmaps.h` is upstream's 120x46 XBM and is now unused. It
-is kept, commented, because it is upstream's asset. The 32px logos beside it
-and the flying-toaster set went with the screensaver in 0.4.9b.
-
-Images stored before the band existed are 8192 bytes. `boot_begin` accepts
-both sizes and `boot_load` reads `BOOTIMG_BYTES` either way, so a legacy image
-is **cropped** to its top 54 rows rather than discarded - the rows that go are
-exactly the rows the firmware now draws over. `CMDBOOTINF` answers
-`BOOTIMG,legacy` for one, which is how `tty2oled-bootimg.sh status` knows to
-say it is being cropped.
-
-The number lives as a literal in three files that cannot read each other -
-`png2gsc.py`, `tty2oled-bootimg.sh` and `bootscreen.h` - so `test-index.sh`
-greps all three and checks they agree. A mismatch is either a file the
-installer refuses or a transfer the firmware waits forever to finish.
-
-## MiSTer.ini, and putting it back
-
-`log_file_entry=1` is what makes MiSTer publish which game is loaded, so the
-installer sets it rather than printing a note nobody acts on. It goes **inside
-the `[MiSTer]` section** - `MiSTer.ini` carries per-core sections after it, so
-a line appended to the end of the file belongs to whichever of those came last
-and does nothing at all.
-
-What it found is recorded in `.misterini.state` in the install folder, and the
-uninstaller reads it *before* removing that folder: `present` leaves it alone,
-`changed` puts the old line back verbatim (comment and all), `added` removes
-the line, `created` removes the whole file - but only while it is still just
-the two lines we wrote. In every case the value is checked first, so a user who
-has since set it themselves keeps what they set. The record is written once, on
-the run that changed something: a later update finds the setting at 1 *because
-we set it*, and must not overwrite the record with "it was already like that".
-
-## Releases and the installer
-
-A tag push publishes a GitHub release (see step 4 at the top). Users install
-by copying the `tty2oledplus_install.sh` asset to `/media/fat/Scripts` and
-running it from the Scripts menu; afterwards the launcher, `tty2oledplus`, is
-there instead. Over SSH it is one line:
-
-```sh
-curl -fsSL --cacert /etc/ssl/certs/cacert.pem \
-  https://github.com/ItsDanik/MiSTer-tty2oled-plus/releases/latest/download/tty2oledplus_update.sh | bash
-```
-
-**Asset names carry no version** - `tty2oledplus.tar.gz`, `tty2oledplus-lolin32.bin`,
-`VERSION`, `SHA256SUMS`. GitHub serves the newest release's assets at
-`/releases/latest/download/<name>`, so the installer finds the latest release
-without the API or any JSON parsing on the MiSTer. That address skips releases
-marked *pre-release*, which is why CI never marks them, whatever the `b` says.
-
-**MiSTer's curl cannot verify GitHub's certificate on its own** - every https
-request fails with "unable to get local issuer certificate". It works with
-`--cacert /etc/ssl/certs/cacert.pem`, the bundle MiSTer ships, and the
-installer passes it. Measured on the MiSTer, not assumed.
-
-The installer downloads everything it needs and checks each file against
-`SHA256SUMS` **before changing anything**, so a damaged download leaves the
-install as it was. `tty2oled-user.ini` and `coretypes.ini` are installed only
-when missing. The firmware is flashed only when the display reports a
-different version, and only for the board the display names; a display that
-does not answer is left alone unless `--board` says what it is, because
-guessing wrong flashes the wrong pinout. It refuses to run while upstream is
-installed at all, and while upstream's
-daemon holds the serial port. The daemon is restarted however the run ends.
-
-**It does not ask for a key at the end, on purpose.** MiSTer's Scripts menu
-already does: with `fb_terminal` on (the default) Main runs the script under
-`agetty` on tty2 inside a wrapper that echoes "Press any key to continue", and
-keeps the terminal up until a key is pressed (`MENU_SCRIPTS_FB` in
-Main_MiSTer's `menu.cpp`). A prompt of our own there is a second prompt and a
-second keypress. With `fb_terminal=0` the script runs under `popen` with the
-OSD showing its output, has no terminal to read a key from, and returns to the
-menu when it exits. update_all.sh prompts in neither case, and nor do we.
-
-**The Scripts folder gets the launcher and nothing else**; the updater, the
-settings editor and the uninstaller live in the install folder - see [The
-launcher](#the-launcher-and-why-the-init-script-places-it).
-
-**`tty2oledplus_install.sh` is only a starter**, so the copy a user
-downloads never goes stale: it fetches `tty2oledplus_update.sh` and
-`SHA256SUMS` from `/releases/latest`, refuses an installer that does not match,
-runs it with the same arguments, and deletes itself - by that exact name, and
-only after a successful run that left the launcher, `tty2oledplus.sh`, beside it. A
-failed run leaves it in the menu to try again. Its temp folder is a global,
-not a `local`: the `EXIT` trap fires after `main` has returned, and a local
-was out of scope by then, so every successful run leaked it into `/tmp`.
-
-It lives in `main()`, called on the last line, because `curl | bash` runs the
-bytes as they arrive and a dropped connection would otherwise run half a script.
-It installs itself into the install folder **by rename**, because run from the
-launcher it is the very file bash is still reading, and places the launcher in
-Scripts the same way.
-
-The display's `CMDHWINF` answer is parsed as `;`-separated tokens, not as a
-line: every command the daemon ever sent was followed by a `ttyack;`, and any it
-did not read are still queued on the port ahead of the answer.
-
-What goes into a release is `tools/manifest.sh`, the same list
-`deploy-mister.sh` uses. `ESP32_CORE_VERSION` in the workflow pins the core CI
-builds with to the one used here (`arduino-cli core list`); the libraries are
-still whatever is current when CI runs, which is the one way a release build
-can differ from a local one.
-
-## Staying out of upstream's way
-
-Upstream's `installer.sh`, `update_tty2oled.sh`, `update_tty2oled_script.sh`,
-`local_flasher.sh` and `tty2oleddb.json` are **not part of this fork**. Every
-one of them exists to pull venice1200's scripts or tty2tft.de's stock firmware
-over a local install, which is the one thing a fork must not let happen. They
-took `REPOSITORY_URL`, `PICTURE_REPOSITORY_URL`, `UPDATESCRIPT`, `AUTOUPDATE`,
-`SCRIPT_UPDATE`, `TTY2OLED_UPDATE` and `MOUNTRO` out of the ini with them.
-
-The `SCRIPT_UPDATE="no"` / `TTY2OLED_UPDATE="no"` switches that used to guard
-this are gone too, and are not missed: they only ever worked if the updater
-read *our* ini, and an updater installed in `/media/fat/Scripts` reads the
-folder it was installed for. The install folder being its own is the real
-protection.
-
-What upstream's updaters did do usefully was wire the boot hook, so
-`deploy-mister.sh` does that now, by feeding `tools/tty2oled-boothook.sh` to
-the MiSTer on stdin. It adds
-
-```
-[ -e /media/fat/tty2oledplus/S60tty2oled ] && /media/fat/tty2oledplus/S60tty2oled $1
-```
-
-**at the top of** `/media/fat/linux/user-startup.sh` when that exact line is
-not there, creating the file from `_user-startup.sh` if MiSTer has not made one
-yet. It matches on the full path rather than on the string `tty2oled`, which is
-the mistake upstream's version made - a MiSTer that once had stock tty2oled
-already has a line with that word in it, and a loose match calls the job done
-and never adds ours.
-
-Top, not appended: `user-startup.sh` already runs late in the boot, and
-everything above the line - mounts, network shares, somebody else's script - is
-time the panel spends on its boot screen. The hook backgrounds the daemon, so
-nothing below it is held up by going second. An existing hook further down is
-reported and **left alone** rather than moved: it is the user's file, and the
-line may be there on purpose. So is one that is commented out - reported as
-commented out, not re-enabled, and not described as "already at the top".
-
-If upstream's own hook is active *and* upstream's `S60tty2oled` still exists,
-it warns: both daemons would start at boot on one serial port. It does not
-touch that line. Upstream's hook is guarded by `[ -e ... ]`, so once that
-install is moved or removed the line is harmless and the warning goes quiet.
-
-## Versioning
-
-The procedure is at the top of this file; this is what is underneath it.
-
-`VERSION` at the repo root is the source of truth, `0.4.2b` at the time of
-writing: `major.minor.patch` with an optional one-letter pre-release mark.
-
-Two files need the number as a literal and cannot read `VERSION` at run time,
-so `bump-version.sh` writes both: `TTY2OLED_VERSION` in `tty2oled-system.ini`,
-and `#define BuildVersion` in the sketch. Nothing else holds a copy - the
-README quotes the current number in prose, which is allowed to age, and the
-daemon reports whatever the ini gives it.
-
-That `b` is *this fork's* pre-release mark. The sketch's `runsTesting` keys on
-a trailing `T`, which is upstream's and unrelated - a version ending in `b`
-leaves it off, which is what we want.
-
-`tests/test-version.sh` is what stops the copies drifting - it runs `--check`,
-proves the arithmetic (including `0.4.9b` to `0.4.10b`, and that `--release`
-refuses to run twice), and drives `checkversion` against a FIFO standing in
-for the display.
-
-`checkversion` in the daemon asks `CMDHWINF` at startup and prints both
-numbers to `/tmp/tty2oled`, complaining when they differ. It has to read
-`;`-delimited tokens and skip what is not a board id, because the firmware
-acknowledges every command with `ttyack;` - including the one that asks.
+- **exFAT ignores case.** `pics/ICON` *is* `pics/icon`; a migration deleting
+  the old spelling deleted the icons on every start for four releases. Check
+  `-ef` before removing an old spelling; never ship names differing only in
+  case. GitHub asset names are case-insensitive too.
+- **CI shellchecks; `run-all.sh` does not.** A test defining a function named
+  `rm` spent `v0.6.1b` (SC2218). Stub commands with executables on `PATH`.
+- **`--radiolist` returns the ticked item**, not the highlighted one. Tests
+  must drive the widget, not assume it.
+- **An uninstaller that cannot ask must not proceed.**
+- **The MiSTer has no image library** - hence the stdlib PNG backend.
+- **`FULLPATH` is the folder**; the file name is in `CURRENTPATH`.
+- **Loading a ROM does not touch `CORENAME`**; watch the game-state files.
+- **MiSTer never clears `FULLPATH`/`FILESELECT`/`GAMEID`**; they outlive the
+  core. Trusted only when fresh.
+- **`-nt` compares whole seconds**, and MiSTer writes all state files within
+  one. Test `CORENAME` *strictly newer than* the selection, run the guard only
+  on a core change, and **latch** the rejected selection (`META_STALE_REF`,
+  content + mtime).
+- **`GAMEID` freshness is tested against the selection**, not `CORENAME`: the
+  CRC lands a few hundred ms after it. Older than `CURRENTPATH` = previous
+  game; equal mtimes = fresh.
+- **CRC misses whole systems** (header bytes hashed differently);
+  `lookup_name` is the exact-match fallback. `tty2oled-diag.sh` shows which
+  path resolved.
+- **`FILESELECT`**: `active` while browsing, `cancelled` after the OSD; only
+  `selected` counts, and the loaded selection is latched
+  (`META_LAST_SELECTED`). Identical metadata is not resent.
+- **`log_file_entry=1`** or MiSTer publishes only the core name.
+- **Core names are not index names** (`MEGADRIVE`/`GENESIS`, `GBC`):
+  `_index_alias`, case-insensitive `_index_file`.
+- **Neo Geo data comes from MAME** (`mamexml2index.awk`, `romof="neogeo"`), one
+  record per " / " alias.
+- **`TGFX16` covers cartridge and CD**: one index merges both (`harvest`).
+- **Disc systems**: redump only - title, region, serial; keyed on the serial in
+  `GAMEID` (`lookup_serial`). Every reader must absorb the eighth field.
+- **Not every core publishes `STARTPATH`**; `coretypes.ini` states kinds
+  outright, else they land on `unknown` (metadata off).
+- **ESP32 core 3.x dropped channel LEDC**; a macro shim maps it.
+- **A daemon started over `ssh -t` died on disconnect** (SIGHUP to the
+  foreground group). `start` uses `setsid`, its own stdio (`DAEMONLOG`), and
+  ignores SIGHUP around the fork.
+- **A merged image erases `nvs` and `spiffs`** (boot image, settings).
+  `fw-segments.py` writes only segments with data when the display's partition
+  table (read at `0x8000`) matches; otherwise the whole image.
+- **CI builds three boards against today's libraries** (`v0.4.0b`: GFX 1.12.6
+  made `round(<int>)` ambiguous). See step 3.
+- **`CMDBOOTPIC` draws**, though it is on `boot_quietCommand`'s list; the busy
+  bar uses the list minus it, and whoever puts a busy screen up takes it down.
+- **A theory that fits is not a cause** - reproduce it. The "flash hang" was
+  `ssh -t`, not LittleFS.
+- **`/tmp/tty2oled_sleep` is a mutex**: MiSTer SAM drives the port itself
+  (sourcing our ini for `TTYDEV`). Nothing writes while it exists; the updater
+  refuses. SAM writes a deadline into it; `sleepmode_pass` honours it plus
+  `SLEEP_STALE_GRACE` (60s), which also recovers SAM dying on our paths (it
+  hardcodes `/media/fat/tty2oled`). Waking from sleep is a full redraw
+  (`oldcore`, `META_WIRE_LAST`, `DEFERRED_DONE` cleared).
+- **A setting in the ini is not a setting that works** - `SHOW_CONSOLE_SPLIT`
+  was read by nothing for three releases. Hence the consumer check.
+- **ROMs live on SD or USB**; `FULLPATH` is relative to the SD.
+  `find_rompath` tries every `GAME_ROOTS`. Quote names (`[!]` globs).
+- **MiSTer strips the extension** for single-extension cores; `FULLPATH`
+  (`_Console` vs `games/GBA`) is what separates a core launch from a game.
+- **Cores can launch via `.mgl`** (`GameGear` core, `RBFNAME` `SMS`).
+- **The selection is written ~3.3s before `CORENAME`** on a menu core launch.
+  `build_meta` rejects `.rbf`/`.mra`, anything matching `STARTPATH`, and
+  `FULLPATH` folders starting with `_`.
+- **Nothing drew the layout on a game change**: `meta_parse` sets
+  `metaNeedsDraw` for console kinds.
+- **Match the boot line on the full path**, not the word `tty2oled`.
+- **The panel booted at contrast 5**; it starts at 255 now.
+- **`setup()` held the boot animation**, ignoring serial for ~8s; hence
+  `boot_waitOrCommand` and the outro in `loop()`.
+- **Startup order is boot time**: only contrast and rotation precede the first
+  picture; the rest is `deferred_setup`. `CMDWAITSECS` (0.05) after one-line
+  commands, `WAITSECS` after picture headers (`cmdwait` falls back).
+- **Every main-loop branch must block.** `waitforcorename` watches the
+  directory (inotify on a missing path returns at once) and falls back to
+  sleep.
+- **The port disappears** (unplug, re-enumeration, flash). `serialready` runs
+  every pass and, on return, re-handshakes and clears `oldcore`,
+  `META_WIRE_LAST`, `DEFERRED_DONE`.
+- **Pid files**: ours has its own name; `daemonpid` trusts a pid only if
+  `/proc/<pid>/cmdline` names this install's `${DAEMONSCRIPT}`; `children`
+  reads `/proc`. Only the init script and the ini may name a pid file
+  (`test-daemon.sh`) - three scripts broke when it moved. Grep for every
+  reader before moving a path.
+- **Two scripts placing one file**: the deploy put menu scripts only in
+  Scripts, and `place_menu_scripts` reverted them from the install folder on
+  restart. A test had pinned the bug. When test and behaviour agree and
+  reality does not, suspect both.
+- **The busy bar's remembered label** must be forgotten on any drawing
+  command, running or not (`busy_noteCommand`).
+- **ScreenScraper needs developer credentials**; hence gamelists.
+- **Two things animating one band** stutter; sequence them.
+- **A multi-transfer picture is composed at the bottom of the fade**
+  (`tfRenderHook` at `TF_BLANK`), not at request, so the icon can land.
+- **A blocking read stops animation**: `serial_readTicking` ticks
+  contrast/transitions while reading - **the icon only** (`logoBin`/`metaBin`
+  are what a transition renders from).
+- **An icon landing mid-transition** waits for `TF_IDLE` and no page fade
+  (`metaIconRedraw`), and is guarded on `!metaNeedsDraw` and the core-boot
+  hold, or a game change cuts without a transition. Replay the daemon's real
+  command order against the firmware.
+- **`png2gsc.py`'s backends disagreed**: dithering must go through RGB,
+  16-bit PNGs must scale, `thumbnail()` never enlarges, `-colors 16` is not
+  the panel's palette. Round to the nearest level.
+- **`EPOCHREALTIME` uses the locale's decimal comma**; tests pin `LC_ALL=C`.
+- **Check that a test fails without its fix** - a renamed variable left the
+  staleness guard testing nothing while its test passed.
+- Read the daemon's own debug log before believing a feature fires.
 
 ## Not done yet
 
-- **20 console cores have no icon.** The 27 that do are the supported set;
-  the rest show the split layout with a black panel beside it. The file name
-  is the core name `coretypes.ini` uses, which is what `findicon` looks for.
-- **WonderSwan resolves per game, not per system.** The index is found and
-  many titles hit; the misses are romsets whose filenames differ from
-  No-Intro's, which the name fallback cannot bridge.
-- **Neo Geo coverage is partial.** 203 sets from MAME 2003-Plus, matched by
-  title, so a romset using a different spelling misses - `Bakatonosama
-  Mahjong Manyuuki` against MAME's `Manyuki` is one letter out.
-- **The LEDC shim is a clean upstream PR** on its own, independent of the
-  metadata work.
+- 20 console cores have no icon (split layout, black panel beside it).
+- WonderSwan resolves per game; misses are non-No-Intro filenames.
+- Neo Geo: 203 sets from MAME 2003-Plus, matched by title.
+- The LEDC shim is a clean upstream PR on its own.

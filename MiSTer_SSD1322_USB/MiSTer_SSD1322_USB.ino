@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.6.9b"
+#define BuildVersion "0.7.0b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -915,6 +915,10 @@ void loop(void) {
 
     else if (newCommand.startsWith("CMDBUSY,")) {                           // Busy bar in the bottom band on/off
       busy_parse(newCommand.c_str());
+    }
+
+    else if (newCommand.startsWith("CMDBUSYLINE,")) {                       // The busy screen's status line
+      busy_lineParse(newCommand.c_str());
     }
 
     else if (newCommand.startsWith("CMDTFADE,")) {                          // Fade transition timings

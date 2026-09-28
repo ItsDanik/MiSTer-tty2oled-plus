@@ -4,6 +4,42 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.7.0b — 2026-09-28
+
+- **update_all says what it is doing.** Under "Updating System ..." the
+  panel now shows, in small grey letters, the last line update_all printed
+  on the MiSTer's own screen - the database being checked, the file being
+  fetched, "Running Arcade Organizer" - updated every second. The update
+  keeps the panel from the moment update_all starts working to its end,
+  rather than only while the downloader runs. `UPDATE_ALL_DETAILS` in
+  Settings turns the line off.
+- **"Update Complete" when it has finished.** The bold message changes to
+  `Update Complete` (or `Update Failed` if update_all reported errors), with
+  the run time under it, and the bar runs off and stops. It stays up for at
+  least 3 seconds: if update_all has already quit, the display waits out the
+  rest; if update_all is still up - its log viewer - the display stays until
+  it quits. The words and the time (`UPDATE_DONE_SECS`, 0 for none) are in
+  Settings, under **While updates run**.
+- **The tty2oled+ updater talks to the panel too.** Update now shows each
+  step under "Updating TTY2OLED+..." - downloading, installing, and
+  "Flashing firmware - the display will restart" just before the panel
+  freezes for the flash. When the display comes back it says
+  `Update Complete` with the new version under it (or `Up to Date`, or
+  `Update Failed`), for at least 3 seconds, before the daemon takes over.
+- These need the new firmware, which the update flashes. **The update to
+  0.7.0b itself is run by the updater you already have, so it looks as it
+  always did**; update_all shows the new screens straight away, and the next
+  tty2oled+ update does.
+- **Degauss gets its own screen.** The Degauss frontend runs from the Scripts
+  menu on top of the menu core, so MiSTer never says it is there. The display
+  now spots it running and shows `degauss.gsc` from `pics/user` or
+  `pics/banner`, or "degauss" as text if there is no picture. Quit it and
+  the menu's picture comes back within a couple of seconds. A game launched
+  from it shows as usual.
+- **The README's screenshots look like the panel.** Each pixel is cyan now,
+  in its own grey level, with a hair of black between neighbours, so the
+  pixel grid shows faintly the way it does on the glass.
+
 ## 0.6.9b — 2026-09-28
 
 - **Descriptions twice as long.** The description page now keeps up to 2048

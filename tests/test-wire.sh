@@ -942,6 +942,44 @@ rm -f "${bannerfolder}/MENU.gsc" "${bannerfolder}/NES.gsc"
 TRANSITION="-1"
 
 # ---------------------------------------------------------------------------
+section "Degauss: degauss.gsc by that exact name, else the name as text"
+# ---------------------------------------------------------------------------
+# Degauss runs over the menu core, so STARTPATH is the menu's rbf and the
+# kind is unknown - a banner, no card. The daemon names it "degauss" in
+# place of MENU while it runs (test-daemon.sh); this is what that name sends.
+META_ICON=""; TRANSITION="-2"
+printf '/media/fat/menu.rbf\n' > "${TMP}/STARTPATH"
+printf '#\n#\n#\n00\n' > "${bannerfolder}/deg.gsc"
+printf '#\n#\n#\n00\n' > "${userbannerfolder}/d.gsc"
+findpicture "degauss"; r=$?
+ok "no degauss.gsc: no picture, not one a trimmed name would find" "${r}:${PICFILE}" "1:"
+
+reset_capture
+senddata "degauss" >/dev/null 2>&1
+ok "so the name goes out as text" "$(captured | grep -av '^CMD' | tr -d '\r')" "degauss"
+ok "after metadata off, and nothing else" "$(wire_order)" "CMDMETAOFF"
+
+printf '#\n#\n#\n00\n' > "${bannerfolder}/degauss.gsc"
+findpicture "degauss"
+ok "degauss.gsc in pics/banner is its picture" "${PICFILE}" "${bannerfolder}/degauss.gsc"
+reset_capture
+senddata "degauss" >/dev/null 2>&1
+ok "sent as a core's picture, transitioned" "$(wire_order)" "CMDMETAOFF CMDCOR"
+contains "under its own name" "$(captured | grep -a '^CMDCOR')" "CMDCOR,degauss,-2"
+
+printf '#\n#\n#\n00\n' > "${userbannerfolder}/degauss.gsc"
+PRIORITIZE_USER_BANNERS="yes"
+findpicture "degauss"
+ok "yours in pics/user comes first" "${PICFILE}" "${userbannerfolder}/degauss.gsc"
+PRIORITIZE_USER_BANNERS="no"
+findpicture "degauss"
+ok "unless PRIORITIZE_USER_BANNERS says otherwise" "${PICFILE}" "${bannerfolder}/degauss.gsc"
+PRIORITIZE_USER_BANNERS="yes"
+rm -f "${bannerfolder}/deg.gsc" "${userbannerfolder}/d.gsc" \
+      "${bannerfolder}/degauss.gsc" "${userbannerfolder}/degauss.gsc"
+TRANSITION="-1"
+
+# ---------------------------------------------------------------------------
 section "scraped metadata: more fields, and the description after the line"
 # ---------------------------------------------------------------------------
 # What tty2oledplus_scrape.py left in scraped/<system>.txt, one game a line:
