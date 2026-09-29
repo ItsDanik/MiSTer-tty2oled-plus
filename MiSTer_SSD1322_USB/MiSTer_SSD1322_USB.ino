@@ -44,13 +44,14 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.7.4b"
+#define BuildVersion "0.7.5b"
 
 // Include Libraries
 #include <Arduino.h>
 #include <SSD1322_for_Adafruit_GFX.h>             // SSD1322 Controller Display Library https://github.com/venice1200/SSD1322_for_Adafruit_GFX
 #include <U8g2_for_Adafruit_GFX.h>                // U8G2 Font Engine for Adafruit GFX  https://github.com/olikraus/U8g2_for_Adafruit_GFX
 #include "bitmaps.h"                              // Some needed pictures
+#include "linejunk.h"                             // Someone else's bytes on the port (Zaparoo's PN532 probe)
 #include "fonts.h"                                // Some needed fonts
 
 
@@ -665,7 +666,15 @@ void loop(void) {
   if (Serial.available()) {
   	prevCommand = newCommand;                              // Save old Command
     newCommand = Serial.readStringUntil('\n');             // Read string from serial until NewLine "\n" (from MiSTer's echo command) is detected or timeout (1000ms) happens.
-    updateDisplay=true;                                    // Set Update-Display Flag
+    // Another program's probe ahead of it (linejunk.h): keep the command
+    // behind it, or drop a line that was only that.
+    int cmdAt = line_commandStart(newCommand.c_str(), newCommand.length());
+    if (cmdAt < 0) {
+      newCommand = prevCommand;                            // as if nothing had come
+    } else {
+      if (cmdAt > 0) newCommand = newCommand.substring(cmdAt);
+      updateDisplay=true;                                  // Set Update-Display Flag
+    }
 
 #ifdef XDEBUG
     Serial.printf("\nReceived Corename or Command: %s\n", (char*)newCommand.c_str());

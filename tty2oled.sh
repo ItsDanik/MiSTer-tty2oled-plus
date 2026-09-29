@@ -80,6 +80,7 @@
 . /media/fat/tty2oledplus/tty2oled-system.ini
 . /media/fat/tty2oledplus/tty2oled-user.ini
 . /media/fat/tty2oledplus/tty2oled-meta.sh
+[ -r /media/fat/tty2oledplus/tty2oled-port.sh ] && . /media/fat/tty2oledplus/tty2oled-port.sh
 cd /tmp
 
 
@@ -245,11 +246,11 @@ findpicture() {
   PICFILE=""; PICFRAME=""
   core_kind "${core}"
   if [ "${CORE_KIND}" != "arcade" ]; then
-    # Degauss is not a core, and its name is looked up whole, as update_all's
-    # is: trimmed, any banner named for a prefix of it (deg.gsc) would stand
-    # in for it instead of the name as text.
+    # Degauss and Zaparoo are not cores, and their names are looked up whole,
+    # as update_all's is: trimmed, any banner named for a prefix of one
+    # (deg.gsc, zap.gsc) would stand in for it instead of the name as text.
     local mode=""
-    [ "${core}" = "${DEGAUSS_CORE}" ] && mode="exact"
+    case "${core}" in "${DEGAUSS_CORE}"|"${ZAPAROO_CORE}") mode="exact" ;; esac
     findbanner "${core}" "${mode}" && PICFILE="${BANNERFILE}"
     [ -n "${PICFILE}" ]; return
   fi
@@ -536,6 +537,9 @@ metawatchlist() {
            "${MISTER_GAMEID}" "${MISTER_STARTPATH}"; do
     [ -e "${f}" ] && out="${out} ${f}"
   done
+  # The device itself, when we write through our own node: only another
+  # program writing to the display wakes it (port_pass).
+  [ -n "${TTYPORT}" ] && [ "${TTYDEV}" != "${TTYPORT}" ] && [ -c "${TTYPORT}" ] && out="${out} ${TTYPORT}"
   # ScummVM starts a game by rewriting its ini. The folder, not the file: the
   # ini may be replaced rather than written in place. It is the only file in
   # there, and a folder with a space in its name is not watched.
@@ -697,6 +701,8 @@ checkversion() {  # checkversion [quiet] - quiet: say nothing if there is no ans
   exec 3<&-
 
   FW_VERSION="${fwver}"
+  # It answered: this is the display's port, wherever it is next time.
+  [ -n "${fwver}" ] && port_remember "${TTYPORT:-${TTYDEV}}"
   if [ -z "${fwver}" ]; then
     [ "${1:-}" = "quiet" ] || echo "tty2oled+ ${TTY2OLED_VERSION:-unknown} (the display did not answer CMDHWINF)"
     dbug "No CMDHWINF reply after ${tries} tokens"
@@ -833,6 +839,82 @@ serialinit() {
   sendrotation												# Set Display Rotation
 }
 
+# The display's port: which one, and how to write to it (tty2oled-port.sh).
+# Without it - an install part way through an update - as before it existed.
+declare -F ttynode >/dev/null || ttynode() { TTYNODE="${1}"; TTYNODE_WHY="no tty2oled-port.sh"; TTYNODE_ERR=""; }
+declare -F port_resolve >/dev/null || port_resolve() { :; }
+declare -F port_remember >/dev/null || port_remember() { :; }
+declare -F port_find >/dev/null || port_find() { return 1; }
+
+# The display's port, and what the daemon writes through: TTYCONF is TTYDEV
+# as the ini has it, TTYPORT the device the display is on (port_resolve),
+# TTYDEV our node for it.
+TTYCONF=""
+TTYPORT=""
+ttyalias() {
+  [ -n "${TTYPORT}" ] || TTYPORT="${TTYDEV}"
+  ttynode "${TTYPORT}"
+  TTYDEV="${TTYNODE}"
+  [ -n "${TTYNODE_WHY}" ] && dbug "Writing through ${TTYDEV} itself: ${TTYNODE_WHY}"
+  [ -z "${TTYNODE_WHY}" ] && [ -n "${TTYNODE_ERR}" ] && dbug "Made ${TTYDEV} after a retry: ${TTYNODE_ERR}"
+  port_mark
+}
+
+# Someone else writing to the display: Zaparoo's reader probe - once when it
+# starts, whatever we do - an updater older than ttynode, anything. Their
+# bytes land in whatever we are sending: a picture comes out shifted by them,
+# its tail wrapped round, and nothing of ours would ever know. Since we write
+# through our own node, the device file's time moves only when another
+# program writes through it; when it has, and the writer has had
+# PORT_SETTLE_SECS to finish, everything goes out again. The look is a test
+# builtin against PORT_REF, a file holding the time last seen: no process.
+PORT_REF="${PORT_REF:-/tmp/tty2oledplus.port}"
+PORT_DIRTY_AT=""
+PORT_RETRY_AT=0
+port_mark() {  # the device file's time, as the one to compare with
+  [ -n "${TTYPORT}" ] && [ "${TTYDEV}" != "${TTYPORT}" ] || return 0
+  touch -r "${TTYPORT}" "${PORT_REF}" 2>/dev/null
+  PORT_DIRTY_AT=""
+}
+port_pass() {
+  local now="${EPOCHSECONDS:-$(date +%s)}"
+  [ -n "${TTYPORT}" ] || return 0
+  if [ "${TTYDEV}" = "${TTYPORT}" ]; then
+    # Writing through the device (ttynode found no node): our node again,
+    # every PORT_RETRY_SECS, rather than never. Straight after boot the node
+    # would not do for about a minute, and every write meanwhile invited a
+    # probe.
+    [ "${now}" -ge "${PORT_RETRY_AT}" ] || return 0
+    PORT_RETRY_AT=$(( now + ${PORT_RETRY_SECS:-10} ))
+    ttyalias
+    [ "${TTYDEV}" != "${TTYPORT}" ] && dbug "Writing through ${TTYDEV} from now on"
+    return 0
+  fi
+  if [ "${TTYPORT}" -nt "${PORT_REF}" ]; then
+    touch -r "${TTYPORT}" "${PORT_REF}" 2>/dev/null
+    PORT_DIRTY_AT="${now}"
+    dbug "Something else wrote to ${TTYPORT} - redrawing once it is done"
+  fi
+  [ -n "${PORT_DIRTY_AT}" ] && [ $(( now - PORT_DIRTY_AT )) -ge "${PORT_SETTLE_SECS:-2}" ] || return 0
+  PORT_DIRTY_AT=""
+  dbug "Redrawing everything after the other writer"
+  oldcore=""
+  META_WIRE_LAST=""
+  NOTE_SENT="?"
+  UPDATEALL_SHOWN="no"
+  UPDATEALL_BUSY="no"
+}
+
+# Unplugged and back under another number? A replug can renumber it: with a
+# reader plugged in, the display can go from ttyUSB0 to ttyUSB1. Only where
+# the ini names a numbered port, and only for the display remembered.
+port_moved() {
+  case "${TTYCONF:-}" in /dev/ttyUSB[0-9]*|/dev/ttyACM[0-9]*) ;; *) return 1 ;; esac
+  port_find && [ "${PORT_FOUND}" != "${TTYPORT}" ] && [ -c "${PORT_FOUND}" ] || return 1
+  dbug "The display is on ${PORT_FOUND} now, not ${TTYPORT}"
+  TTYPORT="${PORT_FOUND}"
+}
+
 # Is the display still there, and if it has just come back, start it again.
 #
 # The device node goes away when the ESP is unplugged, when the USB bus re-
@@ -847,11 +929,16 @@ serialinit() {
 # re-opened and what the panel shows is no longer what we think we sent.
 TTYGONE="no"
 serialready() {
-  if ! [ -c "${TTYDEV}" ]; then
-    [ "${TTYGONE}" = "no" ] && dbug "${TTYDEV} has gone away, waiting for the display"
-    TTYGONE="yes"
-    sleep "${TTYWAIT:-2}"
-    return 1
+  # The device itself: our node for it stays when it goes.
+  if ! [ -c "${TTYPORT:-${TTYDEV}}" ]; then
+    if port_moved; then
+      TTYGONE="yes"                          # back, on another port: start it again
+    else
+      [ "${TTYGONE}" = "no" ] && dbug "${TTYPORT:-${TTYDEV}} has gone away, waiting for the display"
+      TTYGONE="yes"
+      sleep "${TTYWAIT:-2}"
+      return 1
+    fi
   fi
 
   [ "${TTYGONE}" = "no" ] && return 0
@@ -860,7 +947,8 @@ serialready() {
   # firmware's own defaults, and the line settings went with the old device
   # node, so this is the startup handshake over again rather than a resume.
   TTYGONE="no"
-  dbug "${TTYDEV} is back, re-initialising the display"
+  dbug "${TTYPORT:-${TTYDEV}} is back, re-initialising the display"
+  ttyalias
   serialinit
   # Nothing on the panel came from us any more. Clearing all three is what
   # makes the next pass a full redraw: oldcore forces the core picture and its
@@ -997,6 +1085,7 @@ sleepmode_pass() {
   # whatever it was left as. Clearing all three is what makes the next pass a
   # full redraw, exactly as a re-enumerated display gets in serialready.
   dbug "${SLEEPFILE} is gone, redrawing everything"
+  port_mark                                  # SAM wrote through the device
   oldcore=""
   META_WIRE_LAST=""
   DEFERRED_DONE="no"
@@ -1005,7 +1094,7 @@ sleepmode_pass() {
 }
 
 # ---------------------------------------------------------------------------
-# Degauss: a frontend that is not a core
+# Degauss and Zaparoo: frontends over the menu core
 # ---------------------------------------------------------------------------
 #
 # MisterZine is launched as a core (MisterZine.mgl), so MiSTer writes its name
@@ -1013,57 +1102,98 @@ sleepmode_pass() {
 # entry: it draws over the menu core and CORENAME says MENU the whole time.
 # All MiSTer writes is the selection of the script - CURRENTPATH "degauss",
 # FULLPATH "Scripts" - which outlives it, so the process is the only sign.
-# While the menu core is up and Degauss runs, the daemon takes "degauss" for
-# the core: degauss.gsc by that exact name, else the name as text. When it
-# exits the core is MENU again, and the menu's picture goes back up like any
-# other core change. A game it launches changes CORENAME as usual.
+#
+# Zaparoo's frontend replaces MiSTer's main (main=zaparoo/MiSTer_Zaparoo in
+# MiSTer.ini) and runs over its own menu core, zaparoo/menu_zaparoo.rbf, and
+# CORENAME says MENU there too. The same binary can load the stock menu.rbf,
+# and STARTPATH, which does name the rbf, is never cleared - so again the
+# process: MiSTer's main re-execs itself with the rbf it loaded as argv[1],
+# keeping its pid, so its command line is always the loaded core's.
+#
+# While the menu core is up and one of them runs, the daemon takes its name
+# for the core: degauss.gsc or zaparoo.gsc by that exact name, else the name
+# as text. When it goes the core is MENU again, and the menu's picture goes
+# back up like any other core change. A game either launches changes CORENAME
+# as usual.
 DEGAUSS_CORE="degauss"
+ZAPAROO_CORE="zaparoo"
+# ScummVM over the menu core. Its Scripts launcher writes ScummVM to CORENAME;
+# Zaparoo starts the binary itself, with the game to run as its last argument
+# ("scummvmmaster ... lure"), and CORENAME stays MENU. ScummVM has the screen,
+# so it wins over whichever frontend started it, and is then the ScummVM core
+# in every respect - the game from the command line and all (tty2oled-meta.sh).
+SCUMMVM_CORE="ScummVM"
 
-# Is the Degauss frontend running? Its binary, by argv[0]:
-# Scripts/.config/degauss/degauss, or Scripts/.degauss/degauss where v0.1.0
-# and v0.2.0 installed it. Only argv[0]: its own --config argument names
-# degauss/degauss.toml, and so would an editor open on that file. The grep
-# only narrows the field (busybox grep has no -z to anchor on an argument);
-# the bracket keeps it from matching its own command line.
-degauss_running() {
-  local f="" a0=""
-  for f in $(grep -lsa -e '[d]egauss/degauss' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
-    a0=""
-    IFS= read -r -d '' a0 2>/dev/null <"${f}"
+# Which of them is up, into MENU_FRONTEND: SCUMMVM_CORE, DEGAUSS_CORE,
+# ZAPAROO_CORE or empty. One grep over /proc finds both; it only narrows the field (busybox
+# grep has no -z to anchor on an argument), and the brackets keep it from
+# matching its own command line.
+#
+# Degauss by its binary, argv[0]: Scripts/.config/degauss/degauss, or
+# Scripts/.degauss/degauss where v0.1.0 and v0.2.0 installed it. Only argv[0]:
+# its own --config argument names degauss/degauss.toml, and so would an
+# editor open on that file. It wins over Zaparoo, which it would draw over.
+# Zaparoo by the main's argv[1], the rbf: menu_zaparoo.rbf in any folder.
+menu_frontend() {
+  local f="" a0="" a1="" b=""
+  MENU_FRONTEND=""
+  # ScummVM already found: its binary still there is a read, not a search -
+  # every pass while a game runs, and the game shares the DE10's two cores.
+  if [ -n "${SVM_PID:-}" ]; then
+    a0=""; IFS= read -r -d '' a0 2>/dev/null <"${PROC_ROOT:-/proc}/${SVM_PID}/cmdline"
+    b="${a0##*/}"
+    [[ "${b,,}" == scummvm* ]] && { MENU_FRONTEND="${SCUMMVM_CORE}"; return 0; }
+  fi
+  for f in $(grep -lsai -e '[d]egauss/degauss' -e '[m]enu_zaparoo' -e '[s]cummvm' \
+               "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
+    a0=""; a1=""
+    { IFS= read -r -d '' a0; IFS= read -r -d '' a1; } 2>/dev/null <"${f}"
+    # ScummVM's binary by argv[0]'s name, as tty2oled-meta.sh finds it: not
+    # its launcher script, nor anything naming its folder.
+    b="${a0##*/}"
+    [[ "${b,,}" == scummvm* ]] && { MENU_FRONTEND="${SCUMMVM_CORE}"; return 0; }
     case "${a0}" in
-      */.config/degauss/degauss|*/.degauss/degauss) return 0 ;;
+      */.config/degauss/degauss|*/.degauss/degauss) MENU_FRONTEND="${DEGAUSS_CORE}"; continue ;;
+    esac
+    case "${a1##*/}" in
+      menu_zaparoo*.rbf) [ -z "${MENU_FRONTEND}" ] && MENU_FRONTEND="${ZAPAROO_CORE}" ;;
     esac
   done
-  return 1
+  [ -n "${MENU_FRONTEND}" ]
 }
 
 # The core as far as the display is concerned, into CURCORE: CORENAME, except
-# that the menu core with Degauss running is Degauss.
+# that the menu core with ScummVM, Degauss or Zaparoo up is that.
 readcore() {
   CURCORE="$(<"${corenamefile}")"
-  if [ "${CURCORE}" = "MENU" ] && degauss_running; then
-    CURCORE="${DEGAUSS_CORE}"
+  if [ "${CURCORE}" = "MENU" ] && menu_frontend; then
+    CURCORE="${MENU_FRONTEND}"
   fi
 }
 
 # Could Degauss start or stop now? Neither touches a state file the daemon
-# waits on, so while this holds - the menu is up, or Degauss is - the waits
-# time out every UPDATE_ALL_POLL seconds to look again.
-degauss_possible() {
-  [ "${oldcore}" = "MENU" ] || [ "${oldcore}" = "${DEGAUSS_CORE}" ]
+# waits on, so while this holds - the menu core is up, as the menu, Degauss or
+# Zaparoo - the waits time out every UPDATE_ALL_POLL seconds to look again.
+# Zaparoo itself comes and goes with a core load, which writes CORENAME.
+menu_frontend_possible() {
+  case "${oldcore}" in
+    MENU|"${DEGAUSS_CORE}"|"${ZAPAROO_CORE}") return 0 ;;
+  esac
+  return 1
 }
 
 # ---------------------------------------------------------------------------
 # The frontends, and a newer tty2oled+ in their band
 # ---------------------------------------------------------------------------
 #
-# The menu, MisterZine and Degauss are where a game is chosen, and they are
+# The menu, MisterZine, Degauss and Zaparoo are where a game is chosen, and they are
 # shown the way the boot screen is: a picture 54 rows tall, and the 10 rows
 # under it kept for the display's own notices. Their picture goes out marked
 # ",band" (senddata) - the menu's CMDBOOTPIC always is one - with its bottom
 # ten rows black, so a 256x64 banner is shown cut down until it is redrawn.
-# Names as CORENAME has them, or readcore for Degauss; case does not matter.
-FRONTEND_CORES="menu misterzine ${DEGAUSS_CORE}"
+# Names as CORENAME has them, or readcore's for Degauss and Zaparoo; case
+# does not matter.
+FRONTEND_CORES="menu misterzine ${DEGAUSS_CORE} ${ZAPAROO_CORE}"
 frontend_core() {
   [ -n "${1}" ] || return 1
   case " ${FRONTEND_CORES} " in *" ${1,,} "*) return 0 ;; esac
@@ -1238,10 +1368,35 @@ uc_pass() {  # uc_pass <now>
   bg_start uc "${now}" uc_fetch
 }
 
-# Is update_all running, whatever UPDATE_ALL_SCREEN says?
-updateall_process() {
-  grep -qsa -e '[u]pdate_all' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null
+# Is a system update running, whatever UPDATE_ALL_SCREEN says? update_all,
+# or MiSTer's own updater - Scripts/update.sh, which Zaparoo's Update runs -
+# into SYSUPD ("update_all" or "downloader"), with the pid of the latter's
+# Downloader, if it has started, in SYSUPD_PID.
+#
+# update.sh copies the Downloader to /tmp/downloader.sh and runs it; update_all
+# uses /tmp/update_all.sh and /tmp/ua_downloader_*, so the names never cross.
+# The launcher counts from its start: its time sync and certificate check are
+# part of the update, and it outlives the Downloader restarting itself. The
+# Downloader runs an update_all step of its own, so anything naming update_all
+# under it is its. --list-dbs is a query, not an update.
+sysupdate_process() {
+  local f a0="" a1="" args=()
+  SYSUPD=""; SYSUPD_PID=""
+  for f in $(grep -lsa -e '[u]pdate_all' -e '[t]mp/downloader[.]sh' -e '[S]cripts/update[.]sh' \
+               "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
+    args=(); mapfile -d '' -t args <"${f}" 2>/dev/null
+    a0="${args[0]:-}"; a1="${args[1]:-}"
+    if [ "${a0}" = "/tmp/downloader.sh" ] || [ "${a1%/Scripts/update.sh}" != "${a1}" ]; then
+      case " ${args[*]} " in *" --list-dbs "*) continue ;; esac
+      SYSUPD="downloader"
+      if [ "${a0}" = "/tmp/downloader.sh" ]; then f="${f%/cmdline}"; SYSUPD_PID="${f##*/}"; fi
+    elif [ -z "${SYSUPD}" ]; then
+      case "${args[*]}" in *update_all*) SYSUPD="update_all" ;; esac
+    fi
+  done
+  [ -n "${SYSUPD}" ]
 }
+updateall_process() { sysupdate_process; }
 
 # System: the same, with update_all as what answers it.
 sc_pass() {  # sc_pass <now>
@@ -1253,7 +1408,7 @@ sc_pass() {  # sc_pass <now>
       # update_all has run: whatever was waiting may not be any more.
       SC_UA="no"; SC_FLAGGED=""; SC_NEXT=""
       SC_EPOCH=$(( SC_EPOCH + 1 ))
-      dbug "update_all finished - looking for system updates again"
+      dbug "A system update finished - looking for system updates again"
     fi
   fi
   if bg_collect sc "${now}"; then
@@ -1328,12 +1483,13 @@ updatenote_pass() {
 # update_all screen
 # ---------------------------------------------------------------------------
 
-# Is update_all running? It leaves no state file behind and does not touch
-# CORENAME - it can be started from the Scripts menu or from inside a frontend
-# core such as MiSTerZine - so the only reliable sign is the process itself.
-# One grep over every command line: update_all.sh, and the update_all.pyz it
-# hands over to, both carry the name. The bracket keeps grep's own command
-# line, which holds the pattern, from matching it.
+# Is update_all running - or MiSTer's own updater, which gets the same screens
+# (sysupdate_process says which)? Neither leaves a state file behind or
+# touches CORENAME - both can be started from the Scripts menu or from inside
+# a frontend, MiSTerZine or Zaparoo - so the only reliable sign is the
+# process itself. One grep over every command line: update_all.sh, and the
+# update_all.pyz it hands over to, both carry the name. The brackets keep
+# grep's own command line, which holds the patterns, from matching it.
 updateall_running() {
   [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] || return 1
   updateall_process
@@ -1373,6 +1529,16 @@ sendbusy() {  # sendbusy <0|1> [label] [effect]
   cmdwait
 }
 
+# Out of the split layout / card first, or the card alternation would keep
+# drawing the previous game over the update screen.
+sendmetaoff_ua() {
+  [ "${SHOW_METADATA}" = "yes" ] || return 0
+  dbug "Sending: CMDMETAOFF (update_all)"
+  echo "CMDMETAOFF" >${TTYDEV}
+  sleep ${WAITSECS}
+  META_WIRE_LAST="OFF"
+}
+
 # Show the update_all picture in place of whatever core is loaded, cropped to
 # the top 54 rows like a boot image so the band below is free for the busy
 # bar. Exact names only - the core lookup's prefix trimming would happily settle on some
@@ -1381,14 +1547,7 @@ sendbusy() {  # sendbusy <0|1> [label] [effect]
 # recognise - the same thing a missing core banner gets.
 sendupdateall() {
   local name="update_all" pic=""
-  # Out of the split layout / card first, or the card alternation would
-  # keep drawing the previous game over the picture.
-  if [ "${SHOW_METADATA}" = "yes" ]; then
-    dbug "Sending: CMDMETAOFF (update_all)"
-    echo "CMDMETAOFF" >${TTYDEV}
-    sleep ${WAITSECS}
-    META_WIRE_LAST="OFF"
-  fi
+  sendmetaoff_ua
   findbanner "${name}" exact && pic="${BANNERFILE}"
   if [ -n "${pic}" ]; then
     dbug "Sending: CMDCOR,${name},${TRANSITION} (${pic})"
@@ -1517,6 +1676,11 @@ UA_LINE_COLS=51     # the 5x7 status line's width, 256 pixels / 5
 # the latest: a burst of files between two looks shows the last of them.
 UA_LINE_MS=100
 UA_FD=""            # the print log, open once trusted
+# The file this run's line comes from: update_all's print log, or MiSTer's
+# own Downloader's log (dl_findlog). Set when a run is first seen.
+UA_LOG="${UA_PRINTLOG}"
+# Where the Downloader leaves its log once it has finished: the verdict.
+DL_FINALLOG="${DL_FINALLOG:-/media/fat/Scripts/.config/downloader/downloader.log}"
 
 # Milliseconds, for the finish screen's minimum time.
 ms_now() {
@@ -1560,6 +1724,10 @@ ua_takeline() {
   local l="${1}" seg rt='[0-9][0-9:]*\.[0-9]+s'
   while :; do
     seg="${l%%$'\r'*}"
+    # MiSTer's own Downloader: its summary is no status - "none." under
+    # "Errors:" was the last line shown before the finish. update_all's print
+    # log relays the same summary mid-run, with more to come after it.
+    case "${seg}" in *" Run time: "*) [ "${UA_KIND:-}" = "downloader" ] && UA_DLSUM="yes" ;; esac
     case "${seg}" in
       *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*)
         ua_clean "${seg}"; seg="${UA_TRIMMED}"
@@ -1571,7 +1739,7 @@ ua_takeline() {
         esac ;;
       *) ua_clean "${seg}" ;;
     esac
-    [ -n "${UA_CLEAN}" ] && UA_LINE="${UA_CLEAN}"
+    [ -n "${UA_CLEAN}" ] && [ "${UA_DLSUM:-}" != "yes" ] && UA_LINE="${UA_CLEAN}"
     [ "${l}" != "${l#*$'\r'}" ] || break
     l="${l#*$'\r'}"
   done
@@ -1589,6 +1757,9 @@ ua_clean() {
   # every time.
   [[ "${seg}" == *[!-#=*._\ ]* ]] || return 0
   [ "${seg#DUPLICATED:}" = "${seg}" ] || return 0
+  # The Downloader's own log (MiSTer's updater) has its debug lines and
+  # Python's tracebacks in it; update_all's print log has neither.
+  case "${seg}" in "DEBUG|"*|"Traceback ("*|"File \""*) return 0 ;; esac
   UA_CLEAN="${seg#- }"
 }
 
@@ -1599,8 +1770,9 @@ ua_clean() {
 UA_CAND=()
 ua_takecand() {
   local i
+  [ "${UA_DLSUM:-}" = "yes" ] && { UA_CAND=(); return 0; }
   for (( i = ${#UA_CAND[@]} - 1; i >= 0; i-- )); do
-    case "${UA_CAND[i]}" in ""|DUPLICATED:*) continue ;; esac
+    case "${UA_CAND[i]}" in ""|DUPLICATED:*|"DEBUG|"*) continue ;; esac
     ua_clean "${UA_CAND[i]}"
     [ -n "${UA_CLEAN}" ] && { UA_LINE="${UA_CLEAN}"; break; }
   done
@@ -1613,9 +1785,9 @@ ua_takecand() {
 # for ua_takecand. The two give what ua_takeline gives over every line.
 ua_feed() {
   case "${1}" in
-    *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*|*$'\r'*)
+    *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*|*" Run time: "*|*$'\r'*)
       ua_takecand; ua_takeline "${1}" ;;
-    ""|DUPLICATED:*) ;;
+    ""|DUPLICATED:*|"DEBUG|"*) ;;
     *) UA_CAND+=("${1}")
        # Resolved rather than cut, or a useful line followed by a run of rules
        # would be lost with them.
@@ -1626,7 +1798,7 @@ ua_feed() {
 # The same over a whole file on stdin, three lines out - verdict, run time,
 # line - for update_all's own log, read once when it has gone.
 ua_parselog() {
-  local LC_ALL=C UA_VERDICT="" UA_RUNTIME="" UA_LINE="" UA_MAIN="" UA_CAND=() l
+  local LC_ALL=C UA_VERDICT="" UA_RUNTIME="" UA_LINE="" UA_MAIN="" UA_DLSUM="" UA_CAND=() l
   while IFS= read -r l || [ -n "${l}" ]; do ua_feed "${l}"; done
   ua_takecand
   printf '%s\n%s\n%s\n' "${UA_VERDICT}" "${UA_RUNTIME}" "${UA_LINE}"
@@ -1641,9 +1813,9 @@ ua_closelog() {
 # having read none of it.
 ua_openlog() {
   ua_closelog
-  UA_VERDICT=""; UA_RUNTIME=""; UA_LINE=""; UA_CAND=()
-  exec {UA_FD}<"${UA_PRINTLOG}" 2>/dev/null || { UA_FD=""; return 0; }
-  UA_SIZE="$(stat -c %s "${UA_PRINTLOG}" 2>/dev/null || echo 0)"
+  UA_VERDICT=""; UA_RUNTIME=""; UA_LINE=""; UA_DLSUM=""; UA_CAND=()
+  exec {UA_FD}<"${UA_LOG}" 2>/dev/null || { UA_FD=""; return 0; }
+  UA_SIZE="$(stat -c %s "${UA_LOG}" 2>/dev/null || echo 0)"
 }
 
 # What update_all has added since the last look, into the run's state.
@@ -1657,19 +1829,19 @@ ua_readlog() {  # ua_readlog [slow|fast|final]
   [ "${LC_ALL:-}" = "C" ] || local LC_ALL=C
   if [ -z "${UA_FD}" ]; then
     [ "${how}" = "fast" ] && return 0
-    [ -r "${UA_PRINTLOG}" ] || return 0
+    [ -n "${UA_LOG}" ] && [ -r "${UA_LOG}" ] || return 0
     if [ "${UA_LOG_FRESH:-no}" != "yes" ]; then
       [ "$(ua_logref)" = "${UA_LOG_REF:-}" ] && return 0
       UA_LOG_FRESH="yes"
     fi
     ua_openlog
     [ -n "${UA_FD}" ] || return 0
-  elif ! [ "${UA_PRINTLOG}" -ef "/dev/fd/${UA_FD}" ]; then
-    [ -r "${UA_PRINTLOG}" ] || return 0
+  elif ! [ "${UA_LOG}" -ef "/dev/fd/${UA_FD}" ]; then
+    [ -r "${UA_LOG}" ] || return 0
     ua_openlog; [ -n "${UA_FD}" ] || return 0
   elif [ "${how}" != "fast" ]; then
     # Cut short and written again: smaller than it was a look ago.
-    size="$(stat -c %s "${UA_PRINTLOG}" 2>/dev/null)"
+    size="$(stat -c %s "${UA_LOG}" 2>/dev/null)"
     if [ -n "${size}" ] && [ "${size}" -lt "${UA_SIZE:-0}" ]; then
       ua_openlog; [ -n "${UA_FD}" ] || return 0
     fi
@@ -1702,7 +1874,7 @@ ua_absorb() {
   local IFS=$'\n' all
   all="${UA_NEW[*]}"
   case "${all}" in
-    *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*|*$'\r'*)
+    *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*|*" Run time: "*|*$'\r'*)
       for l in "${UA_NEW[@]}"; do ua_feed "${l}"; done ;;
     *) UA_CAND+=("${UA_NEW[@]}") ;;
   esac
@@ -1761,9 +1933,8 @@ ua_follow() {  # ua_follow <ms>
   printf -v secs '%d.%03d' $(( UA_LINE_MS / 1000 )) $(( UA_LINE_MS % 1000 ))
   now_ms; end=$(( NOW_MS + ${1} ))
   nap 0                                          # its pipe, opened once
-  [ "${UPDATE_ALL_DETAILS:-yes}" = "yes" ] && sendbusyline "${UA_LINE}" fast
   while :; do
-    if [ "${UA_PRINTLOG}" -ef "/dev/fd/${UA_FD}" ]; then
+    if [ "${UA_LOG}" -ef "/dev/fd/${UA_FD}" ]; then
       mapfile -u "${UA_FD}" UA_NEW
       if [ "${#UA_NEW[@]}" -gt 0 ]; then
         ua_absorb
@@ -1787,6 +1958,61 @@ ua_following() {
     && [ -n "${UA_FD}" ] && [ -z "${UA_DONE_AT:-}" ] && fw_atleast 0.7.3
 }
 
+# MiSTer's own Downloader keeps its log open in /tmp under a name Python's
+# tempfile picks (tmp and eight characters), and moves it to DL_FINALLOG when
+# it is done. Found through its descriptors, once it has started; new with
+# every run, so trusted at once.
+dl_findlog() {
+  local l
+  [ -n "${SYSUPD_PID}" ] || return 1
+  l="$(ls -l "${PROC_ROOT:-/proc}/${SYSUPD_PID}/fd" 2>/dev/null \
+       | awk '$(NF-1) == "->" && $NF ~ /\/tmp[a-z0-9_]+$/ { print $NF; exit }')"
+  [ -n "${l}" ] && [ -r "${l}" ] || return 1
+  UA_LOG="${l}"; UA_LOG_FRESH="yes"
+}
+
+# What the Downloader has open right now under /media - the file it is
+# checking or writing - into DL_OPEN, as a path from the drive's root
+# (games/mame/intcup94.zip). Its log reaches the file in 8KB bursts, minutes
+# apart, where update_all's print log is written line by line; this is what
+# keeps the status line live between them. Its own files under
+# Scripts/.config are not progress.
+dl_openfile() {
+  local f
+  DL_OPEN=""
+  [ -n "${SYSUPD_PID}" ] || return 1
+  f="$(ls -l "${PROC_ROOT:-/proc}/${SYSUPD_PID}/fd" 2>/dev/null \
+       | awk '$(NF-1) == "->" && $NF ~ /^\/media\// && $NF !~ /\/Scripts\/\.config\// { f = $NF } END { print f }')"
+  [ -n "${f}" ] || return 1
+  DL_OPEN="${f#/media/*/}"
+}
+
+# Its summary, from the log it leaves: "Run time: 05:26.71s", and "Errors:"
+# with "none." under it, or what failed. A run stopped part way - Zaparoo's
+# Cancel - has none, and gets no finish screen. Only a log written since the
+# run was seen.
+dl_readfinal() {
+  local l errs="" v="" rt=""
+  [ -r "${DL_FINALLOG}" ] || return 0
+  [ "$(stat -c %Y "${DL_FINALLOG}" 2>/dev/null || echo 0)" -ge "${UA_SEEN_AT:-0}" ] || return 0
+  while IFS= read -r l || [ -n "${l}" ]; do
+    l="${l%$'\r'}"
+    case "${l}" in
+      *" Run time: "*)
+        rt="${l#* Run time: }"; rt="${rt%%[ s]*}"; rt="${rt%.*}"; v=""; errs="" ;;
+      Errors:) errs="yes" ;;
+      *)
+        if [ "${errs}" = "yes" ] && [ -n "${l//[[:space:]]/}" ]; then
+          if [ "${l}" = "none." ]; then v="ok"; else v="failed"; fi
+          errs=""
+        fi ;;
+    esac
+  done < <(tail -c 16384 "${DL_FINALLOG}" | grep -av '^DEBUG|')
+  UA_VERDICT="${v}"
+  [ -n "${v}" ] && UA_RUNTIME="${rt}"
+  return 0
+}
+
 # The finish screen: "Update Complete" (or failed) in place of the label, the
 # bar left to run off, and the run time under it. It stays for at least
 # UPDATE_DONE_SECS, counted from here - see ua_holddone.
@@ -1796,8 +2022,9 @@ ua_done() {
   if [ "${UA_VERDICT}" = "failed" ]; then
     UA_DONE_HEAD="${UPDATE_FAILED_TEXT:-Update Failed}"
     UA_DONE_LINE="Some updaters failed - see the log"
+    [ "${UA_KIND:-}" = "downloader" ] && UA_DONE_LINE="Some files failed - see the log"
   fi
-  dbug "update_all is done: ${UA_VERDICT}"
+  dbug "${UA_KIND:-update_all} is done: ${UA_VERDICT}"
   ua_showdone
   UA_DONE_AT="$(ms_now)"
 }
@@ -1854,12 +2081,25 @@ updateall_pass() {
       UA_RUN="yes"; UA_MAIN="no"; UA_DONE_AT=""; UA_LOG_FRESH="no"
       UA_LOG_REF="$(ua_logref)"; UA_SEEN_AT="$(date +%s)"
       ua_closelog; UA_VERDICT=""; UA_RUNTIME=""; UA_LINE=""
+      UA_KIND="${SYSUPD}"; UA_LOG="${UA_PRINTLOG}"; UA_DLSUM=""; DL_LOGLAST=""
+      # MiSTer's own updater asks nothing first: all of it is the update. Its
+      # line comes from its own log, once the Downloader is running.
+      [ "${UA_KIND}" = "downloader" ] && { UA_MAIN="yes"; UA_LOG=""; }
     fi
+    [ "${UA_KIND}" = "downloader" ] && [ -z "${UA_LOG}" ] && dl_findlog
     if [ "${UPDATEALL_SHOWN:-no}" != "yes" ]; then
-      dbug "update_all is running"
-      sendupdateall
+      dbug "${UA_KIND} is running"
+      if [ "${UA_KIND}" = "downloader" ]; then
+        # No update_all picture: the label takes the panel straight from the
+        # frontend's, with the effect - it replaces what was there.
+        sendmetaoff_ua
+        sendbusy 1 "${UPDATE_ALL_TEXT:-Updating System ...}" "${TRANSITION}"
+        UPDATEALL_BUSY="yes"; BUSYLINE_LAST=""
+      else
+        sendupdateall
+        UPDATEALL_BUSY="no"
+      fi
       UPDATEALL_SHOWN="yes"
-      UPDATEALL_BUSY="no"
       # A display that reset during the finish screen gets it back.
       [ -n "${UA_DONE_AT}" ] && ua_showdone
     fi
@@ -1870,8 +2110,9 @@ updateall_pass() {
       if [ -n "${UA_VERDICT}" ] && ua_finishes; then
         ua_done
       # The bar follows the downloader, which update_all may run more than
-      # once - its own update, then the main run.
-      elif downloader_running || [ "${UA_MAIN}" = "yes" ]; then
+      # once - its own update, then the main run. MiSTer's own updater is
+      # nothing but its Downloader.
+      elif [ "${UA_KIND}" = "downloader" ] || downloader_running || [ "${UA_MAIN}" = "yes" ]; then
         # The download is the part that takes minutes, so it gets the panel:
         # UPDATING above the bar, the banner gone. The firmware ignores a
         # repeat of the same label, so re-sending it costs a command and
@@ -1881,7 +2122,20 @@ updateall_pass() {
           UPDATEALL_BUSY="yes"
           BUSYLINE_LAST=""
         fi
-        [ "${UPDATE_ALL_DETAILS:-yes}" = "yes" ] && sendbusyline "${UA_LINE}"
+        if [ "${UPDATE_ALL_DETAILS:-yes}" = "yes" ]; then
+          # MiSTer's own Downloader: a new line of its log, else the file it
+          # has open, else nothing - what is up stays up. Its log says nothing
+          # for the first minutes, and the line went blank (or back to an old
+          # log line) whenever a look found nothing open.
+          if [ "${UA_KIND}" != "downloader" ] || [ "${UA_DLSUM:-}" = "yes" ]; then
+            sendbusyline "${UA_LINE}"
+          elif [ "${UA_LINE}" != "${DL_LOGLAST:-}" ]; then
+            sendbusyline "${UA_LINE}"
+          elif dl_openfile; then
+            sendbusyline "${DL_OPEN}"
+          fi
+          DL_LOGLAST="${UA_LINE}"
+        fi
       elif [ "${UPDATEALL_BUSY:-no}" = "yes" ]; then
         # Back to the banner: the label blacked it out, so it has to go again.
         sendbusy 0; UPDATEALL_BUSY="no"; sendupdateall
@@ -1897,12 +2151,16 @@ updateall_pass() {
     # It may have printed its verdict and exited between two looks.
     if [ -z "${UA_DONE_AT:-}" ] && ua_finishes \
        && { [ "${UPDATEALL_BUSY:-no}" = "yes" ] || [ "${UA_MAIN:-no}" = "yes" ]; }; then
-      ua_readlog final
-      [ -n "${UA_VERDICT}" ] || ua_readfinal
+      if [ "${UA_KIND:-}" = "downloader" ]; then
+        dl_readfinal
+      else
+        ua_readlog final
+        [ -n "${UA_VERDICT}" ] || ua_readfinal
+      fi
       [ -n "${UA_VERDICT}" ] && ua_done
     fi
     ua_holddone
-    dbug "update_all finished, back to the core"
+    dbug "${UA_KIND:-update_all} finished, back to the core"
     [ "${UPDATEALL_BUSY:-no}" = "yes" ] && sendbusy 0
     UPDATEALL_SHOWN="no"
     UPDATEALL_BUSY="no"
@@ -1927,7 +2185,11 @@ if [ "${#}" -ge 1 ]; then # Command Line Parameter given, override Parameter
 fi                                                        # end if command line Parameter
 
 # Let's go
+TTYCONF="${TTYDEV}"
+port_resolve                                      # where the display is now
+[ "${TTYDEV}" != "${TTYCONF}" ] && dbug "The display is on ${TTYDEV}, not ${TTYCONF}"
 if [ -c "${TTYDEV}" ]; then # check for tty device
+  ttyalias                                        # write through a node of our own
   SELFUPDATE_OURS="$(selfupdate_pids)"            # the updater that started us, if any
   serialinit													# Line settings, contrast, rotation
   while true; do											# main loop
@@ -1943,11 +2205,13 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
         fw_pass
         # A newer release, and the notice for it: never blocks.
         updatenote_pass
+        # Another program's bytes on the panel: redraw once it is done.
+        port_pass
         # update_all takes the screen over whatever core is loaded, and our
         # own updater over that - it is about to stop this daemon.
         selfupdate_pass && { deferred_setup; continue; }
         updateall_pass && { deferred_setup; continue; }
-        readcore; newcore="${CURCORE}"			  # get CORENAME, or Degauss over MENU
+        readcore; newcore="${CURCORE}"			  # get CORENAME, or Degauss/Zaparoo over MENU
         if [ "${SHOW_METADATA}" = "yes" ]; then
           # Metadata mode. Loading a ROM does not modify /tmp/CORENAME, so
           # watching that file alone never notices a game change - which is
@@ -1973,7 +2237,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
           # rebuild and no serial traffic, because sendmeta de-duplicates.
           # Shorter while Degauss could come or go, which changes none of them.
           mpoll="${METADATA_POLL:-5}"
-          degauss_possible && mpoll="${UPDATE_ALL_POLL:-2}"
+          menu_frontend_possible && mpoll="${UPDATE_ALL_POLL:-2}"
           # Not shorter for ScummVM, though nothing is written when a game goes
           # back to its launcher: a pass costs ~190ms of CPU on the DE10, and
           # ScummVM runs on the same two cores. The ini's folder is watched, so
@@ -1997,7 +2261,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
             # Anything but a timeout (an event, or inotifywait failing) ends
             # the wait as it always did.
             upwait=""
-            { [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] || [ "${SELF_UPDATE_SCREEN:-yes}" = "yes" ] || degauss_possible \
+            { [ "${UPDATE_ALL_SCREEN:-yes}" = "yes" ] || [ "${SELF_UPDATE_SCREEN:-yes}" = "yes" ] || menu_frontend_possible \
               || update_check_on TTY2OLED || update_check_on SYSTEM; } \
               && upwait="-t ${UPDATE_ALL_POLL:-2}"
             while true; do
@@ -2011,7 +2275,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
               updatenote_pass
               updateall_running && break
               selfupdate_running && break
-              if degauss_possible; then
+              if menu_frontend_possible; then
                 readcore; [ "${CURCORE}" = "${oldcore}" ] || break
               fi
             done

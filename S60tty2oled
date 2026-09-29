@@ -12,6 +12,7 @@
 ! [ "$(dos2unix -ic /media/fat/tty2oledplus/*.ini)" = "" ] && dos2unix -k -q /media/fat/tty2oledplus/*.ini
 . /media/fat/tty2oledplus/tty2oled-system.ini
 . /media/fat/tty2oledplus/tty2oled-user.ini
+[ -r /media/fat/tty2oledplus/tty2oled-port.sh ] && . /media/fat/tty2oledplus/tty2oled-port.sh
 cd /tmp
 
 PIDFILE="${PIDFILE:-/run/tty2oledplus-daemon.pid}"
@@ -222,9 +223,15 @@ Its line in /media/fat/linux/user-startup.sh does nothing once the folder is gon
     fi
 
     ### Wait for USB module and start tty2oled daemon
+    # The display's port, wherever it is now (tty2oled-port.sh): with a
+    # reader plugged in, it may not be the ttyUSB0 the ini names.
+    local conf="${TTYDEV}"
     WAITEND=$((SECONDS+10))
-    while !  [ -c ${TTYDEV} ] && [ ${SECONDS} -lt ${WAITEND} ]; do
-      sleep 0.1
+    while :; do
+      TTYDEV="${conf}"
+      declare -F port_resolve >/dev/null && port_resolve
+      [ -c "${TTYDEV}" ] || [ ${SECONDS} -ge ${WAITEND} ] && break
+      sleep 0.2
     done
     if ! [ -c ${TTYDEV} ]; then
       echo "Could not find the needed USB module ${TTYDEV}. Exiting."

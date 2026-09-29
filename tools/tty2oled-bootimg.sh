@@ -56,7 +56,14 @@ trap restore_daemon EXIT
 "${INIT}" stop >/dev/null 2>&1
 sleep 1
 
+# The display's port wherever it is now, written through our own node for
+# it (tty2oled-port.sh) - 6912 bytes through /dev/ttyUSB0 invite Zaparoo's
+# reader probe into the middle of them.
+# shellcheck source=tty2oled-port.sh
+[ -r "${T2O_DIR}/tty2oled-port.sh" ] && . "${T2O_DIR}/tty2oled-port.sh"
+declare -F port_resolve >/dev/null && port_resolve
 [ -c "${TTYDEV}" ] || die "${TTYDEV} is not there. Is the display plugged in?"
+declare -F ttynode >/dev/null && { ttynode "${TTYDEV}"; TTYDEV="${TTYNODE}"; }
 stty -F "${TTYDEV}" ${BAUDRATE} ${TTYPARAM}
 
 ask() {

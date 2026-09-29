@@ -85,10 +85,10 @@ void busy_composeText(const char *label) {
   int w = u8g2.getUTF8Width(label);
   int x = (DispWidth - w) / 2;
   if (x < 0) x = 0;
-  // Centred in the picture area, not the panel: the band is the bar's - and
-  // with a status line, in what is above that.
-  int area = busyLine[0] ? BUSY_LINE_TOP : BOOT_BAND_Y;
-  u8g2.setCursor(x, (area + u8g2.getFontAscent()) / 2);
+  // Centred in the rows above the status line's place, line or no line: it
+  // comes and goes all through an update, and a label centred on whatever
+  // was free jumped up and down with it.
+  u8g2.setCursor(x, (BUSY_LINE_TOP + u8g2.getFontAscent()) / 2);
   u8g2.print(label);
   if (!busyLine[0]) return;
   oled_setfont(BUSY_LINE_FONT);

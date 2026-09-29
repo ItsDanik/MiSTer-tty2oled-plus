@@ -2949,6 +2949,12 @@ int main() {
         okBool("and slides", tfSlideDX != 0, true);
         for (int i = 0; i < 400 && tfState != TF_IDLE; i++) at(10);
         ok    ("landing on the message", u8g2.lastPrint, "SLIDING");
+        okBool("with the bar still to run", busyActive, true);
+        {
+            int head0 = busyHead;
+            for (int i = 0; i < 20; i++) { g_fakeMillis += BOOT_BAR_PX_MS; busy_tick(); }
+            okBool("and it sweeps once the slide is over", busyHead > head0, true);
+        }
 
         busy_cancel(); busy_forgetLabel();
         transition_cancel();
@@ -2998,7 +3004,8 @@ int main() {
             okInt ("in the small font", line->charW, 5);
             okInt ("centred", line->x, (BOOT_PANEL_W - 16 * 5) / 2);
             okBool("in grey, not white", line->fg == BUSY_LINE_GREY && BUSY_LINE_GREY < SSD1322_WHITE, true);
-            okBool("the label moves up, clear of it", label->y < bareY && label->y < BUSY_LINE_TOP, true);
+            okInt ("the label stays where it was", label->y, bareY);
+            okBool("clear of it", label->y < BUSY_LINE_TOP, true);
             okInt ("and is white", label->fg, SSD1322_WHITE);
         }
         okInt ("only the rows above the band are cleared", rowsCleared(), BOOT_BAND_Y);
@@ -3014,11 +3021,11 @@ int main() {
         okInt ("a long line is cut to the buffer", (long)strlen(busyLine), BUSY_LINE_MAX);
         okInt ("and starts at the left edge", u8g2.draws.back().x, 0);
 
-        // Empty takes it down, and the label goes back to the middle.
+        // Empty takes it down, and the label does not move.
         u8g2.resetProbe();
         busy_lineParse("CMDBUSYLINE,");
         okInt ("an empty line removes it", (long)strlen(busyLine), 0);
-        okBool("and the label is centred over the band again",
+        okBool("and the label stays put",
                u8g2.draws.size() == 1 && u8g2.draws[0].y == bareY, true);
 
         // A drawing command takes the screen, the line with it.

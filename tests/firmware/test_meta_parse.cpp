@@ -23,6 +23,7 @@ uint8_t *srcBin = g_dummyBuf;
 
 // Pulled in with the display code compiled out.
 #include "../../MiSTer_SSD1322_USB/metadisplay.h"
+#include "../../MiSTer_SSD1322_USB/linejunk.h"
 
 // --- Tiny test harness ------------------------------------------------------
 static int passed = 0, failed = 0;
@@ -174,6 +175,27 @@ int main() {
         meta_parse("CMDMETA,1,10,|Year=1981");
         ok   ("title empty", metaTitle, "");
         okInt("field read",  metaFieldCount, 1);
+    }
+
+    section("someone else's bytes on the port: Zaparoo's PN532 probe");
+    {
+        auto at = [](const std::string &l) { return line_commandStart(l.data(), l.size()); };
+        auto kept = [&](const std::string &l) {
+            int n = at(l);
+            return n < 0 ? std::string("(dropped)") : l.substr(n);
+        };
+        // What go-pn532 writes: wake-up, then a GetFirmwareVersion frame.
+        const std::string wake("\x55\x55\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", 16);
+        const std::string frame("\x00\x00\xff\x02\xfe\xd4\x02\x2a\x00", 9);
+        ok("a clean command is left as it is", kept("CMDBUSYLINE,SECTION: jtcores"), "CMDBUSYLINE,SECTION: jtcores");
+        ok("and so is a core name sent as text", kept("GameBoy"), "GameBoy");
+        ok("tab and carriage return are not junk", kept("CMDTXT,a\tb\r"), "CMDTXT,a\tb\r");
+        ok("the probe ahead of a command: the command", kept(wake + frame + "CMDBUSYLINE,No changes"), "CMDBUSYLINE,No changes");
+        ok("the probe alone: no line", kept(wake + frame), "(dropped)");
+        ok("the probe and printable leftovers: no line", kept(wake + "UU"), "(dropped)");
+        ok("never text drawn from it", kept(std::string("\x55\x55\x00", 3) + "GameBoy"), "(dropped)");
+        ok("bytes above 0x7e are junk too", kept("\xd4\xfe" "CMDCOR,NES,-2"), "CMDCOR,NES,-2");
+        okInt("an empty line is clean", at(""), 0);
     }
 
     printf("\n\033[1mResults:\033[0m %d passed, %d failed\n\n", passed, failed);

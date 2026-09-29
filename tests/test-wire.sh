@@ -679,7 +679,7 @@ for f in files:
         body = fh.read().split(b'\n', 3)
     n = len(decode(body[3])) if len(body) > 3 else 0
     name = os.path.splitext(os.path.basename(f))[0].lower()
-    ok = (8192, 6912) if name in ('menu', 'misterzine', 'degauss', 'update_all') else (8192,)
+    ok = (8192, 6912) if name in ('menu', 'misterzine', 'degauss', 'zaparoo', 'update_all') else (8192,)
     if n not in ok: bad.append(f'{os.path.basename(f)}:{n}')
 print(' '.join(bad))
 EOPY
@@ -999,16 +999,41 @@ rm -f "${bannerfolder}/deg.gsc" "${userbannerfolder}/d.gsc" \
 TRANSITION="-1"
 
 # ---------------------------------------------------------------------------
+section "Zaparoo: zaparoo.gsc by that exact name, else the name as text"
+# ---------------------------------------------------------------------------
+# Its menu core is its own rbf, which classifies as nothing: a banner, no card.
+META_ICON=""; TRANSITION="-2"
+printf 'zaparoo/menu_zaparoo.rbf\n' > "${TMP}/STARTPATH"
+printf '#\n#\n#\n00\n' > "${bannerfolder}/zap.gsc"
+findpicture "zaparoo"; r=$?
+ok "no zaparoo.gsc: no picture, not one a trimmed name would find" "${r}:${PICFILE}" "1:"
+reset_capture
+senddata "zaparoo" >/dev/null 2>&1
+ok "so the name goes out as text" "$(captured | grep -av '^CMD' | tr -d '\r')" "zaparoo"
+ok "after metadata off, and nothing else" "$(wire_order)" "CMDMETAOFF"
+printf '#\n#\n#\n00\n' > "${bannerfolder}/zaparoo.gsc"
+reset_capture
+senddata "zaparoo" >/dev/null 2>&1
+ok "zaparoo.gsc goes out as a frontend's picture" "$(captured | grep -a '^CMDCOR' | tr -d '\r')" "CMDCOR,zaparoo,-2,band"
+rm -f "${bannerfolder}/zap.gsc" "${bannerfolder}/zaparoo.gsc"
+TRANSITION="-1"
+
+# ---------------------------------------------------------------------------
 section "frontends: 54 rows of picture, and the band under it"
 # ---------------------------------------------------------------------------
 # The menu, MisterZine and Degauss keep the boot screen's band for the
 # display's notices: their picture goes out marked ",band", as its top 54
 # rows and 1280 black bytes, whatever height the file is.
-for c in MENU menu MisterZine MISTERZINE misterzine degauss; do
+for c in MENU menu MisterZine MISTERZINE misterzine degauss Zaparoo zaparoo; do
   frontend_core "${c}"; ok "${c} is a frontend" "${?}" "0"
 done
-for c in NES MENUX misterzin update_all ""; do
+for c in NES MENUX misterzin zaparo update_all ""; do
   frontend_core "${c}"; ok "'${c}' is not" "${?}" "1"
+done
+# Each has a picture in the release, or it is a name in text over a band.
+for c in ${FRONTEND_CORES}; do
+  f="$(find "${ROOT}/pics/banner" -maxdepth 1 -iname "${c}.gsc" | head -n1)"
+  ok "${c}: the release has ${c}.gsc" "${f:+yes}" "yes"
 done
 
 # A .gsc of <rows> rows: every byte 11, the last ten rows' ff so the band

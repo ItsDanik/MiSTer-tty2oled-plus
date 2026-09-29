@@ -74,18 +74,29 @@ say "Stopping the tty2oled daemon"
 "${INIT}" stop
 sleep 1
 
+# shellcheck source=tty2oled-port.sh
+[ -r "${T2O_DIR}/tty2oled-port.sh" ] && . "${T2O_DIR}/tty2oled-port.sh"
+# The display's port: which one, and how to write to it (tty2oled-port.sh).
+# Without it - an install part way through an update - as before it existed.
+declare -F ttynode >/dev/null || ttynode() { TTYNODE="${1}"; TTYNODE_WHY="no tty2oled-port.sh"; TTYNODE_ERR=""; }
+declare -F port_resolve >/dev/null || port_resolve() { :; }
+declare -F port_remember >/dev/null || port_remember() { :; }
+declare -F port_find >/dev/null || port_find() { return 1; }
+port_resolve                             # the display's port, wherever it is now
 [ -c "${TTYDEV}" ] || die "${TTYDEV} is not there. Is the display plugged in?"
+ttynode "${TTYDEV}"; PORT="${TTYNODE}"   # see ttynode: Zaparoo probes a port written to
 
 # --- Ask the display what it is ---------------------------------------------
 # The installer menu lists "DevKit" twice, so the board name a human remembers
 # is not reliable. The firmware knows.
 say "Identifying the display"
-stty -F "${TTYDEV}" ${BAUDRATE} ${TTYPARAM}
+stty -F "${PORT}" ${BAUDRATE} ${TTYPARAM}
 HWINF=""
-echo "CMDHWINF" > "${TTYDEV}"
-read -t5 HWINF < "${TTYDEV}" || true
+echo "CMDHWINF" > "${PORT}"
+read -t5 HWINF < "${PORT}" || true
 HWINF="$(printf '%s' "${HWINF}" | tr -d '\r\n')"
 echo "    reported: ${HWINF:-<no answer>}"
+case "${HWINF}" in HW*) port_remember "${TTYDEV}" ;; esac
 
 case "${HWINF}" in
   HWLOLIN32*) CHIP="esp32"   ; OFFSET="0x0" ;;
@@ -129,7 +140,7 @@ trap 'restore_daemon; rm -rf "${SEGDIR}"' EXIT
 PARTS=("${OFFSET}" "${BIN}")
 if [ -r "${T2O_DIR}/fw-segments.py" ]; then
   say "Reading the display's partition table"
-  python "${ESPTOOL}" --chip "${CHIP}" --port "${TTYDEV}" --baud "${DBAUD}" \
+  python "${ESPTOOL}" --chip "${CHIP}" --port "${PORT}" --baud "${DBAUD}" \
     --before default_reset --after no_reset \
     read_flash 0x8000 0xC00 "${SEGDIR}/table.bin" >/dev/null 2>&1 \
     || rm -f "${SEGDIR}/table.bin"
@@ -150,10 +161,16 @@ fi
 
 # --- Flash ------------------------------------------------------------------
 say "Flashing ${CHIP} via ${TTYDEV}"
-if ! python "${ESPTOOL}" --chip "${CHIP}" --port "${TTYDEV}" --baud "${DBAUD}" \
-     --before default_reset --after hard_reset write_flash \
-     --compress --flash_mode dio --flash_freq 80m --flash_size detect \
-     "${PARTS[@]}"; then
+flash() {
+  python "${ESPTOOL}" --chip "${CHIP}" --port "${PORT}" --baud "${DBAUD}" \
+    --before default_reset --after hard_reset write_flash \
+    --compress --flash_mode dio --flash_freq 80m --flash_size detect \
+    "${PARTS[@]}"
+}
+# Once more after a failure: something else opening the port mid-write -
+# Zaparoo's reader probe, on a MiSTer where our node could not be made - is
+# over by then, and a flash cut short leaves the bootloader able to take it.
+if ! flash && ! { say "Flashing failed - trying once more"; sleep 3; flash; }; then
   echo
   echo "Flash failed. Worth trying, in order:"
   echo "  1. A slower rate:  DBAUD=115200 $0 $*"

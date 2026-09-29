@@ -426,6 +426,101 @@ ok "the next game: its layout and its icon at once" "$(wire)" \
    "CMDMETA,2,12,1,0,Full Throttle|System=ScummVM|Year=1995  LucasArts|Platform=DOS|Engine=SCUMM|Language=English CMDICON "
 
 # ---------------------------------------------------------------------------
+section ".scummvm entries for frontends (tools/scummvm-entries.sh)"
+# ---------------------------------------------------------------------------
+
+# The shapes the real MiSTer's ini had: a folder a game, an apostrophe, a
+# folder holding four games, two versions of one, a game in a subfolder and
+# ScummVM having added it twice, a game outside games/ScummVM.
+ENT="${TMP}/entries"
+G="${ENT}/usb0/games/ScummVM"
+mkdir -p "${G}/Full Throttle (CD DOS)" "${G}/Bear Stormin' (DOS)" "${G}/Puzzle Pack (CD Windows)" \
+         "${G}/Space Quest 4 (CD DOS)" "${G}/Toonstruck (CD Windows)/MISC" "${ENT}/elsewhere/Lure"
+cat > "${ENT}/scummvm.ini" <<EOF
+[scummvm]
+lastselectedgame=ft
+
+[brstorm]
+description=Bear Stormin' (DOS/English)
+path=${G}/Bear Stormin' (DOS)
+engineid=gob
+gameid=brstorm
+
+[dimp-win]
+description=Simon the Sorcerer's Puzzle Pack: Demon in my Pocket (CD/Windows/English)
+path=${G}/Puzzle Pack (CD Windows)
+gameid=dimp
+
+[ft]
+description=Full Throttle (Version A/English)
+path=${G}/Full Throttle (CD DOS)/
+engineid=scumm
+gameid=ft
+
+[gone]
+description=Removed Since
+path=${G}/Not There
+gameid=gone
+
+[jumble-win]
+description=Simon the Sorcerer's Puzzle Pack: Jumble (CD/Windows/English)
+path=${G}/Puzzle Pack (CD Windows)
+gameid=jumble
+
+[lure]
+description=Lure of the Temptress (VGA/DOS/English)
+path=${ENT}/elsewhere/Lure
+gameid=lure
+
+[sq4-cd]
+description=Space Quest IV: Roger Wilco and the Time Rippers (CD/DOS/English)
+path=${G}/Space Quest 4 (CD DOS)
+gameid=sq4
+
+[sq4-cd-win]
+description=Space Quest IV: Roger Wilco and the Time Rippers (CD/Windows/English)
+path=${G}/Space Quest 4 (CD DOS)
+gameid=sq4
+
+[toon]
+description=Toonstruck (DOS/English)
+path=${G}/Toonstruck (CD Windows)
+gameid=toon
+
+[toon-1]
+description=Toonstruck (DOS/English)
+path=${G}/Toonstruck (CD Windows)/MISC
+gameid=toon
+EOF
+ENTRIES="${ROOT}/tools/scummvm-entries.sh"
+# As the MiSTer's bash 5.0 would run it: 5.2 forgives a quote in an
+# associative array's arithmetic subscript, 5.0 does not.
+entries() { INI="${ENT}/scummvm.ini" BASH_COMPAT=50 bash "${ENTRIES}" "$@" 2>&1; }
+listed() { (cd "${ENT}" && find . -name '*.scummvm' | sort | tr '\n' ' '); }
+
+OUT="$(entries -n)"
+ok "-n writes nothing" "$(listed)" ""
+ok "-n says what it would write" "$(tail -n 1 <<<"${OUT}")" "8 to be written, 0 already there, 2 skipped"
+
+OUT="$(entries)"
+ok "no shell errors (an apostrophe is not an arithmetic subscript)" \
+   "$(grep -c -e 'bad array subscript' -e 'syntax error' <<<"${OUT}")" "0"
+ok "one entry a game, named after its folder, or its description where a folder holds two" \
+   "$(listed)" "./elsewhere/Lure/Lure.scummvm ./usb0/games/ScummVM/Bear Stormin' (DOS)/Bear Stormin' (DOS).scummvm ./usb0/games/ScummVM/Full Throttle (CD DOS)/Full Throttle (CD DOS).scummvm ./usb0/games/ScummVM/Puzzle Pack (CD Windows)/Simon the Sorcerer's Puzzle Pack - Demon in my Pocket (CD Windows English).scummvm ./usb0/games/ScummVM/Puzzle Pack (CD Windows)/Simon the Sorcerer's Puzzle Pack - Jumble (CD Windows English).scummvm ./usb0/games/ScummVM/Space Quest 4 (CD DOS)/Space Quest IV - Roger Wilco and the Time Rippers (CD DOS English).scummvm ./usb0/games/ScummVM/Space Quest 4 (CD DOS)/Space Quest IV - Roger Wilco and the Time Rippers (CD Windows English).scummvm ./usb0/games/ScummVM/Toonstruck (CD Windows)/Toonstruck (CD Windows).scummvm "
+ok "an entry holds the game id, no newline" \
+   "$(od -An -c "${G}/Full Throttle (CD DOS)/Full Throttle (CD DOS).scummvm" | tr -s ' ')" " f t"
+ok "the id, not the target" \
+   "$(cat "${G}/Puzzle Pack (CD Windows)/Simon the Sorcerer's Puzzle Pack - Jumble (CD Windows English).scummvm")" "jumble"
+ok "a game ScummVM added twice is skipped" "$(grep -c '^skip toon-1: the same game as toon$' <<<"${OUT}")" "1"
+ok "a game whose folder is gone is skipped" "$(grep -c '^skip gone:' <<<"${OUT}")" "1"
+
+printf 'queen' > "${G}/Full Throttle (CD DOS)/Full Throttle (CD DOS).scummvm"
+OUT="$(entries)"
+ok "a second run writes nothing new" "$(tail -n 1 <<<"${OUT}")" "0 written, 7 already there, 3 skipped"
+ok "an entry holding something else is kept and reported" \
+   "$(cat "${G}/Full Throttle (CD DOS)/Full Throttle (CD DOS).scummvm")|$(grep -c "^skip ft: .* holds 'queen'$" <<<"${OUT}")" "queen|1"
+
+# ---------------------------------------------------------------------------
 rm -rf "${TMP}"
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n\n' "${PASS}" "${FAIL}"
 [ "${FAIL}" -eq 0 ] || exit 1

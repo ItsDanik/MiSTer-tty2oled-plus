@@ -134,6 +134,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `.../fadetransition.h` | `TRANSITION=-2` fade; `30`-`39` sliding fades. |
 | `.../bootoutro.h`, `busybar.h` | Boot screen as menu picture + power-on outro; the sweep as a busy bar. |
 | `.../bandnote.h` | Frontends' 54-row picture + band; `CMDNOTE` fading in/out there. |
+| `.../linejunk.h` | Drops another program's bytes (Zaparoo's PN532 probe) ahead of a command line. |
 | `.../MiSTer_SSD1322_USB.ino` | Includes the headers; LEDC shim for ESP32 core 3.x. |
 | `tests/` | ~2620 checks, no hardware. |
 | `tools/build-title-index.sh`, `dat2index.awk`, `index-emit.awk`, `mamexml2index.awk` | CRC32 title index from libretro-database (+ MAME XML for Neo Geo). W. |
@@ -152,8 +153,10 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `tools/tty2oledplus_{settings,scrape,update,uninstall}.sh`, `_scrape.py` | The launcher's entries, in the install folder. M. |
 | `tools/tty2oledplus_syscheck.py` | Would update_all update something installed? The daemon runs it in the background. M. |
 | `tools/tty2oledplus_scummvm.py` | ScummVM's icon packs -> `cache/scummvm/games.idx` + per-game 86x64 icons. Daemon, background. M. |
+| `tools/scummvm-entries.sh` | ScummVM's ini -> a `<folder>.scummvm` (game id) in each game folder, for ES-DE/RetroPie/RetroArch. Developer tool, not shipped (yet); fed over `ssh ... 'bash -s'`. M. |
 | `tools/tty2oledplus_install.sh` | The starter users drop in Scripts. M. |
 | `tools/flash-mister.sh`, `tools/fw-segments.py` | Flashes firmware, writing only segments with data. M. |
+| `tools/tty2oled-port.sh` | Which port the display is on (remembered USB identity), and `ttynode`. Sourced by daemon, S60, flasher, updater, bootimg. M. |
 | `tools/tty2oled-bootimg.sh` | Sets/clears/queries the stored boot image. M. |
 | `tools/tty2oled-diag.sh`, `tty2oled-capture.sh` | Dump state files and what they parse to; record state changes. M. |
 
@@ -245,7 +248,7 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   exit is read on the exit pass; with no print log, `update_all.log` if it is
   newer than the run.
 - **Frontends keep the band.** `frontend_core` (MENU, misterzine, degauss,
-  any case) pictures go out `CMDCOR,<core>,<effect>,band` as the file's top
+  zaparoo, any case) pictures go out `CMDCOR,<core>,<effect>,band` as the file's top
   6912 bytes + 1280 zeros - so a 256x54 `.gsc` works (sent raw it would be a
   short 8192 read) and a 256x64 one is cut; the firmware blacks the band too.
   The menu's `CMDBOOTPIC` is always one. `band_showPicture` composes picture
@@ -292,6 +295,18 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   `--all` forces level 2: an up-to-date MiSTer must say `no`. ETags cached
   only while the md5 seen equals the fingerprint; a 304 is "same". ~12s of
   CPU (TLS), 65 databases, about 1.6MB cold.
+- **MiSTer's own updater** (`Scripts/update.sh`, Zaparoo's Update):
+  `sysupdate_process` (`updateall_process` is it) reports `SYSUPD`
+  `update_all` or `downloader` - the launcher by argv[1], its Downloader by
+  argv[0] `/tmp/downloader.sh` (update_all uses `/tmp/update_all.sh`,
+  `/tmp/ua_downloader_*`); an `update_all`-named process under it is its
+  own step (it matched for a minute and flashed "update_all"). `UA_KIND`
+  latches per run: no picture, `CMDBUSY,1,<label>,<effect>` at once, the bar
+  throughout. The line follows its log - a `/tmp/tmp*` it holds open
+  (`dl_findlog`, `ls -l /proc/<pid>/fd`), `UA_LOG` in place of the print log;
+  `ua_clean` drops `DEBUG|` and tracebacks. Verdict at exit from
+  `downloader.log`'s summary (`Errors:` then `none.`; `dl_readfinal`), only
+  if newer than the run - a cancel (SIGTERM) writes none.
 - **The notice in the firmware** (`bandnote.h`): kept across pictures; on a
   shown frontend it steps 0..`BNOTE_GREY` (8) over `BNOTE_FADE_MS`, a changed
   text fades out first; it waits for `TF_IDLE`, the boot outro (`boActive`),
@@ -302,10 +317,16 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   above its baseline and the descent on it** (measured with the real library).
 - **Degauss** is a Scripts entry over the menu core (`CORENAME` stays
   `MENU`; MisterZine, by contrast, is an `.mgl` and a real `CORENAME`).
-  `readcore` swaps `MENU` for `degauss` while `degauss_running` finds its
-  binary by argv[0] (busybox grep has no `-z`); `findpicture` looks it up
-  `exact`. `degauss_possible` makes both waits poll every `UPDATE_ALL_POLL`s
-  on MENU/degauss, since starting or quitting it changes no state file.
+  **Zaparoo** replaces MiSTer's main (`main=zaparoo/MiSTer_Zaparoo` in
+  `MiSTer.ini`) and runs over `zaparoo/menu_zaparoo.rbf`; `CORENAME` says
+  `MENU` there too, the same binary also loads stock `menu.rbf`, and
+  `STARTPATH` is never cleared. The main re-execs itself (same pid) with the
+  loaded rbf as argv[1]. `menu_frontend` finds both in one `/proc` grep
+  (Degauss by argv[0], winning; Zaparoo by argv[1]'s basename) and `readcore`
+  swaps `MENU` for `degauss`/`zaparoo`; `findpicture` looks both up `exact`.
+  `menu_frontend_possible` makes both waits poll every `UPDATE_ALL_POLL`s on
+  MENU/degauss/zaparoo, since starting or quitting Degauss changes no state
+  file.
 - Console fields page every `METADATA_INTERVAL`s (`meta_pageDwellMs`; `0`
   never turns, so never reaches the description). Redraws only on movement.
 
@@ -596,7 +617,10 @@ on MiSTer's `ini_settings.sh`.
 
 A Linux program under the menu core, not a core: its Scripts launcher writes
 `ScummVM` to `CORENAME` (and `MENU` on exit), `RBFNAME`/`STARTPATH` still say
-menu. `scummvm_core` routes `build_meta` to `scummvm_meta` (console kind,
+menu. **Zaparoo starts the binary itself** (`scummvmmaster ... lure`, the
+target last) and `CORENAME` stays `MENU`: `menu_frontend` finds the binary by
+argv[0] in its one `/proc` grep and `readcore` makes it `ScummVM`, over
+Degauss/Zaparoo; with `SVM_PID` known it is a read, not a search. `scummvm_core` routes `build_meta` to `scummvm_meta` (console kind,
 `DISPLAY_CORENAME` without RBFNAME). Everything is read off ScummVM itself -
 **all measured on the real MiSTer** with Full Throttle, EcoQuest, SQ2:
 
@@ -966,6 +990,35 @@ row 57..63  build version        BOOT_VER_Y, 5x7 font
   up to `FW_ASK_MAX` times (`checkversion quiet`).
 - **`CMDBOOTPIC` draws**, though it is on `boot_quietCommand`'s list; the busy
   bar uses the list minus it, and whoever puts a busy screen up takes it down.
+- **Zaparoo probes the display's port as a PN532 NFC reader** (`[readers]
+  auto_detect`), writing `55 55 00 ...` frames with no newline: the next
+  command's line was drawn as text ("UUU") and lost - the busy bar with it -
+  and a probe mid-flash broke it. It remembers a port that did not answer
+  only until the device file's **mtime** changes, and Linux stamps a tty's
+  node on every write through it (8s granularity) - so each write of ours
+  invited the next probe. `ttynode` (in `tty2oled-port.sh`) writes through
+  `/tmp/tty2oledplus.tty`, a node of our own for the device (`/run` is
+  nodev); `TTYPORT` is the device, which `serialready` checks. The firmware
+  (`linejunk.h`) keeps what follows the last control/non-ASCII byte if it is
+  a `CMD`, else drops the line (no ack). Zaparoo has no per-port ignore;
+  `auto_detect` off per driver would lose real USB PN532 readers.
+  `ttynode` tests the node with `stty -F` (non-blocking), retried: a plain
+  open at boot failed in the second of Zaparoo's first probe and the daemon
+  wrote through `/dev/ttyUSB0` for good. Zaparoo still probes once at its
+  start, and a probe mid-picture shifts it (bytes inserted, tail wrapped):
+  `port_pass` sees the device's time move (`-nt PORT_REF`, no fork; the
+  device is in the inotify list) and redraws everything `PORT_SETTLE_SECS`
+  later; `port_mark` re-baselines after sleep mode (SAM writes through the
+  device). `TIOCEXCL` does not keep root out on MiSTer - tested.
+- **`ttyUSB` numbers follow detection order**, so with a Zaparoo reader
+  plugged in the display can be `ttyUSB1`. `tty2oled-port.sh`: once the
+  display answers `CMDHWINF` (daemon's `checkversion`, flasher, updater),
+  `port_remember` writes its `/sys` identity to `.display-port`
+  (`vid:pid:serial:usbpath:iface`); `port_resolve` finds it again for a
+  numbered `TTYDEV` (socket beats serial - CP2102s share `0001` - a tie or
+  no match leaves `TTYDEV`). A by-id link in `TTYDEV` is left alone. No
+  port is written to for this. `port_moved` re-finds it after a replug;
+  `TTYCONF` is the ini's `TTYDEV`, `TTYPORT` the found device.
 - **A theory that fits is not a cause** - reproduce it. The "flash hang" was
   `ssh -t`, not LittleFS.
 - **`/tmp/tty2oled_sleep` is a mutex**: MiSTer SAM drives the port itself

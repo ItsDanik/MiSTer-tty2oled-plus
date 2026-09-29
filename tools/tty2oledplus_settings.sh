@@ -146,7 +146,7 @@ SELF_UPDATE_TEXT|text||What that says|The message shown while an Update runs.
 UPDATE_CHECK_TTY2OLED|bool||Look for a new tty2oled+|Ask GitHub whether a newer tty2oled+ is out. When one is, the menu says so until Update has installed it.
 UPDATE_CHECK_SYSTEM|bool||Look for system updates|Work out whether update_all would update something you have - a new build of a core, a changed file, a new Linux. When it would, the menu says so until update_all has run.
 UPDATE_CHECK_MINUTES|int|0 1440|How often to look (minutes)|Both are looked for at boot and every this many minutes after. 0 never looks.
-UPDATE_NOTE_TEXT|text|51|When tty2oled+ has one|Shown small and grey under the picture of the menu, MisterZine and Degauss while a newer tty2oled+ is waiting.
+UPDATE_NOTE_TEXT|text|51|When tty2oled+ has one|Shown small and grey under the picture of the menu, MisterZine, Degauss and Zaparoo while a newer tty2oled+ is waiting.
 UPDATE_NOTE_SYSTEM_TEXT|text|51|When the system has one|The same, while update_all has something to update.
 UPDATE_NOTE_BOTH_TEXT|text|51|When both have|The same, when both are waiting.
 UPDATE_ALL_POLL|int|1 60|How often to look (seconds)|How often to check whether update_all is running. Lower notices sooner and costs a little more.

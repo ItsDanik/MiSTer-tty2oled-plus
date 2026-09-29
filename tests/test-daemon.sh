@@ -76,6 +76,10 @@ TTYWAIT="0.3"
 CORENAME_WAIT="1"
 dbug() { :; }
 
+# The port library, which the daemon sources from the install folder.
+PORT_ID_FILE="${TMP}/display-port"; rm -f "${PORT_ID_FILE}"
+# shellcheck source=../tools/tty2oled-port.sh
+. "${ROOT}/tools/tty2oled-port.sh"
 eval "$(sed '/^# \*\* Main \*\*/,$d' "${ROOT}/tty2oled.sh" \
         | sed '/^\. \/media\/fat/d; /^cd \/tmp/d')"
 
@@ -914,6 +918,123 @@ ua_readlog slow
 ok "but is on the once-a-second one" "${UA_LINE}" "Short"
 UPDATE_ALL_POLL="0"
 
+# ---------------------------------------------------------------------------
+# MiSTer's own updater - Scripts/update.sh, which Zaparoo's Update runs
+# ---------------------------------------------------------------------------
+# update.sh copies the Downloader to /tmp/downloader.sh and runs it, as seen
+# on a MiSTer under Zaparoo. It gets update_all's screens, all of it the bar.
+uareset
+sysupdate_process; ok "nothing running: no system update" "${?}:${SYSUPD}" "1:"
+mkproc 540 /bin/bash /media/fat/Scripts/update.sh
+sysupdate_process; ok "Scripts/update.sh is MiSTer's updater" "${?}:${SYSUPD}:${SYSUPD_PID}" "0:downloader:"
+updateall_process; ok "which counts as a system update running" "${?}" "0"
+mkproc 541 /tmp/downloader.sh
+sysupdate_process; ok "and its Downloader, with its pid" "${SYSUPD}:${SYSUPD_PID}" "downloader:541"
+mkproc 542 /usr/bin/python3 /tmp/x/update_all.pyz
+sysupdate_process; ok "anything naming update_all under it is its" "${SYSUPD}" "downloader"
+uareset
+mkproc 540 /bin/bash /media/fat/Scripts/tty2oledplus_update.sh
+mkproc 541 vi /media/fat/Scripts/update.sh.bak
+mkproc 542 /bin/sh -c "cat /media/fat/Scripts/update.sh"
+mkproc 543 /tmp/downloader.sh --list-dbs
+sysupdate_process; ok "not our updater, a query, nor anything else naming it" "${?}:${SYSUPD}" "1:"
+uareset
+mkproc 500 /bin/bash /media/fat/Scripts/update_all.sh
+mkproc 601 /tmp/ua_downloader_bin
+sysupdate_process; ok "update_all is still update_all" "${SYSUPD}" "update_all"
+
+DL_FINALLOG="${TMP}/downloader.log"; DLLOG="${TMP}/tmpk3v9_x2q"
+dlsummary() {  # dlsummary <what the Errors: heading has under it>
+  printf '%s\n' "DEBUG| Moving downloader.log" "$(printf '=%.0s' $(seq 80))" \
+    "Downloader 2.4 (615) by theypsilon. Run time: 05:26.71s at 2026-09-29 14:45:41" \
+    "Log: /media/fat/Scripts/.config/downloader/downloader.log" "" \
+    "Installed:" "aliensec.zip, grdians.zip" "" "Errors:" "${1}" "" \
+    "Reboot MiSTer to apply some changes." "" >"${DL_FINALLOG}"
+}
+# The launcher, then its Downloader, holding its log open as Python's tempfile.
+dlstart() {
+  uareset; FW_VERSION="${1:-0.7.0b}"
+  rm -f "${DL_FINALLOG}" "${DLLOG}"
+  mkproc 540 /bin/bash /media/fat/Scripts/update.sh
+  pass
+}
+dlrun() {
+  printf '%s\n' "DEBUG| Config: {}" "START!" "SECTION: jtcores" "****" >"${DLLOG}"
+  mkproc 541 /tmp/downloader.sh
+  mkdir -p "${PROC_ROOT}/541/fd"
+  ln -sf /dev/null "${PROC_ROOT}/541/fd/0"; ln -sf "${DLLOG}" "${PROC_ROOT}/541/fd/3"
+  pass
+}
+
+dlstart
+ok "it starts: no update_all picture, the label at once, transitioned" "$(wire)" "CMDBUSY,1,Updating System ...,-2|"
+pass
+ok "no line before its Downloader has a log" "$(wire)" ""
+dlrun
+ok "its log found and followed" "$(wire)" "CMDBUSYLINE,SECTION: jtcores|"
+printf '%s\n' "No changes: games/mame/1on1gov.zip" "DEBUG| Moving x" \
+  "Traceback (most recent call last):" '  File "/app/downloader/file_system.py", line 552, in x' >>"${DLLOG}"
+pass
+ok "its debug lines and tracebacks are no status" "$(wire)" "CMDBUSYLINE,No changes: games/mame/1on1gov.zip|"
+# Its log comes in 8KB bursts, minutes apart: between them the line is the
+# file it has open under /media - not its own files, nor the log.
+
+ln -sf "/media/fat/Scripts/.config/downloader/downloader.json" "${PROC_ROOT}/541/fd/4"
+ln -sf "/media/usb0/games/mame/intcup94.zip" "${PROC_ROOT}/541/fd/5"
+pass
+ok "nothing new in its log: the file it has open" "$(wire)" "CMDBUSYLINE,games/mame/intcup94.zip|"
+rm -f "${PROC_ROOT}/541/fd/5"
+pass
+ok "nothing open a moment: the file stays, not a blank" "$(wire)" ""
+ln -sf "/media/usb0/games/mame/intcup94.zip" "${PROC_ROOT}/541/fd/5"
+pass
+ok "the same file is not sent again" "$(wire)" ""
+printf '%s\n' "No changes: games/mame/spidman.zip" >>"${DLLOG}"
+pass
+ok "a burst of its log: its last line" "$(wire)" "CMDBUSYLINE,No changes: games/mame/spidman.zip|"
+rm -f "${PROC_ROOT}/541/fd/5"
+pass
+ok "nothing open and nothing new: the line stays" "$(wire)" ""
+# The summary is no status: "none." under "Errors:" was the last line shown.
+printf '%s\n' "$(printf '=%.0s' $(seq 80))" \
+  "Downloader 2.4 (615) by theypsilon. Run time: 05:26.71s at 2026-09-29 14:45:41" \
+  "Installed:" "aliensec.zip" "" "Errors:" "none." >>"${DLLOG}"
+ln -sf "/media/usb0/games/mame/intcup94.zip" "${PROC_ROOT}/541/fd/5"
+pass
+ok "its summary changes nothing on the line" "$(wire)" ""
+dlsummary "none."; rm -rf "${PROC_ROOT}/540" "${PROC_ROOT}/541"
+T0="$(tenths)"; pass; T1="$(tenths)"
+ok "done: Update Complete, and its run time" "$(wire)" \
+   "CMDBUSY,0,Update Complete,-2|CMDBUSYLINE,Finished in 05:26|"
+ok "for the whole of UPDATE_DONE_SECS" "$(( T1 - T0 >= 8 ))" "1"
+ok "then back to the core" "${UA_RC}|${oldcore}" "1|"
+
+dlstart; dlrun
+dlsummary "games/mame/aliensec.zip"; rm -rf "${PROC_ROOT}/540" "${PROC_ROOT}/541"
+pass
+ok "errors: Update Failed" "$(wire)" \
+   "CMDBUSY,0,Update Failed,-2|CMDBUSYLINE,Some files failed - see the log|"
+
+# Cancelled in Zaparoo: SIGTERM, no summary; the log left is the last run's.
+dlstart; dlrun
+dlsummary "none."; touch -d '-1 hour' "${DL_FINALLOG}"
+rm -rf "${PROC_ROOT}/540" "${PROC_ROOT}/541"
+T0="$(tenths)"; pass; T1="$(tenths)"
+ok "stopped part way: straight back, no finish" "$(wire)|$(( T1 - T0 < 5 ))" "CMDBUSY,0||1"
+
+dlstart 0.6.9b
+pass
+ok "old firmware: the label all the same, never the update_all picture" "$(wire)" ""
+rm -rf "${PROC_ROOT}/540"; pass
+ok "and no finish" "$(wire)" "CMDBUSY,0|"
+
+UPDATE_ALL_SCREEN="no"; uareset
+mkproc 540 /bin/bash /media/fat/Scripts/update.sh
+pass
+ok "UPDATE_ALL_SCREEN=no leaves it alone too" "${UA_RC}|$(wire)" "1|"
+UPDATE_ALL_SCREEN="yes"
+rm -f "${DL_FINALLOG}" "${DLLOG}"
+
 uareset
 mv "${TMP}/update_all.gsc.away" "${bannerfolder}/update_all.gsc"
 UA_RUN="no"; UA_DONE_AT=""; TTYDEV="${WIRE}"
@@ -977,54 +1098,17 @@ rm -rf "${PROC_ROOT}/500" "${PROC_ROOT}/700"
 SELFUPDATE_SHOWN="no"
 
 ok "the daemon's wait times out for it even with the update_all screen off" \
-   "$(grep -c 'SELF_UPDATE_SCREEN:-yes}" = "yes" \] || degauss_possible' "${ROOT}/tty2oled.sh")" "1"
+   "$(grep -c 'SELF_UPDATE_SCREEN:-yes}" = "yes" \] || menu_frontend_possible' "${ROOT}/tty2oled.sh")" "1"
 
 # ---------------------------------------------------------------------------
 section "the firmware's version, asked again when the display was not ready"
 # ---------------------------------------------------------------------------
-# checkversion itself, on a port that never answers: quiet says nothing.
-ok "no answer: said, the first time" \
-   "$(TTYDEV=/dev/null checkversion 2>&1 | grep -c 'did not answer')" "1"
-ok "and not on a quiet retry" "$(TTYDEV=/dev/null checkversion quiet 2>&1)" ""
-
-# The retries, with checkversion answering from a list: "" is no answer.
-ANSWERS=()
-ASKED=0
-checkversion() { ASKED=$((ASKED + 1)); FW_VERSION="${ANSWERS[0]:-}"; ANSWERS=("${ANSWERS[@]:1}"); }
-FW_VERSION=""; DEFERRED_DONE="yes"; FW_ASKS=1; FW_ASK_AT=$(( $(date +%s) + FW_ASK_SECS ))
-fw_pass
-ok "not asked again before FW_ASK_SECS" "${ASKED}" "0"
-FW_ASK_AT=0; ANSWERS=("")
-fw_pass
-ok "then asked" "${ASKED}" "1"
-ok "no answer again: the next try FW_ASK_SECS away" "$(( FW_ASK_AT - $(date +%s) ))" "${FW_ASK_SECS}"
-FW_ASK_AT=0; ANSWERS=("0.7.3b")
-fw_pass
-ok "an answer is kept" "${FW_VERSION}" "0.7.3b"
-FW_ASK_AT=0; fw_pass; fw_pass
-ok "and not asked for again" "${ASKED}" "2"
-
-FW_VERSION=""; FW_ASKS=1; ASKED=0
-MSG="$(for i in 1 2 3 4 5 6; do FW_ASK_AT=0; ANSWERS=(""); fw_pass; done; echo "asked ${ASKED}")"
-ok "at most FW_ASK_MAX tries in all" "${MSG##*asked }" "$(( FW_ASK_MAX - 1 ))"
-ok "then it says so, once" "$(printf '%s\n' "${MSG}" | grep -c 'never said which firmware')" "1"
-FW_VERSION=""; FW_ASKS=1; FW_ASK_AT=0; DEFERRED_DONE="no"; ASKED=0
-fw_pass
-ok "not before the startup handshake has asked once itself" "${ASKED}" "0"
-ok "which starts the count again" \
-   "$(sed -n '/^deferred_setup()/,/^}/p' "${ROOT}/tty2oled.sh" | grep -c 'FW_ASKS=1; FW_ASK_AT=')" "1"
-ok "and the loop asks, before the notice that needs the answer" \
-   "$(grep -A4 'if ! sleepmode_pass; then' "${ROOT}/tty2oled.sh" | grep -A2 '^ *fw_pass$' | grep -c '^ *updatenote_pass$')" "1"
-unset -f checkversion
-eval "$(sed -n '/^checkversion() {/,/^}/p' "${ROOT}/tty2oled.sh")"
-FW_VERSION=""; DEFERRED_DONE="no"
-
-# ---------------------------------------------------------------------------
-section "Degauss: a frontend over the menu core, found by its process"
+section "Degauss and Zaparoo: frontends over the menu core, found by their process"
 # ---------------------------------------------------------------------------
 # Degauss is a Scripts entry, not a core: CORENAME says MENU all the while it
 # runs. Its binary is the only sign.
-degauss_running; ok "nothing running: not Degauss" "${?}" "1"
+degauss_running() { menu_frontend && [ "${MENU_FRONTEND}" = "degauss" ]; }
+menu_frontend; ok "nothing running: no frontend" "${?}:${MENU_FRONTEND}" "1:"
 mkproc 800 /bin/bash /media/fat/Scripts/degauss.sh
 degauss_running; ok "its launcher script alone is not it" "${?}" "1"
 mkproc 801 vi /media/fat/Scripts/.config/degauss/degauss.toml
@@ -1038,22 +1122,228 @@ mkproc 803 /media/fat/Scripts/.degauss/degauss --config /media/fat/Scripts/.dega
 degauss_running; ok "and where v0.1.0 and v0.2.0 installed it" "${?}" "0"
 rm -rf "${PROC_ROOT}/803"
 
-# The display's idea of the core: Degauss replaces MENU and nothing else.
+# Zaparoo's frontend is MiSTer's main, swapped in by MiSTer.ini, over its own
+# menu core; the main's argv[1] is the rbf it loaded (as seen on a MiSTer).
+mkproc 900 /media/fat/zaparoo/zaparoo.d32b564816485bce.sh -service exec
+mkproc 901 /media/fat/zaparoo/frontend --crt
+menu_frontend; ok "its service and frontend alone are not it" "${?}:${MENU_FRONTEND}" "1:"
+mkproc 902 /media/fat/zaparoo/MiSTer_Zaparoo menu.rbf
+menu_frontend; ok "nor its main on the stock menu" "${?}:${MENU_FRONTEND}" "1:"
+mkproc 902 /media/fat/zaparoo/MiSTer_Zaparoo zaparoo/menu_zaparoo.rbf
+menu_frontend; ok "its main on menu_zaparoo.rbf is" "${?}:${MENU_FRONTEND}" "0:zaparoo"
+mkproc 902 /media/fat/MiSTer /media/fat/zaparoo/menu_zaparoo.rbf
+menu_frontend; ok "whatever the main is called, and by a full path" "${?}:${MENU_FRONTEND}" "0:zaparoo"
+mkproc 903 vi /media/fat/zaparoo/menu_zaparoo.rbf.txt
+mkproc 902 /media/fat/zaparoo/MiSTer_Zaparoo _Console/SNES_20250605.rbf
+menu_frontend; ok "a core it loaded is not, nor anything else naming the rbf" "${?}:${MENU_FRONTEND}" "1:"
+mkproc 902 /media/fat/zaparoo/MiSTer_Zaparoo zaparoo/menu_zaparoo.rbf
+mkproc 802 /media/fat/Scripts/.config/degauss/degauss --config x
+menu_frontend; ok "Degauss over Zaparoo is Degauss" "${?}:${MENU_FRONTEND}" "0:degauss"
+rm -rf "${PROC_ROOT}/802"
+
+# The display's idea of the core: a frontend replaces MENU and nothing else.
 printf 'MENU' > "${corenamefile}"
-readcore; ok "the menu, Degauss not running: MENU" "${CURCORE}" "MENU"
+readcore; ok "the menu, Zaparoo up: zaparoo" "${CURCORE}" "zaparoo"
+
+# ScummVM started by Zaparoo itself, not its Scripts launcher: the binary with
+# the game as its last argument (as seen on a MiSTer), and CORENAME left MENU.
+mkproc 910 /bin/bash /media/fat/Scripts/ScummVM_Master.sh
+readcore; ok "ScummVM's launcher script alone is not ScummVM" "${CURCORE}" "zaparoo"
+mkproc 911 /media/fat/ScummVM/scummvmmaster --opl-driver=db --output-rate=48000 lure
+readcore; ok "its binary over Zaparoo's menu core is ScummVM" "${CURCORE}" "ScummVM"
+mkproc 802 /media/fat/Scripts/.config/degauss/degauss --config x
+readcore; ok "over Degauss too - it has the screen" "${CURCORE}" "ScummVM"
+rm -rf "${PROC_ROOT}/802"
+SVM_PID="911"; rm -rf "${PROC_ROOT}/910"
+readcore; ok "found once, followed by its pid" "${CURCORE}" "ScummVM"
+rm -rf "${PROC_ROOT}/911"
+readcore; ok "gone: the frontend it came from" "${CURCORE}" "zaparoo"
+SVM_PID=""
+printf 'ScummVM' > "${corenamefile}"
+readcore; ok "started from Scripts, CORENAME says so as before" "${CURCORE}" "ScummVM"
+printf 'MENU' > "${corenamefile}"
+rm -rf "${PROC_ROOT}/900" "${PROC_ROOT}/901" "${PROC_ROOT}/902" "${PROC_ROOT}/903"
+readcore; ok "the menu, nothing running: MENU" "${CURCORE}" "MENU"
 mkproc 802 /media/fat/Scripts/.config/degauss/degauss --config x
 readcore; ok "the menu with Degauss running: degauss" "${CURCORE}" "degauss"
 printf 'SNES' > "${corenamefile}"
 readcore; ok "a game it launched is that game's core" "${CURCORE}" "SNES"
 printf 'MENU' > "${corenamefile}"
 
-# Starting or leaving it changes no state file, so the waits must time out
-# to see it - while the menu or Degauss is up, and not in a core.
-oldcore="MENU"; degauss_possible; ok "on the menu, the wait polls for it" "${?}" "0"
-oldcore="degauss"; degauss_possible; ok "and while it runs, for it leaving" "${?}" "0"
-oldcore="SNES"; degauss_possible; ok "in a core it does not" "${?}" "1"
+# Starting or leaving Degauss changes no state file, so the waits must time
+# out to see it - while the menu core is up in any guise, and not in a core.
+oldcore="MENU"; menu_frontend_possible; ok "on the menu, the wait polls for it" "${?}" "0"
+oldcore="degauss"; menu_frontend_possible; ok "and while it runs, for it leaving" "${?}" "0"
+oldcore="zaparoo"; menu_frontend_possible; ok "and on Zaparoo, which it could run over" "${?}" "0"
+oldcore="SNES"; menu_frontend_possible; ok "in a core it does not" "${?}" "1"
 rm -rf "${PROC_ROOT}/800" "${PROC_ROOT}/801" "${PROC_ROOT}/802"
+unset -f degauss_running
 printf 'NES' > "${corenamefile}"
+
+# ---------------------------------------------------------------------------
+section "the port under a name of our own, so Zaparoo probes it once"
+# ---------------------------------------------------------------------------
+# Writing through /dev/ttyUSB0 stamps its time, and Zaparoo re-probes a port
+# whose time has changed. A node of our own for the device is written
+# instead; the device itself is what says whether the display is there.
+FAKEMK="${TMP}/fakemknod"; mkdir -p "${FAKEMK}"
+printf '#!/bin/sh\necho "$@" >"%s/args"\nexit "${FAKE_MKNOD_RC:-0}"\n' "${FAKEMK}" >"${FAKEMK}/mknod"
+chmod +x "${FAKEMK}/mknod"
+KEEP="${PATH}"; PATH="${FAKEMK}:${PATH}"
+TTYPORT=""; TTYDEV="/dev/null"; TTYALIAS="${TMP}/tty2oledplus.tty"; rm -f "${TTYALIAS}"
+ttyalias
+ok "made for the device's own numbers" "$(cat "${FAKEMK}/args")" "${TTYALIAS} c 1 3"
+ok "and the port remembered" "${TTYPORT}" "/dev/null"
+ok "a node that is not there after all is not written to" "${TTYDEV}" "/dev/null"
+: >"${TTYALIAS}"
+ttyalias
+ok "nor is a file in its place" "${TTYDEV}" "/dev/null"
+rm -f "${TTYALIAS}"; FAKE_MKNOD_RC=1 ttyalias
+ok "no node made: the device, as always" "${TTYDEV}" "/dev/null"
+PATH="${KEEP}"
+TTYGONE="no"; TTYPORT="${TMP}/no-such-port"; TTYDEV="/dev/null"
+serialready; ok "gone is the device gone, whatever our node says" "${?}:${TTYGONE}" "1:yes"
+TTYPORT=""; TTYGONE="no"
+# Whether ours opens, asked the way stty opens a port. At boot a plain open
+# failed in the second Zaparoo's first probe had the port, and the daemon
+# wrote through /dev/ttyUSB0 from then on. Stand-ins for rm, mknod and stty,
+# with /dev/null as the device and /dev/zero as our "node" - never as root,
+# where a stand-in not taking would mean a real rm.
+if [ "$(id -u)" != "0" ]; then
+  FAKEN="${TMP}/fakenode"; mkdir -p "${FAKEN}"
+  printf '#!/bin/sh\nexit 0\n' >"${FAKEN}/rm"
+  printf '#!/bin/sh\nexit 0\n' >"${FAKEN}/mknod"
+  printf '#!/bin/sh\necho "$2" >>"%s/opens"\ncase " ${FAKE_STTY_OK:-} " in *" $2 "*) exit 0 ;; esac\nexit 1\n' "${FAKEN}" >"${FAKEN}/stty"
+  chmod +x "${FAKEN}"/*
+  KEEP="${PATH}"; PATH="${FAKEN}:${PATH}"; KEEPALIAS="${TTYALIAS:-}"; TTYALIAS="/dev/zero"
+  FAKE_STTY_OK="/dev/zero" ttynode /dev/null
+  ok "ours opens: ours" "${TTYNODE}" "/dev/zero"
+  : >"${FAKEN}/opens"; FAKE_STTY_OK="/dev/null" ttynode /dev/null
+  ok "ours will not, the device does (a nodev mount): the device" "${TTYNODE}" "/dev/null"
+  ok "and it says why" "${TTYNODE_WHY}" "/dev/zero would not open, /dev/null did"
+  ok "after a few tries at ours" "$(grep -c zero "${FAKEN}/opens")" "5"
+  FAKE_STTY_OK="" ttynode /dev/null
+  ok "neither opens - the port busy this instant: ours all the same" "${TTYNODE}" "/dev/zero"
+  # Straight after boot mknod fails for a few seconds, then works: tried
+  # again rather than given up on, and what it said is kept.
+  printf '#!/bin/sh\nn=$(cat "%s/mk" 2>/dev/null || echo 0); echo $((n + 1)) >"%s/mk"\n[ "$n" -ge 2 ] && exit 0\necho "mknod: busy for now" >&2; exit 1\n' \
+    "${FAKEN}" "${FAKEN}" >"${FAKEN}/mknod"
+  rm -f "${FAKEN}/mk"; TTYALIAS="/dev/zero"
+  FAKE_STTY_OK="/dev/zero" ttynode /dev/random
+  ok "mknod failing twice at boot: tried again, ours" "${TTYNODE}|$(cat "${FAKEN}/mk")" "/dev/zero|3"
+  ok "and what it said is kept" "${TTYNODE_ERR}" "mknod: busy for now"
+  PATH="${KEEP}"; TTYALIAS="${KEEPALIAS}"
+fi
+
+# Another program writing to the display: the device file's time moves, and
+# everything goes out again once it has had a moment to finish.
+TTYPORT="${TMP}/port"; TTYDEV="${TMP}/node"; PORT_REF="${TMP}/port.ref"
+: >"${TTYPORT}"; : >"${TTYDEV}"; touch -d '-1 minute' "${TTYPORT}"
+port_mark
+oldcore="SNES"; META_WIRE_LAST="x"
+port_pass; ok "nothing else wrote: nothing" "${oldcore}|${PORT_DIRTY_AT}" "SNES|"
+touch "${TTYPORT}"
+port_pass; ok "someone else did: noted, not redrawn while they may be at it" "${oldcore}" "SNES"
+ok "from now" "${PORT_DIRTY_AT}" "${EPOCHSECONDS}"
+PORT_DIRTY_AT=$(( EPOCHSECONDS - 3 ))
+port_pass; ok "PORT_SETTLE_SECS later: everything again" "${oldcore}|${META_WIRE_LAST}|${NOTE_SENT}" "||?"
+oldcore="SNES"
+port_pass; ok "once" "${oldcore}" "SNES"
+# Writing through the device itself - no node could be made - the device's
+# time is ours, and our node is tried for again, once a minute.
+eval "keep_ttyalias() $(declare -f ttyalias | tail -n +2)"
+ALIASES=0; ttyalias() { ALIASES=$(( ALIASES + 1 )); }
+TTYDEV="${TTYPORT}"; PORT_RETRY_AT=0
+port_pass; port_pass
+ok "through the device: our node tried again, not every pass" "${ALIASES}" "1"
+ok "every PORT_RETRY_SECS" "$(( PORT_RETRY_AT - EPOCHSECONDS ))" "10"
+ok "and our own writes are not someone else's" "${oldcore}" "SNES"
+eval "ttyalias() $(declare -f keep_ttyalias | tail -n +2)"; unset -f keep_ttyalias
+TTYPORT=""; TTYDEV="/dev/null"; PORT_DIRTY_AT=""; PORT_RETRY_AT=0
+ok "sleep mode's own redraw takes the time SAM's writes left" \
+   "$(sed -n '/^sleepmode_pass()/,/^}/p' "${ROOT}/tty2oled.sh" | grep -c 'port_mark')" "1"
+
+# One ttynode, in tty2oled-port.sh, which everything that writes to the
+# display sources - three copies of it were kept in step by this suite.
+ok "ttynode is defined in tty2oled-port.sh alone" \
+   "$(grep -l '^ttynode() {' "${ROOT}"/tty2oled.sh "${ROOT}"/S60tty2oled "${ROOT}"/tools/*.sh | sed "s|${ROOT}/||" | tr '\n' ' ')" \
+   "tools/tty2oled-port.sh "
+for f in tty2oled.sh S60tty2oled tools/flash-mister.sh tools/tty2oledplus_update.sh tools/tty2oled-bootimg.sh; do
+  ok "${f##*/} sources it" "$(grep -c '\. .*tty2oled-port\.sh' "${ROOT}/${f}")" "1"
+done
+ok "it is shipped" "$(. "${ROOT}/tools/manifest.sh"; case " ${MANIFEST_TOOLS//$'\n'/ } " in *" tools/tty2oled-port.sh "*) echo yes ;; esac)" "yes"
+
+# ---------------------------------------------------------------------------
+section "which port: the display remembered by its USB identity"
+# ---------------------------------------------------------------------------
+# /sys as on the MiSTer: the display a CP2102 on 1-1.2.4, and a reader's
+# CH340 - no serial - plugged in beside it. Linux numbers them as they turn
+# up, so the display is not always ttyUSB0.
+SYS_ROOT="${TMP}/sys"
+mksys() {  # mksys <tty> <usb path> <vid> <pid> [serial]
+  local dev="${SYS_ROOT}/devices/platform/soc/ffb40000.usb/usb1/1-1/${2}"
+  rm -rf "${dev}" "${SYS_ROOT}/class/tty/${1}"
+  mkdir -p "${dev}/${2}:1.0/${1}" "${SYS_ROOT}/class/tty/${1}"
+  printf '%s\n' "${3}" >"${dev}/idVendor"; printf '%s\n' "${4}" >"${dev}/idProduct"
+  [ -n "${5:-}" ] && printf '%s\n' "${5}" >"${dev}/serial"
+  printf '00\n' >"${dev}/${2}:1.0/bInterfaceNumber"
+  ln -s "${dev}/${2}:1.0/${1}" "${SYS_ROOT}/class/tty/${1}/device"
+}
+rm -rf "${SYS_ROOT}"; rm -f "${PORT_ID_FILE}"
+mksys ttyUSB0 1-1.2.4 10c4 ea60 0001
+mksys ttyUSB1 1-1.2.3 1a86 7523
+port_id /dev/ttyUSB0; ok "a port's identity, from /sys" "${PORT_ID}" "10c4:ea60:0001:1-1.2.4:00"
+port_id ttyUSB1; ok "a CH340 has no serial" "${PORT_ID}" "1a86:7523::1-1.2.3:00"
+port_id /dev/ttyS0; ok "a port not on USB has none" "${?}:${PORT_ID}" "1:"
+
+TTYDEV="/dev/ttyUSB0"; port_resolve
+ok "nothing remembered: TTYDEV as the ini has it" "${TTYDEV}" "/dev/ttyUSB0"
+port_remember /dev/ttyUSB0
+ok "the display answered on ttyUSB0: remembered" "$(cat "${PORT_ID_FILE}")" "10c4:ea60:0001:1-1.2.4:00"
+T0="$(stat -c %Y "${PORT_ID_FILE}")"; touch -d '-1 hour' "${PORT_ID_FILE}"
+port_remember /dev/ttyUSB0
+ok "and not written again when nothing changed" "$(( $(stat -c %Y "${PORT_ID_FILE}") < T0 ))" "1"
+
+# Next boot the reader turns up first.
+mksys ttyUSB0 1-1.2.3 1a86 7523
+mksys ttyUSB1 1-1.2.4 10c4 ea60 0001
+TTYDEV="/dev/ttyUSB0"; port_resolve
+ok "renumbered: the display found on ttyUSB1" "${TTYDEV}" "/dev/ttyUSB1"
+TTYDEV="/dev/serial/by-id/usb-Silicon_Labs_CP2102-if00-port0"; port_resolve
+ok "a by-id link set by hand is taken as it is" "${TTYDEV}" "/dev/serial/by-id/usb-Silicon_Labs_CP2102-if00-port0"
+
+# Moved to another socket: the serial says which.
+mksys ttyUSB1 1-1.2.1 10c4 ea60 0001
+TTYDEV="/dev/ttyUSB0"; port_resolve
+ok "moved to another socket: found by its serial" "${TTYDEV}" "/dev/ttyUSB1"
+# Two CP2102s with the serial they all have: the socket decides.
+mksys ttyUSB0 1-1.2.3 10c4 ea60 0001
+mksys ttyUSB1 1-1.2.4 10c4 ea60 0001
+TTYDEV="/dev/ttyUSB0"; port_resolve
+ok "two of one make: the one in the remembered socket" "${TTYDEV}" "/dev/ttyUSB1"
+mksys ttyUSB1 1-1.2.1 10c4 ea60 0001
+TTYDEV="/dev/ttyUSB0"; port_resolve
+ok "neither in it: no guess, TTYDEV as it was" "${TTYDEV}" "/dev/ttyUSB0"
+# Another make of board: nothing matches, and the ini's port is used; when
+# it answers, it is what is remembered.
+rm -rf "${SYS_ROOT}"; mksys ttyUSB0 1-1.2.4 1a86 55d4 5A7C
+TTYDEV="/dev/ttyUSB0"; port_resolve
+ok "a display on another make of adapter: the ini's port" "${TTYDEV}" "/dev/ttyUSB0"
+port_remember /dev/ttyUSB0
+ok "remembered once it answers" "$(cat "${PORT_ID_FILE}")" "1a86:55d4:5A7C:1-1.2.4:00"
+# The ESP32-S3's own USB: ttyACM, the interface one level up.
+rm -rf "${SYS_ROOT}"; mkdir -p "${SYS_ROOT}/devices/usb1/1-1/1-1:1.0" "${SYS_ROOT}/class/tty/ttyACM0"
+printf '303a\n' >"${SYS_ROOT}/devices/usb1/1-1/idVendor"; printf '1001\n' >"${SYS_ROOT}/devices/usb1/1-1/idProduct"
+printf '00\n' >"${SYS_ROOT}/devices/usb1/1-1/1-1:1.0/bInterfaceNumber"
+ln -s "${SYS_ROOT}/devices/usb1/1-1/1-1:1.0" "${SYS_ROOT}/class/tty/ttyACM0/device"
+port_id ttyACM0; ok "an S3's ttyACM" "${PORT_ID}" "303a:1001::1-1:00"
+
+# The daemon: gone from its port, and back on another after a replug.
+rm -rf "${SYS_ROOT}"; mksys ttyUSB0 1-1.2.4 10c4 ea60 0001; port_remember /dev/ttyUSB0
+TTYCONF="/dev/ttyUSB0"; TTYPORT="${TMP}/gone"; TTYGONE="no"
+port_moved; ok "nowhere else: not moved" "${?}" "1"
+ok "only a numbered port in the ini is looked for" "$(TTYCONF=/dev/serial/by-id/x; port_moved; echo $?)" "1"
+TTYCONF=""; TTYPORT=""; rm -rf "${SYS_ROOT}"; rm -f "${PORT_ID_FILE}"; unset SYS_ROOT
 
 TTYDEV="/dev/null"; unset PROC_ROOT
 

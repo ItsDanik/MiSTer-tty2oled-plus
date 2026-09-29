@@ -116,13 +116,21 @@ identify_display() {
     done
     printf 'TTYDEV=%q BAUDRATE=%q TTYPARAM=%q\n' "${TTYDEV}" "${BAUDRATE}" "${TTYPARAM}"
   )"
+  # Which port, and how to write to it - the installed tty2oled-port.sh,
+  # where there is one yet.
+  # shellcheck source=tty2oled-port.sh
+  [ -r "${INSTALL}/tty2oled-port.sh" ] && . "${INSTALL}/tty2oled-port.sh"
+  declare -F ttynode >/dev/null || ttynode() { TTYNODE="${1}"; TTYNODE_WHY="no tty2oled-port.sh"; TTYNODE_ERR=""; }
+  declare -F port_resolve >/dev/null && port_resolve
   [ -c "${TTYDEV}" ] || return 0
-  stty -F "${TTYDEV}" ${BAUDRATE} ${TTYPARAM} 2>/dev/null || return 0
-  PANEL_TTY="${TTYDEV}"
-  exec 3<"${TTYDEV}" || return 0
-  echo "CMDHWINF" > "${TTYDEV}"
+  ttynode "${TTYDEV}"                     # Zaparoo probes a port written to
+  stty -F "${TTYNODE}" ${BAUDRATE} ${TTYPARAM} 2>/dev/null || return 0
+  PANEL_TTY="${TTYNODE}"
+  exec 3<"${TTYNODE}" || return 0
+  echo "CMDHWINF" > "${TTYNODE}"
   parse_hwinf <&3
   exec 3<&-
+  [ -n "${HW_BOARD}" ] && declare -F port_remember >/dev/null && port_remember "${TTYDEV}"
 }
 
 # Upstream's daemon holds the same serial port, and both at once garble the

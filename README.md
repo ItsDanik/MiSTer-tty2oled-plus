@@ -6,7 +6,8 @@ Fork of **[tty2oled]**, adding extra features like game metadata display.
 
 An SSD1322 OLED panel connects to the MiSTer over USB and shows what you are
 playing: artwork for the core, the game's title, the year it came out, who made
-it, and — for arcade boards — everything the `.mra` knows.
+it, and — for arcade boards — everything the `.mra` knows. ScummVM's games get
+the same treatment, from what ScummVM itself knows about them.
 
 ![The console layout: "Now playing", the game title, its details, and the
 system's icon beside them](docs/img/console-nes.png)
@@ -81,7 +82,7 @@ if you have stored one.
 ![The boot screen: the MiSTer wordmark, the build version, and the sweep
 bar](docs/img/boot.png)
 
-**On the menu** - and on MisterZine and Degauss - the picture keeps to the
+**On the menu** - and on MisterZine, Degauss and Zaparoo - the picture keeps to the
 top 54 rows, like the boot screen, and the ten rows under it are for the
 display's own messages. That is where it says, small and grey, that an update
 is waiting:
@@ -102,9 +103,10 @@ each stops being looked for once found. Each can be switched off.
 it](docs/img/menu-update.png)
 
 **While an update runs** the panel says so instead of leaving stale artwork up,
-whether it is `update_all` or tty2oled+ updating itself. Under the message, in
+whether it is `update_all`, MiSTer's own updater (`update.sh` - what
+Zaparoo's Update runs) or tty2oled+ updating itself. Under the message, in
 small grey letters, is what the update is doing right now - for `update_all`
-the last line it printed on the MiSTer's screen, for tty2oled+ each step,
+and `update.sh` the last line it printed, for tty2oled+ each step,
 including a warning just before the display's firmware is flashed. Those
 screens arrive with the same transition everything else uses; the bar that
 runs during the download simply appears, since by then nothing is being
@@ -223,6 +225,7 @@ miss costs only the extra fields, and the title still shows.
 | 27 cartridge systems — NES, SNES, Mega Drive, Game Boy and Advance, N64, Master System, TurboGrafx-16, the Ataris, and more | title, region, year, publisher, genre, developer |
 | Neo Geo | title, year, publisher — from the MAME set, it being arcade hardware |
 | PlayStation, Saturn, Mega CD, 3DO, PC Engine CD | title and region only |
+| ScummVM | title, year, company, series, engine, platform, language — and each game's own icon |
 
 Disc systems are a limit of the source: the
 cartridge metadata sets carry release dates and publishers, and the disc set
@@ -230,8 +233,10 @@ carries neither.
 
 Arcade cores do not use the index at all — everything on the card is read
 straight out of the `.mra` file the core was started from. Nor do ScummVM
-games: ScummVM's own icon packs (`gui-icons-*.dat`) carry its games list,
-with each game's year, company, series and engine.
+games: their details come from ScummVM itself — its settings say which game
+is running, on which platform and in which language, and its icon packs
+(`gui-icons-*.dat`, already on your SD card) carry its games list and a
+picture for each game.
 
 Cores are named on screen the way your MiSTer menu names them, from `names.txt`
 if you have one.
@@ -395,9 +400,9 @@ sent over when it restarts, so nothing needs reflashing.
 | `TRANSITION_FADE_MS` | `800` | With `-2`: each fade, out and in. `0`–`4000` ms. |
 | `TRANSITION_BLANK_MS` | `1000` | With `-2`: how long the panel stays black between them. `0`–`4000` ms. |
 | `BOOTSCREEN_AS_MENU` | `yes` | The boot screen doubles as the menu's picture. `no` shows the artwork pack's `MENU` picture instead. |
-| `UPDATE_ALL_SCREEN` | `yes` | Say so on the panel while `update_all` runs. |
+| `UPDATE_ALL_SCREEN` | `yes` | Say so on the panel while `update_all` or MiSTer's own `update.sh` runs. |
 | `UPDATE_ALL_TEXT` | `Updating System ...` | What it says while the download is running. |
-| `UPDATE_ALL_DETAILS` | `yes` | Under that, the last line `update_all` printed on the MiSTer's screen. |
+| `UPDATE_ALL_DETAILS` | `yes` | Under that, the last line the updater printed. |
 | `UPDATE_DONE_TEXT` | `Update Complete` | What the message becomes when an update has finished. |
 | `UPDATE_FAILED_TEXT` | `Update Failed` | ...or when it reported errors. |
 | `UPDATE_DONE_SECS` | `3` | The least time that stays up before the core comes back. `0` skips it. |
@@ -405,7 +410,7 @@ sent over when it restarts, so nothing needs reflashing.
 | `UPDATE_CHECK_TTY2OLED` | `yes` | Look for a newer tty2oled+ release. |
 | `UPDATE_CHECK_SYSTEM` | `yes` | Look for something `update_all` would update. |
 | `UPDATE_CHECK_MINUTES` | `30` | How often to look for both, besides once at boot. `0` never looks. |
-| `UPDATE_NOTE_TEXT` | `TTY2OLED+ Update Available` | What the menu, MisterZine and Degauss say under their picture when a newer tty2oled+ is out. |
+| `UPDATE_NOTE_TEXT` | `TTY2OLED+ Update Available` | What the menu, MisterZine, Degauss and Zaparoo say under their picture when a newer tty2oled+ is out. |
 | `UPDATE_NOTE_SYSTEM_TEXT` | `System Update Available` | ...when `update_all` has something to update. |
 | `UPDATE_NOTE_BOTH_TEXT` | `TTY2OLED+ & System Update Available` | ...when both are waiting. |
 | `ROTATE` | `no` | Turn the whole display 180°. |
@@ -459,7 +464,7 @@ All of it lives under `/media/fat/tty2oledplus/pics/`, one kind per folder:
 
 | folder | what | size |
 |---|---|---|
-| `pics/banner` | console and computer core banners — the full-screen picture; the menu's, MisterZine's and Degauss's are 256x54 | 256x64 |
+| `pics/banner` | console and computer core banners — the full-screen picture; the menu's, MisterZine's, Degauss's and Zaparoo's are 256x54 | 256x64 |
 | `pics/icon` | the console icons, for the split layout | 86x64 |
 | `pics/arcade` | the arcade games' wheel logos, packed: `wheels.bin` and `wheels.idx` | 256x64 |
 | `pics/user` | **yours** | 256x64 |
@@ -471,7 +476,7 @@ put a picture of your own, rather than editing `pics/banner` and having the
 next release undo it. A file there named after the core — or, for an arcade
 game, after its MAME set, `sf2.gsc` — replaces the shipped one
 (`PRIORITIZE_USER_BANNERS`, on by default). A picture for the menu,
-MisterZine or Degauss is 256x54 — their bottom ten rows are the display's —
+MisterZine, Degauss or Zaparoo (`zaparoo.gsc`) is 256x54 — their bottom ten rows are the display's —
 and a 256x64 one is shown with those rows cut off.
 
 An arcade game is shown by its wheel logo, found by the set name in its
@@ -484,13 +489,16 @@ as text.
 ### Icons
 
 `pics/icon` holds the icon drawn for each system —
-26 of them, covering the systems most people play:
+27 of them, covering the systems most people play:
 
 > 3DO · Atari 2600 / 5200 / 7800 · Atari Lynx · Game Boy · Game Boy Color ·
 > Game Boy Advance · Game Gear · Genesis · Jaguar · Mega CD · Mega Drive ·
 > N64 · NES · Neo Geo · PlayStation · Saturn · Master System · SNES ·
 > 32X · TurboGrafx-16 · TurboGrafx-16 CD · Virtual Boy · WonderSwan ·
-> WonderSwan Color
+> WonderSwan Color · ScummVM
+
+ScummVM's stands in for a game's own icon until that has been converted,
+the first time the game is played.
 
 The twenty console cores without one still get the split layout and everything
 in it — just a black panel where the icon would be. To draw your own, work at

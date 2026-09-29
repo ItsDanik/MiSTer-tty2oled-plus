@@ -4,6 +4,49 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.7.5b — 2026-09-29
+
+- **Zaparoo gets its own screen.** Zaparoo's frontend replaces MiSTer's menu,
+  but the MiSTer still reports it as the menu, so the display showed the
+  menu's picture. It now shows `zaparoo.gsc` - the Zaparoo logo is included -
+  with the band under it for the update notices, like the menu, MisterZine
+  and Degauss.
+- **ScummVM games started from Zaparoo are recognised.** Zaparoo starts
+  ScummVM straight into the game, without ScummVM's Scripts launcher, and the
+  display stayed on Zaparoo's picture. The game now gets its details and icon,
+  as it does when started from ScummVM's own launcher.
+- **Updates run from Zaparoo get the update screen.** Zaparoo's Update runs
+  MiSTer's own updater (`update.sh`), which the display did not notice. It now
+  shows "Updating System ..." with the bar, what the updater is working on
+  under it, and "Update Complete" or "Update Failed" with the run time at the
+  end - the screens update_all gets. The same goes for `update.sh` run from
+  the Scripts menu.
+- **Zaparoo's NFC reader search no longer scrambles the display.** Zaparoo
+  looks for NFC readers by writing to every USB serial port, the display's
+  included, and did it again every time tty2oled+ had sent the display
+  something. That was "UUU" appearing on the panel, the update bar stopping,
+  a picture shifted sideways, and once a firmware flash failing. Now
+  tty2oled+ talks to the display in a way that lets Zaparoo check the port
+  once and leave it alone; the display ignores such stray bytes instead of
+  showing them; if another program does write to the display, everything is
+  redrawn two seconds later; and a firmware flash that fails part way is
+  tried once more.
+- **The display is found when USB numbers change.** With a Zaparoo reader or
+  any other USB serial adapter plugged in, Linux does not always call the
+  display `/dev/ttyUSB0`. tty2oled+ now remembers the display's USB identity
+  the first time it answers and finds it again under whatever number it gets
+  - without writing to any other device. A `/dev/serial/by-id/...` path set
+  in `TTYDEV` is used as it is.
+- **The update message stays put.** "Updating System ..." no longer moves up
+  and down as the line under it comes and goes.
+- The ScummVM icon is included: it stands in beside a ScummVM game until the
+  game's own icon has been converted, the first time it is played.
+
+This update is installed by 0.7.4b's updater, which still talks to the
+display the old way. With Zaparoo running, its reader search can interrupt
+the firmware flash; if Update says the flash did not complete, run Update
+again.
+
 ## 0.7.4b — 2026-09-29
 
 - **ScummVM games get the console layout.** Until now the display showed the
