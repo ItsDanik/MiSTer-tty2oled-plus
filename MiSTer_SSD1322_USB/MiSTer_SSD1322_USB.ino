@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.7.6b"
+#define BuildVersion "0.7.7b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -685,8 +685,10 @@ void loop(void) {
   // A command arriving is activity: the MiSTer is being used even if this
   // particular command draws nothing, so wake the panel before handling it.
   // Not the notice: it can arrive at any time, from a timer, and nobody is
-  // any more at the MiSTer for it.
-  if (updateDisplay && !newCommand.startsWith("CMDNOTE,")) meta_activity();
+  // any more at the MiSTer for it. Nor the header's caption, which changes
+  // when Super Attract Mode starts or stops - nobody is at it then either.
+  if (updateDisplay && !newCommand.startsWith("CMDNOTE,")
+      && !newCommand.startsWith("CMDHEAD,")) meta_activity();
 #endif
 
   if (updateDisplay) {                                                                                 // Proceed only if it's allowed because of new data from serial
@@ -917,6 +919,10 @@ void loop(void) {
 
     else if (newCommand.startsWith("CMDSCROLL,")) {                         // Marquee and description speeds
       meta_parseScroll(newCommand.c_str());
+    }
+
+    else if (newCommand.startsWith("CMDHEAD,")) {                           // The layouts' header caption
+      meta_parseHead(newCommand.c_str());
     }
 
     else if (newCommand=="CMDSHMETA") {                                     // Force the metadata view now
@@ -1659,6 +1665,9 @@ void oled_setfont(int font) {
     break;
     case 10:
       u8g2.setFont(u8g2_font_8bitclassic_tf);     // 8bitclassic
+    break;
+    case 11:
+      u8g2.setFont(u8g2_font_tenthinguys_tr);     // tenfatguys, narrower: a long header
     break;
 
     default:

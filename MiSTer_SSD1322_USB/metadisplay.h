@@ -47,6 +47,8 @@
   CMDICON         followed by ICON_BYTES raw bytes - 86x64 4bpp console icon
   CMDDESC,<n>     followed by n raw bytes - the description page's text
   CMDSCROLL,<h>,<v>  marquee and description speeds, pixels per second
+  CMDHEAD,<text>  the header's caption, the rest of the line; empty is
+                  "Now playing". Kept until changed
   CMDWRBOOT       followed by 6912 raw bytes - boot image, persisted to flash
   CMDCLRBOOT      forget the stored boot image, revert to the built-in logo
   CMDMETAOFF      leave metadata mode, back to plain picture display
@@ -91,8 +93,15 @@
 // Every gap is named because 64 rows is a tight budget and these are the
 // numbers to tune if the spacing looks wrong on glass. Each CON_GAP_* is the
 // number of blank pixel rows between one element and the next.
-#define CON_HEADER_TEXT  "Now playing"
+#define CON_HEADER_TEXT  "Now playing"   // unless CMDHEAD says otherwise
+#define META_HEAD_MAX    24             // CMDHEAD's text, in characters
 #define CON_HEADER_FONT  7              // tenfatguys, 10px
+// A caption too wide for it beside the pips - "Super Attract Mode" is 180px
+// in it, 146 in the narrower cut, 115 in luBS08 - takes the first that fits:
+// the same family narrower, then a smaller font, so it is never clipped where
+// either would do. "Now playing" always fits the first.
+#define CON_HEADER_FONT_NARROW 11       // tenthinguys, 10px
+#define CON_HEADER_FONT_SMALL  1        // luBS08
 #define CON_HEADER_Y     11             // header baseline
 #define CON_GAP_HEADER   1              // blank rows between header and rule
 #define CON_RULE_Y       (CON_HEADER_Y + CON_GAP_HEADER + 1)          // 13
@@ -268,6 +277,15 @@ bool      metaNeedsDraw    = false;
 // already on its way in - or already up - so it must not be drawn now, but it
 // does have to be drawn eventually or the panel beside the text stays black.
 bool          metaIconRedraw  = false;
+
+// The header above the rule, console and card: CMDHEAD,<text>, the rest of
+// the line. Empty is CON_HEADER_TEXT. The daemon's, like the band's notice -
+// kept across CMDMETAOFF and games, sent only when it changes (Super Attract
+// Mode running, then not). Arriving over a layout already up, it is redrawn
+// there once the panel is idle: the same picture with another caption, so a
+// cut, not a transition.
+char          metaHeader[META_HEAD_MAX + 1] = "";
+bool          metaHeadRedraw  = false;
 
 // Also set by a description arriving for a layout already on the panel: its
 // page adds a pip, so the same picture has to be drawn again.
@@ -644,6 +662,24 @@ static int meta_textWidth(const char *s) {
 // That is cheap here because these strings are short and only redrawn on a
 // scroll tick.
 // ---------------------------------------------------------------------------
+// What the header says: CMDHEAD's text, else "Now playing".
+static const char *meta_headerText(void) {
+  return metaHeader[0] ? metaHeader : CON_HEADER_TEXT;
+}
+
+static void meta_drawClipped(const char *s, int x, int y, int maxw, int offset);
+
+// The header's caption, in the first of its fonts it fits, maxw wide.
+static void meta_drawHeader(int x, int maxw) {
+  const char *s = meta_headerText();
+  oled_setfont(CON_HEADER_FONT);
+  if (meta_textWidth(s) > maxw) {
+    oled_setfont(CON_HEADER_FONT_NARROW);
+    if (meta_textWidth(s) > maxw) oled_setfont(CON_HEADER_FONT_SMALL);
+  }
+  meta_drawClipped(s, x, CON_HEADER_Y, maxw, 0);
+}
+
 static void meta_drawClipped(const char *s, int x, int y, int maxw, int offset) {
   char buf[META_MAX_VALUE + META_MAX_LABEL + 4];
   size_t n = strlen(s);
@@ -1043,8 +1079,7 @@ static void meta_renderCard(void) {
 
   u8g2.setForegroundColor(SSD1322_WHITE);
   u8g2.setBackgroundColor(SSD1322_BLACK);
-  oled_setfont(CON_HEADER_FONT);
-  meta_drawClipped(CON_HEADER_TEXT, CARD_MARGIN_X, CON_HEADER_Y, headWin, 0);
+  meta_drawHeader(CARD_MARGIN_X, headWin);
 
   for (int p = 0; p < pipCount; p++) {
     oled.fillRect(pipLeft + p * CON_PIP_STRIDE, CON_PIP_Y, CON_PIP_W, CON_PIP_H,
@@ -1176,16 +1211,15 @@ static void meta_renderConsole(void) {
   if (descPage) meta_drawDesc();
 
   // --- Header --------------------------------------------------------------
-  // Fixed caption rather than the game title: the title has moved below the
+  // A caption rather than the game title: the title has moved below the
   // rule where it gets a larger font and the full width of the column.
-  oled_setfont(CON_HEADER_FONT);
   u8g2.setForegroundColor(SSD1322_WHITE);
   u8g2.setBackgroundColor(SSD1322_BLACK);
 
   int pipCount = (pages > 1) ? (pages < CON_PIP_MAX ? pages : CON_PIP_MAX) : 0;
   int pipBlock = pipCount ? (pipCount * CON_PIP_STRIDE + 2) : 0;
 
-  meta_drawClipped(CON_HEADER_TEXT, tx, CON_HEADER_Y, tw - pipBlock, 0);
+  meta_drawHeader(tx, tw - pipBlock);
 
   // Page indicator, hard against the icon panel so it reads as belonging to
   // the header row. It used to sit along the bottom, which cost a field row.
@@ -1556,6 +1590,20 @@ bool meta_parseCoreBoot(const char *cmd) {
 }
 
 // ---------------------------------------------------------------------------
+// meta_parseHead - CMDHEAD,<text>: the header's caption; nothing after the
+// comma is "Now playing" again. Draws nothing here - see meta_tick.
+// ---------------------------------------------------------------------------
+void meta_parseHead(const char *cmd) {
+  const char *text = strchr(cmd, ',');
+  text = text ? text + 1 : "";
+  size_t o = 0;
+  for (; *text && o < META_HEAD_MAX; text++)
+    metaHeader[o++] = (*text >= 32 && *text < 127) ? *text : ' ';
+  metaHeader[o] = 0;
+  metaHeadRedraw = true;
+}
+
+// ---------------------------------------------------------------------------
 // meta_parseScroll - CMDSCROLL,<horizontal px/s>,<vertical px/s>
 //
 // The marquee's speed, and the description's. Pixels per second on the wire
@@ -1762,6 +1810,22 @@ bool meta_tick(void) {
   // out a hold that has long since run.
   if (coreBootHolding && coreBootSince == 0) coreBootSince = now;
 
+  // A new caption for a layout already on the panel: drawn again as it is.
+  // Not over the core's artwork or before the layout's own first draw, which
+  // will have it anyway; nor the card while its artwork is the picture.
+  if (metaHeadRedraw) {
+    metaHeadRedraw = false;
+    if (metaKind == MKIND_CONSOLE && !coreBootHolding && !metaNeedsDraw) {
+      meta_showConsole();
+      return true;
+    }
+    if (metaKind == MKIND_ARCADE && metaShowingCard) {
+      meta_renderCard();
+      oled.display();
+      return true;
+    }
+  }
+
   // Swap the layout's sides periodically so no part of the panel holds the
   // same lit pixels indefinitely. Console only: the arcade card and the
   // full-screen artwork already use the whole width.
@@ -1922,6 +1986,7 @@ void meta_showCard(int effect)    { (void)effect; }
 void meta_showPicture(int effect) { (void)effect; }
 void meta_showConsole(void)       { }
 void meta_transitionToConsole(int effect) { (void)effect; }
+void meta_parseHead(const char *cmd) { (void)cmd; }
 
 #endif  // HAS_METADISPLAY
 

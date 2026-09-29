@@ -97,6 +97,8 @@ settings_in() {  # settings_in <category>
 SHOW_METADATA|bool||Game details|Off shows only the core's artwork, as a display with no game information does.
 USE_NAMES_TXT|bool||Core names from names.txt|Name cores the way your MiSTer menu names them rather than by their internal name.
 COMPACT_YEAR_COMPANY|bool||Year and publisher on one row|"1989, Acclaim" on a single row instead of two.
+SAM_HEADER|bool||Say so during Super Attract Mode|While MiSTer SAM plays games by itself, the header above the game's details says so instead of "Now playing".
+SAM_HEADER_TEXT|text|24|What it says then|The header while Super Attract Mode runs.
 core_bootscreen_time|int|0 10000|Core boot screen (ms)|How long a console core's own artwork is held before the game's details replace it, when the core and the game are loaded together. 0 goes straight to the details.
 METADATA_INTERVAL|int|0 600|Seconds per page|How long each page of game details stays up, console and arcade. Arcade alternates the artwork with the info card's pages. A description page, console or arcade, stays until its text has scrolled through. 0 never turns a page.
 ROTATE|bool||Upside down|Turn the whole display 180 degrees, for a panel mounted the other way up.

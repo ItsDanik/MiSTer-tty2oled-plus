@@ -4,6 +4,23 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.7.7b — 2026-09-30
+
+- **Super Attract Mode says so.** While MiSTer SAM is playing games by
+  itself, the header above a game's details reads "Super Attract Mode"
+  instead of "Now playing" - console games and the arcade card alike.
+  Nothing else changes: the same artwork, icons and details. Pick up the
+  controller and take the game over, and it says "Now playing" again within
+  a couple of seconds. Settings, under "What the display shows", can turn it
+  off or change the words. Needs this release's firmware, which Update
+  installs.
+- **update_all from the Scripts menu no longer shows its bar too early.**
+  Started from the MiSTer's own Scripts menu, update_all's countdown - "Press
+  DOWN to continue now" - appeared under an "Updating System ..." bar as if
+  the update had begun, and stayed through the settings screen. The display
+  now keeps update_all's own screen until the update really starts, then
+  shows the bar and its progress as before.
+
 ## 0.7.6b — 2026-09-29
 
 What 0.7.5b was meant to deliver; that tag's release was never published,

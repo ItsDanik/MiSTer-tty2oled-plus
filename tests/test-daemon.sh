@@ -684,6 +684,27 @@ ok "a useful line under 200 rules and 300 DUPLICATED lines is still the line" \
 for f in "${TMP}/log.running" "${TMP}/log.success" "${TMP}/log.failed" "${TMP}/burst.log"; do
   ok "held back or taken in full, the same: ${f##*/}" "$(batched <"${f}")" "$(seqparse <"${f}")"
 done
+# update_all 2.11 from the Scripts menu, as it really writes it: the
+# sequence listed, then the countdown in front of the settings screen - in
+# bold - and only then, on a cleared screen, the sequence again and the run.
+E=$'\e'
+{ printf '%s\n' "--------- Update All 2.11 ----------" "" "Sequence:" "- Update All files" \
+    "- Main Distribution: MiSTer-devel" "" ""
+  printf ' %s[1m*%s[0mPress <%s[1mUP%s[0m>, To enter the SETTINGS.\n' "${E}" "${E}" "${E}" "${E}"
+  printf ' %s[1m*%s[0mPress <%s[1mDOWN%s[0m>, To continue now.\n\n' "${E}" "${E}" "${E}" "${E}"
+} >"${TMP}/countdown.log"
+ok "the countdown lists the sequence, but the run has not begun" \
+   "$(seqparse <"${TMP}/countdown.log" | cut -d'|' -f4)" "no"
+ok "and its prompt loses the terminal's escapes" \
+   "$(seqparse <"${TMP}/countdown.log" | cut -d'|' -f3)" "*Press <DOWN>, To continue now."
+cp "${TMP}/countdown.log" "${TMP}/countdown-run.log"
+printf '%s\n' "${E}[H${E}[JSequence:" "- Update All files" "" \
+  "####################################" "Running MiSTer Downloader" >>"${TMP}/countdown-run.log"
+ok "the sequence again, on a cleared screen: the run" \
+   "$(seqparse <"${TMP}/countdown-run.log" | cut -d'|' -f3,4)" "Running MiSTer Downloader|yes"
+for f in "${TMP}/countdown.log" "${TMP}/countdown-run.log"; do
+  ok "held back or taken in full, the same: ${f##*/}" "$(batched <"${f}")" "$(seqparse <"${f}")"
+done
 printf 'a\r\n  - Arcade Organizer  \r\nb\n' >"${TMP}/cr.log"
 ok "and with carriage returns" "$(batched <"${TMP}/cr.log")" "$(seqparse <"${TMP}/cr.log")"
 
@@ -736,9 +757,14 @@ ok "nor its Sequence" "${UA_MAIN}" "no"
 printf '%s\n' "Reading sections from /media/fat/downloader.ini" "" >"${LOG}.new"; mv "${LOG}.new" "${LOG}"
 pass
 ok "the countdown is not an update" "$(wire)" ""
+# 2.11 lists the sequence above its countdown: still only asking.
+cat "${TMP}/countdown.log" >>"${LOG}"
+pass
+ok "nor is the sequence listed above it" "$(wire)" ""
+ok "no bar for the countdown" "${UPDATEALL_BUSY}|${UA_MAIN}" "no|no"
 
-# The main run begins.
-printf '%s\n' "Sequence:" "- Main Distribution: MiSTer-devel" >>"${LOG}"
+# The main run begins, on a cleared screen.
+printf '%s\n' "${E}[H${E}[JSequence:" "- Main Distribution: MiSTer-devel" >>"${LOG}"
 pass
 ok "Sequence: the label, and its line" "$(wire)" "CMDBUSY,1,Updating System ...|CMDBUSYLINE,Main Distribution: MiSTer-devel|"
 pass
@@ -1578,6 +1604,63 @@ ok "and so is one handed back by sleep mode" "$(sed -n '/^sleepmode_pass()/,/^}/
 
 reset_checks
 PATH="${KEEP_PATH}"; TTYDEV="/dev/null"; NOTE_SENT="?"; FW_VERSION=""; unset PROC_ROOT
+
+# ---------------------------------------------------------------------------
+section "Super Attract Mode: the header says so while it plays"
+# ---------------------------------------------------------------------------
+#
+# SAM's loop, as a real MiSTer shows it: under the MCP's tmux, with the
+# subshells it forks sharing its command line.
+PROC_ROOT="${TMP}/samproc"; rm -rf "${PROC_ROOT}"; mkdir -p "${PROC_ROOT}"
+SAM_SCRIPT="${TMP}/MiSTer_SAM_on.sh"; rm -f "${SAM_SCRIPT}"
+HEADWIRE="${TMP}/headwire"; TTYDEV="${HEADWIRE}"; : >"${HEADWIRE}"
+hwire() { tr '\n' '|' <"${HEADWIRE}"; }
+mkproc 4698 tmux new-session -s MCP -d /media/fat/Scripts/.MiSTer_SAM/MiSTer_SAM_MCP
+mkproc 4707 /bin/bash /media/fat/Scripts/.MiSTer_SAM/MiSTer_SAM_MCP
+mkproc 21187 /bin/bash /media/fat/Scripts/MiSTer_SAM_on.sh loop_core
+SAM_PID=""
+sam_running; ok "SAM not installed: not looked for" "${?}|${SAM_PID}" "1|"
+: >"${SAM_SCRIPT}"
+sam_running; ok "installed and looping: running" "${?}|${SAM_PID}" "0|21187"
+rm -rf "${PROC_ROOT}/21187"
+mkproc 21251 /bin/bash /media/fat/Scripts/MiSTer_SAM_on.sh loop_core
+sam_running; ok "the one kept gone, a subshell of it will do" "${?}|${SAM_PID}" "0|21251"
+rm -rf "${PROC_ROOT}/21251"
+sam_running; ok "its MCP alone is not it" "${?}|${SAM_PID}" "1|"
+mkproc 22000 /bin/bash /media/fat/Scripts/MiSTer_SAM_on.sh stop
+sam_running; ok "nor SAM being told to stop" "${?}" "1"
+mkproc 22001 /bin/bash /media/fat/Scripts/MiSTer_SAM_on.sh loop_core
+# A pid SAM had, now another program's: read, not trusted.
+SAM_PID="22000"
+sam_running; ok "a kept pid is checked, not trusted" "${?}|${SAM_PID}" "0|22001"
+
+HEAD_SENT="?"; FW_VERSION="0.7.6b"; SAM_HEADER="yes"; unset SAM_HEADER_TEXT
+sam_pass
+ok "firmware before 0.7.7b is not told" "$(hwire)|${HEAD_SENT}" "|?"
+FW_VERSION="0.7.7b"
+sam_pass
+ok "SAM running: the header says so" "$(hwire)" "CMDHEAD,Super Attract Mode|"
+ok "and the wait polls, to see it stop" "${SAM_ON}" "yes"
+: >"${HEADWIRE}"; sam_pass
+ok "once" "$(hwire)" ""
+rm -rf "${PROC_ROOT}/22001"; sam_pass
+ok "SAM stopped: Now playing again" "$(hwire)${SAM_ON}" "CMDHEAD,|no"
+: >"${HEADWIRE}"; sam_pass
+ok "which is not said again" "$(hwire)" ""
+mkproc 22002 /bin/bash /media/fat/Scripts/MiSTer_SAM_on.sh loop_core
+SAM_HEADER_TEXT=$'Attract\001 mode, and a caption far too long'; sam_pass
+ok "SAM_HEADER_TEXT, printable, cut to 24" "$(hwire)" "CMDHEAD,Attract mode, and a capt|"
+SAM_HEADER="no"; sam_pass
+ok "SAM_HEADER=no: Now playing, SAM or not" "$(hwire)${SAM_ON}" "CMDHEAD,|no"
+SAM_HEADER="yes"; unset SAM_HEADER_TEXT
+ok "the shipped ini: on, and what it says" \
+   "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${SAM_HEADER}|${SAM_HEADER_TEXT}")" "yes|Super Attract Mode"
+ok "a display that comes back is told again" "$(sed -n '/^serialready()/,/^}/p' "${ROOT}/tty2oled.sh" | grep -c 'HEAD_SENT="?"')" "1"
+ok "and one handed back by sleep mode" "$(sed -n '/^sleepmode_pass()/,/^}/p' "${ROOT}/tty2oled.sh" | grep -c 'HEAD_SENT="?"')" "1"
+ok "and one another program wrote over" "$(sed -n '/^port_pass()/,/^}/p' "${ROOT}/tty2oled.sh" | grep -c 'HEAD_SENT="?"')" "1"
+ok "the metadata path looks every pass, before its pictures" \
+   "$(grep -A2 'if \[ "\${SHOW_METADATA}" = "yes" \]; then' "${ROOT}/tty2oled.sh" | grep -c '^ *sam_pass ')" "1"
+TTYDEV="/dev/null"; HEAD_SENT="?"; FW_VERSION=""; SAM_PID=""; SAM_ON="no"; unset PROC_ROOT
 
 # ---------------------------------------------------------------------------
 section "sleep mode: the display belongs to something else"

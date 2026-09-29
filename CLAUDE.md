@@ -240,7 +240,11 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   `printf -v`, `EPOCHREALTIME`. Older firmware: once a second. The file is the **previous run's** until
   update_all recreates it, so it is trusted only once its inode/mtime differs
   from when update_all was seen (`UA_LOG_REF`). `Sequence:` latches `UA_MAIN`:
-  the bar stays from there to the end, downloader or not. `Success!` /
+  the bar stays from there to the end, downloader or not - **but 2.11 lists
+  the sequence above its countdown too**, so the countdown's `To enter the
+  SETTINGS` unlatches it; the real run's `Sequence:` follows `ESC[H ESC[J`,
+  and `ua_clean` strips CSI escapes (the ESC alone left `[H[J` in front and
+  `[1m` in the line). `Success!` /
   `There were some errors in the Updaters` is the verdict -> `ua_done`
   (`CMDBUSY,0,<UPDATE_DONE_TEXT>` + "Finished in <run time>"), timed from
   there; on exit `ua_holddone` sleeps whatever is left of `UPDATE_DONE_SECS`
@@ -327,6 +331,18 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   `menu_frontend_possible` makes both waits poll every `UPDATE_ALL_POLL`s on
   MENU/degauss/zaparoo, since starting or quitting Degauss changes no state
   file.
+- **Super Attract Mode** (MiSTer SAM) changes only the header:
+  `SAM_HEADER_TEXT` in place of "Now playing" (`sam_pass`, metadata path,
+  every pass, before the pictures; `CMDHEAD` only on change, `HEAD_SENT="?"`
+  wherever `NOTE_SENT` is). Running = a `MiSTer_SAM_on.sh loop_core` process
+  (its tmux; subshells share the cmdline; pid kept and re-read) - not the MCP,
+  which always runs, and **not** the `MiSTer.ini` bind mount (SAM Video only,
+  seen outliving SAM). `play_or_exit` kills the loop when a button takes the
+  game over, writing no state file, so the wait polls every
+  `UPDATE_ALL_POLL`s while `SAM_ON`. No `MiSTer_SAM_on.sh` in Scripts, no
+  `/proc` grep. The caption takes the first header font it fits beside the
+  pips (`meta_drawHeader`: tenfatguys, tenthinguys, luBS08 - "Super Attract
+  Mode" is 180/146/115px, the console's window 166 minus 5 a pip + 2).
 - Console fields page every `METADATA_INTERVAL`s (`meta_pageDwellMs`; `0`
   never turns, so never reaches the description). Redraws only on movement.
 
@@ -513,6 +529,7 @@ send them). Additions, ESP32 only:
 | `CMDMSG,<effect>,<text>` | centred message, transitioned; text is the rest of the line |
 | `CMDCOR,<core>,<effect>,band` | a frontend's picture: 54 rows, band blacked, the notice composed in. Older firmware reads past `,band` (`toInt()`) |
 | `CMDNOTE,<text>` | the frontends' band notice, rest of the line, 51 columns; empty removes. Quiet; kept until changed (0.7.1b) |
+| `CMDHEAD,<text>` | the layouts' header caption, rest of the line, 24 kept; empty is "Now playing". Quiet, not activity; kept across `CMDMETAOFF`; a layout up is redrawn as it is (a cut) once idle (0.7.7b) |
 | `CMDFLIP,<s>` | side swap period; 0 disables |
 | `CMDDESC,<bytes>` | + that many raw bytes, printable ASCII, 2048 kept (`DESC_MAX`, same in daemon and importer - `test-scrape.py`), excess discarded. After `CMDMETA`, which clears it |
 | `CMDSCROLL,<h>,<v>` | marquee / description speeds, px/s, 1..200 / 1..100 |

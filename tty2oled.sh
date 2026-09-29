@@ -901,6 +901,7 @@ port_pass() {
   oldcore=""
   META_WIRE_LAST=""
   NOTE_SENT="?"
+  HEAD_SENT="?"
   UPDATEALL_SHOWN="no"
   UPDATEALL_BUSY="no"
 }
@@ -962,6 +963,7 @@ serialready() {
   UPDATEALL_SHOWN="no"
   UPDATEALL_BUSY="no"
   NOTE_SENT="?"
+  HEAD_SENT="?"
   return 1
 }
 
@@ -1090,6 +1092,7 @@ sleepmode_pass() {
   META_WIRE_LAST=""
   DEFERRED_DONE="no"
   NOTE_SENT="?"
+  HEAD_SENT="?"
   return 1
 }
 
@@ -1246,6 +1249,9 @@ SC_UA="no"          # update_all has been seen running since the last check
 SC_EPOCH=0          # bumped when update_all finishes; a check from before is stale
 SC_JOB_EPOCH=0
 NOTE_SENT="?"       # what the firmware was last told; "?" is nothing yet
+HEAD_SENT="?"       # the header's caption, the same way; "" is "Now playing"
+SAM_PID=""          # Super Attract Mode's loop, when last seen
+SAM_ON="no"         # ...and whether it was
 NOTE_COLS=51        # the band's width in 5x7
 
 # Run a check in the background: its first line of output and its exit code
@@ -1457,6 +1463,56 @@ sendnote() {
   echo "CMDNOTE,${text}" >${TTYDEV}
   cmdwait
   NOTE_SENT="${text}"
+}
+
+# Is MiSTer SAM's Super Attract Mode playing games by itself? Its loop is
+# "MiSTer_SAM_on.sh loop_core", in a tmux session, from when it starts to
+# when a button takes the game over (play_or_exit kills every
+# MiSTer_SAM_on.sh). Its MCP, which starts it after the idle time, runs
+# always and is not it. The MiSTer.ini SAM Video bind-mounts is no sign: only
+# SAM Video makes it, and it was seen outliving SAM.
+#
+# The pid is kept and re-read, so a pass with SAM running starts no process;
+# its subshells share the command line, so any of them will do.
+sam_loop() { case " ${*} " in *"MiSTer_SAM_on.sh loop_core "*) return 0 ;; esac; return 1; }
+SAM_SCRIPT="${SAM_SCRIPT:-/media/fat/Scripts/MiSTer_SAM_on.sh}"
+sam_running() {
+  local f args=()
+  [ -e "${SAM_SCRIPT}" ] || return 1          # not installed: no /proc to search
+  if [ -n "${SAM_PID}" ]; then
+    mapfile -d '' -t args <"${PROC_ROOT:-/proc}/${SAM_PID}/cmdline" 2>/dev/null
+    sam_loop "${args[@]}" && return 0
+    SAM_PID=""
+  fi
+  for f in $(grep -lsa -e '[M]iSTer_SAM_on[.]sh' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
+    args=(); mapfile -d '' -t args <"${f}" 2>/dev/null
+    if sam_loop "${args[@]}"; then f="${f%/cmdline}"; SAM_PID="${f##*/}"; return 0; fi
+  done
+  return 1
+}
+
+# The layouts' header: SAM_HEADER_TEXT while Super Attract Mode runs, else
+# "Now playing" (empty on the wire). Sent before the pass's pictures, so a
+# game SAM loads is drawn with it; on its own when SAM stops under a game.
+sam_pass() {
+  local want=""
+  SAM_ON="no"
+  if [ "${SAM_HEADER:-yes}" = "yes" ] && fw_atleast 0.7.7 && sam_running; then
+    SAM_ON="yes"
+    want="${SAM_HEADER_TEXT:-Super Attract Mode}"
+  fi
+  sendhead "${want}"
+}
+
+sendhead() {
+  local text="${1//[![:print:]]/}"             # every pass: no process for it
+  text="${text:0:24}"
+  [ "${text}" = "${HEAD_SENT}" ] && return 0
+  fw_atleast 0.7.7 || return 0
+  dbug "Sending: CMDHEAD,${text}"
+  echo "CMDHEAD,${text}" >${TTYDEV}
+  cmdwait
+  HEAD_SENT="${text}"
 }
 
 # The notice for what is waiting: one, the other, both, or none.
@@ -1713,7 +1769,9 @@ ua_logref() { stat -c '%i %Y' "${UA_PRINTLOG}" 2>/dev/null; }
 # One line of update_all's output into the run's state: UA_VERDICT (ok,
 # failed), UA_RUNTIME, UA_LINE - the last useful line - and the UA_MAIN latch,
 # which "Sequence:" sets: the main run has begun, and from there to the end is
-# all update, downloader or not. Rules, blank lines and the downloader's
+# all update, downloader or not - unless the countdown's "Press <UP>, To enter
+# the SETTINGS" follows, which update_all prints under a first listing of the
+# sequence (2.11) and which undoes it. Rules, blank lines and the downloader's
 # progress dots are not useful; nor are its DUPLICATED warnings, which come in
 # hundreds and say nothing about progress. A carriage return starts a line
 # over; anything but printable ASCII - a box drawn in UTF-8 - goes.
@@ -1729,13 +1787,17 @@ ua_takeline() {
     # log relays the same summary mid-run, with more to come after it.
     case "${seg}" in *" Run time: "*) [ "${UA_KIND:-}" = "downloader" ] && UA_DLSUM="yes" ;; esac
     case "${seg}" in
-      *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*)
+      *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*|*"To enter the SETTINGS"*)
         ua_clean "${seg}"; seg="${UA_TRIMMED}"
         case "${seg}" in
           Success!*) UA_VERDICT="ok" ;;
           "There were some errors in the Updaters"*) UA_VERDICT="failed" ;;
           "Update All "*) [[ "${seg}" =~ ${rt} ]] && UA_RUNTIME="${BASH_REMATCH[0]%.*}" ;;
           Sequence:*) UA_MAIN="yes" ;;
+          # The countdown in front of the settings screen: update_all lists
+          # the sequence first, then asks - the run has not begun. It lists
+          # it again, on a cleared screen, once it does.
+          *"To enter the SETTINGS"*) UA_MAIN="no" ;;
         esac ;;
       *) ua_clean "${seg}" ;;
     esac
@@ -1749,7 +1811,15 @@ ua_takeline() {
 # into UA_CLEAN as the status line would show it, or empty when it is not a
 # useful line.
 ua_clean() {
-  local seg="${1//[^ -~]/}"
+  local seg="${1}" head rest
+  # A terminal's escape sequences - bold, the screen cleared in front of the
+  # second "Sequence:" - are not text; the ESC alone would leave "[1m" behind.
+  while [[ "${seg}" == *$'\e['* ]]; do
+    head="${seg%%$'\e['*}"; rest="${seg#*$'\e['}"
+    rest="${rest#"${rest%%[!0-9;?]*}"}"
+    seg="${head}${rest:1}"
+  done
+  seg="${seg//[^ -~]/}"
   seg="${seg#"${seg%%[! ]*}"}"; seg="${seg%"${seg##*[! ]}"}"
   UA_TRIMMED="${seg}"; UA_CLEAN=""
   [ -n "${seg}" ] || return 0
@@ -1785,7 +1855,7 @@ ua_takecand() {
 # for ua_takecand. The two give what ua_takeline gives over every line.
 ua_feed() {
   case "${1}" in
-    *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*|*" Run time: "*|*$'\r'*)
+    *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*|*"To enter the SETTINGS"*|*" Run time: "*|*$'\r'*)
       ua_takecand; ua_takeline "${1}" ;;
     ""|DUPLICATED:*|"DEBUG|"*) ;;
     *) UA_CAND+=("${1}")
@@ -1874,7 +1944,7 @@ ua_absorb() {
   local IFS=$'\n' all
   all="${UA_NEW[*]}"
   case "${all}" in
-    *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*|*" Run time: "*|*$'\r'*)
+    *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*|*"To enter the SETTINGS"*|*" Run time: "*|*$'\r'*)
       for l in "${UA_NEW[@]}"; do ua_feed "${l}"; done ;;
     *) UA_CAND+=("${UA_NEW[@]}") ;;
   esac
@@ -2213,6 +2283,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
         updateall_pass && { deferred_setup; continue; }
         readcore; newcore="${CURCORE}"			  # get CORENAME, or Degauss/Zaparoo over MENU
         if [ "${SHOW_METADATA}" = "yes" ]; then
+          sam_pass                                # the header, before the pictures
           # Metadata mode. Loading a ROM does not modify /tmp/CORENAME, so
           # watching that file alone never notices a game change - which is
           # why the display used to sit on the core screen forever. Watch the
@@ -2238,6 +2309,9 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
           # Shorter while Degauss could come or go, which changes none of them.
           mpoll="${METADATA_POLL:-5}"
           menu_frontend_possible && mpoll="${UPDATE_ALL_POLL:-2}"
+          # And while SAM runs, which ends with no state file written when a
+          # button takes the game over: the header goes back within seconds.
+          [ "${SAM_ON}" = "yes" ] && mpoll="${UPDATE_ALL_POLL:-2}"
           # Not shorter for ScummVM, though nothing is written when a game goes
           # back to its launcher: a pass costs ~190ms of CPU on the DE10, and
           # ScummVM runs on the same two cores. The ini's folder is watched, so

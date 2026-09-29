@@ -120,6 +120,7 @@ void oled_setfont(int font) {
     case 8:  u8g2.setFont(u8g2_font_7Segments_26x42_mn); break;
     case 9:  u8g2.setFont(u8g2_font_commodore64_tr);     break;
     case 10: u8g2.setFont(u8g2_font_8bitclassic_tf);     break;
+    case 11: u8g2.setFont(u8g2_font_tenthinguys_tr);     break;
     default: u8g2.setFont(u8g2_font_tenfatguys_tr);      break;
   }
 }
@@ -338,6 +339,15 @@ int main(int argc, char **argv) {
                 "CMDMETA,2,0,1,Castlevania Aria of Sorrow"
                 "|System=Game Boy Advance|Year=2003|Company=Konami|Region=USA|Format=gba",
                 "pics/icon/GBA.gsc");
+
+  // A ScummVM game's first page: the CMDMETA the daemon sent for Fate of
+  // Atlantis on the MiSTer, and the icon it converted from ScummVM's icon pack
+  // (cache/scummvm/icons/scumm-atlantis.gsc there).
+  scene_console("console-scummvm",
+                "CMDMETA,2,12,1,0,Indiana Jones and the Fate of Atlantis"
+                "|System=ScummVM|Year=1992  LucasArts|Platform=DOS|Engine=SCUMM"
+                "|Language=English|Series=Indiana Jones",
+                "tools/screenshots/scumm-atlantis.gsc");
 
   // The description page, three pixels into its scroll.
   scene_description("console-description",

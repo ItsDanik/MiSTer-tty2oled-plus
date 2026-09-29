@@ -73,11 +73,12 @@ void oled_drawlogo(uint8_t e) {
     if (e == 0) { oled_renderlogo(); oled.display(); }
 }
 
-// Two widths, so a test can tell the fonts apart by what they measure: the
-// 5x7 field font, and everything else.
+// Widths a test can tell the fonts apart by: the 5x7 field font, the
+// header's narrower and smaller fallbacks, and everything else.
 void oled_setfont(int font)   {
     lastFontSet = font;
-    u8g2.charW = (font == 0) ? 5 : 8;
+    u8g2.charW = (font == 0) ? 5 : (font == CON_HEADER_FONT_NARROW) ? 7
+               : (font == CON_HEADER_FONT_SMALL) ? 6 : 8;
     u8g2.fontAscent = (font == 0) ? 7 : 11;
 }
 
@@ -3607,6 +3608,127 @@ int main() {
         oled.resetProbe();
         meta_setDesc("Text.", 5);
         okBool("not before the layout's own first draw", oled.displayCalls == 0 && !metaIconRedraw, true);
+        meta_reset();
+    }
+
+    section("CMDHEAD: the header's caption, console and card");
+    {
+        const char *SAM = "Super Attract Mode";
+        meta_parseHead((std::string("CMDHEAD,") + SAM).c_str());
+        meta_parse("CMDMETA,2,0,Sonic|System=Mega Drive");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        okBool("the console says it",            u8g2.find(SAM) != nullptr, true);
+        okBool("in place of Now playing",        u8g2.find(CON_HEADER_TEXT) == nullptr, true);
+        const FakeU8g2::Draw *h = u8g2.find(SAM);
+        if (h) okInt("at the header's baseline",  h->y, CON_HEADER_Y);
+        okBool("the rest as it was",             u8g2.find("Sonic") && u8g2.find("System"), true);
+
+        meta_parse("CMDMETA,1,12,NBA Jam|Year=1993|Manufctr=Midway");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderCard();
+        okBool("the card says it",               u8g2.find(SAM) != nullptr, true);
+
+        // The most pages a card can have: the caption still whole beside
+        // their pips, as Now playing is.
+        std::string cmd = "CMDMETA,1,12,Game";
+        for (int i = 0; i < META_MAX_FIELDS; i++) {
+            char seg[32];
+            snprintf(seg, sizeof(seg), "|L%02d=V%02d", i, i);
+            cmd += seg;
+        }
+        meta_parse(cmd.c_str());
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderCard();
+        ok    ("whole beside every pip", u8g2.draws[0].text, SAM);
+        okBool("and clear of them",
+               u8g2.draws[0].x + (int)strlen(SAM) * u8g2.draws[0].charW <= oled.rects[0].x, true);
+
+        // The console with the most pips: too wide for the header font and
+        // its narrower cut there, so the smaller one - whole, not clipped.
+        cmd = "CMDMETA,2,0,3,Game";
+        for (int i = 0; i < 12; i++) {
+            char seg[32];
+            snprintf(seg, sizeof(seg), "|L%02d=V%02d", i, i);
+            cmd += seg;
+        }
+        meta_parse(cmd.c_str());
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        ok    ("eight pips: still whole",            u8g2.draws[0].text, SAM);
+        okInt ("in the smaller font",                u8g2.draws[0].charW, 6);
+        okBool("short of the pips",
+               u8g2.draws[0].x + (int)strlen(SAM) * u8g2.draws[0].charW <= oled.rects[0].x, true);
+        meta_parse("CMDMETA,2,0,3,Game|A=1|B=2|C=3|D=4|E=5");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        okInt ("two pips: the header font itself",   u8g2.draws[0].charW, 8);
+        meta_parseHead("CMDHEAD,");
+        meta_parse(cmd.c_str());
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        ok    ("Now playing beside eight pips",      u8g2.draws[0].text, CON_HEADER_TEXT);
+        okInt ("in the header font, as ever",        u8g2.draws[0].charW, 8);
+        meta_parseHead((std::string("CMDHEAD,") + SAM).c_str());
+
+        // Kept across CMDMETAOFF and the next game: the daemon sends it only
+        // when it changes.
+        meta_reset();
+        meta_parse("CMDMETA,2,0,Sonic|System=Mega Drive");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        okBool("kept across CMDMETAOFF", u8g2.find(SAM) != nullptr, true);
+
+        meta_parseHead("CMDHEAD,");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        okBool("nothing after the comma is Now playing again",
+               u8g2.find(CON_HEADER_TEXT) != nullptr && u8g2.find(SAM) == nullptr, true);
+
+        meta_parseHead("CMDHEAD,An\x01overlong caption that runs on and on");
+        ok    ("cut to META_HEAD_MAX, printable only", metaHeader,
+               std::string("An overlong caption that runs on and on").substr(0, META_HEAD_MAX));
+        okBool("quiet: the boot screen, bar and band stay", boot_quietCommand("CMDHEAD,x"), true);
+        meta_parseHead("CMDHEAD,");
+        meta_reset();
+    }
+
+    section("CMDHEAD over a layout already up: redrawn there, once idle");
+    {
+        const char *SAM = "Super Attract Mode";
+        meta_parse("CMDMETA,2,0,Sonic|System=Mega Drive");
+        metaNeedsDraw = false; coreBootHolding = false; metaIconRedraw = false;
+        transition_cancel();
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_parseHead((std::string("CMDHEAD,") + SAM).c_str());
+        okBool("nothing drawn as it arrives", oled.displayCalls == 0 && u8g2.draws.empty(), true);
+        okBool("the next tick draws it",      meta_tick(), true);
+        okBool("with the new caption",        u8g2.find(SAM) != nullptr, true);
+        okBool("the same layout under it",    u8g2.find("Sonic") && u8g2.find("System"), true);
+        okBool("a cut, not a transition",     tfState == TF_IDLE, true);
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_tick();
+        okBool("once",                        u8g2.find(SAM) == nullptr, true);
+
+        // Before the layout's own first draw, that draw has it.
+        meta_parse("CMDMETA,2,0,Sonic|System=Mega Drive");
+        meta_parseHead("CMDHEAD,");
+        okBool("not before the first draw, which is the layout's own",
+               meta_tick() && !metaNeedsDraw, true);
+        transition_cancel();
+
+        // The card: redrawn while it is the picture, not over its artwork.
+        meta_parse("CMDMETA,1,0,NBA Jam|Year=1993");
+        metaShowingCard = false;
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_parseHead((std::string("CMDHEAD,") + SAM).c_str());
+        meta_tick();
+        okBool("not over the card's artwork", oled.displayCalls == 0, true);
+        metaShowingCard = true;
+        meta_parseHead("CMDHEAD,");
+        u8g2.resetProbe(); oled.resetProbe();
+        okBool("the card, while it is up",    meta_tick(), true);
+        okBool("drawn again, Now playing",    u8g2.find(CON_HEADER_TEXT) != nullptr && oled.displayCalls > 0, true);
         meta_reset();
     }
 

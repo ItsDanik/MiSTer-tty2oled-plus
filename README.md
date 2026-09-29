@@ -70,6 +70,10 @@ banner returns within ten seconds. The exception is the older Sierra games
 (AGI), which give no sign of it, so their details stay up until you pick
 another game or quit.
 
+![Indiana Jones and the Fate of Atlantis: ScummVM, the year and LucasArts,
+DOS and SCUMM under the title, the game's icon
+beside them](docs/img/console-scummvm.png)
+
 **Computer cores** show the core's artwork full-screen, and nothing else, yet.  
 Computer metadata support coming in the future.
 
