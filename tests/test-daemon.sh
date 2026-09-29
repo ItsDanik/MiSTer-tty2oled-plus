@@ -1252,7 +1252,10 @@ port_pass; ok "once" "${oldcore}" "SNES"
 # Writing through the device itself - no node could be made - the device's
 # time is ours, and our node is tried for again, once a minute.
 eval "keep_ttyalias() $(declare -f ttyalias | tail -n +2)"
-ALIASES=0; ttyalias() { ALIASES=$(( ALIASES + 1 )); }
+# Defined through eval, as the daemon's own functions are here. Written out,
+# it is the only ttyalias the linter sees, and every call above it is SC2218
+# - which CI's older shellcheck reports and 0.11 does not (spent v0.7.5b).
+ALIASES=0; eval 'ttyalias() { ALIASES=$(( ALIASES + 1 )); }'
 TTYDEV="${TTYPORT}"; PORT_RETRY_AT=0
 port_pass; port_pass
 ok "through the device: our node tried again, not every pass" "${ALIASES}" "1"
