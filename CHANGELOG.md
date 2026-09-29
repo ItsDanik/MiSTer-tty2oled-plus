@@ -4,6 +4,30 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.7.3b — 2026-09-29
+
+- **update_all's status line keeps up.** The small grey line under
+  "Updating System ..." now follows what update_all prints ten times a
+  second instead of once, so the files the downloader is fetching tick past
+  as they do on the MiSTer's own screen. It costs less than the old
+  once-a-second look did: the daemon now keeps the log open and reads only
+  what is new, without starting a single program to do it (on the DE10 that
+  had cost a tenth of a second each time). Needs the new firmware, which
+  takes the line without the pause every other command gets - on an older
+  one the line moves once a second, as before.
+- **The update notice no longer goes missing after a flash or a replug.**
+  The daemon asks the display which firmware it runs, and a display still
+  restarting - straight after a flash, or plugged back in - did not answer;
+  the daemon then never asked again, and until it was restarted it sent
+  neither the update notice nor update_all's status line. It now asks again
+  every 10 seconds, up to five times.
+- **Scrape metadata no longer imports a drive's gamelists twice.** MiSTer
+  can mount one USB drive at two places - the same SSD as both usb0 and usb1
+  - and every gamelist.xml on it was found once through each. Each file is
+  now read once, however many places it can be reached from.
+- Games on `/media/usb6` and `/media/usb7` are looked for too: MiSTer mounts
+  up to eight USB drives, and `GAME_ROOTS` stopped at the sixth.
+
 ## 0.7.2b — 2026-09-28
 
 - **The menu says when update_all has something for you, too.** `System

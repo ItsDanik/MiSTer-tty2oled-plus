@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.7.2b"
+#define BuildVersion "0.7.3b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -978,7 +978,12 @@ void loop(void) {
     }  // end ifs
 
     if (sendTTYACK) {                                 // Send ACK?
-      delay(cDelay);                                    // Command Response Delay
+      // Not for the busy screen's status line. The daemon sends one up to ten
+      // times a second while an update runs and never reads the answer, and
+      // this delay stops loop() - the bar freezes for it every time. The ack
+      // itself still goes, so anything counting them counts this one too.
+      if (!newCommand.startsWith("CMDBUSYLINE,"))
+        delay(cDelay);                                  // Command Response Delay
       Serial.print("ttyack;");                        // Handshake with delimiter; MiSTer: "read -d ";" ttyresponse < ${TTYDEVICE}"
     }
     // Serial.flush();                                // Wait for sendbuffer is clear

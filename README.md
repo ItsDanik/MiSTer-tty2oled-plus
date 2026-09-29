@@ -393,7 +393,7 @@ sent over when it restarts, so nothing needs reflashing.
 | `ROTATE` | `no` | Turn the whole display 180°. |
 | `USE_NAMES_TXT` | `yes` | Name cores as your MiSTer menu names them. |
 | `PRIORITIZE_USER_BANNERS` | `yes` | Look in `pics/user` before the shipped banners and arcade logos, so a picture you put there replaces the shipped one. `no` searches the shipped artwork first. |
-| `GAME_ROOTS` | SD, `usb0`–`usb5`, `cifs` | Where your games live, searched in order. |
+| `GAME_ROOTS` | SD, `usb0`–`usb7`, `cifs` | Where your games live, searched in order. |
 
 `coretypes.ini`, in the same folder, says which cores are consoles, which are
 computers and which are arcade. It is only installed when you do not already

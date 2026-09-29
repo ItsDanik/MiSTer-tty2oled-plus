@@ -914,6 +914,13 @@ ok "CMDAPD stores the picture and draws nothing" \
    "oled_readlogo();"
 ok "CMDCOR composes the layout only for a console with no hold armed" \
    "$(grep -c 'if (metaKind==MKIND_CONSOLE && !coreBootHolding) {' "${INO}")" "1"
+# The status line comes ten times a second, and the ack delay stops loop():
+# it is acknowledged at once, and it alone.
+ACK="$(sed -n '/if (sendTTYACK) {  *\/\/ Send ACK?/,/^    }/p' "${INO}" | grep -v '^ *//' | tr -s ' ')"
+ok "CMDBUSYLINE is acknowledged without the delay, and only it" \
+   "$(printf '%s\n' "${ACK}" | grep -B1 'delay(cDelay);' | tr '\n' '~')" \
+   ' if (!newCommand.startsWith("CMDBUSYLINE,"))~ delay(cDelay); // Command Response Delay~'
+ok "and the acknowledgement itself still goes" "$(printf '%s\n' "${ACK}" | grep -c 'Serial.print("ttyack;")')" "1"
 
 # ---------------------------------------------------------------------------
 section "BOOTSCREEN_AS_MENU: the menu asks for the boot screen, and sends no picture"

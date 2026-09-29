@@ -658,6 +658,31 @@ printf '%s\n' "Update All 2.11 by theypsilon 01:02:03.00s 2026-09-28" "" \
 ok "or it failed, and an hour-long run keeps its hours" \
    "$(ua_parselog <"${TMP}/log.failed" | sed -n 1,2p | tr '\n' '|')" "failed|01:02:03|"
 
+# The follower works over only the lines that can matter (ua_feed); it has
+# to come to what taking every line in full would.
+seqparse() {
+  local LC_ALL=C UA_VERDICT="" UA_RUNTIME="" UA_LINE="" UA_MAIN="" l
+  while IFS= read -r l || [ -n "${l}" ]; do ua_takeline "${l}"; done
+  printf '%s|%s|%s|%s' "${UA_VERDICT}" "${UA_RUNTIME}" "${UA_LINE}" "${UA_MAIN}"
+}
+batched() {
+  local LC_ALL=C UA_VERDICT="" UA_RUNTIME="" UA_LINE="" UA_MAIN="" UA_CAND=() l
+  while IFS= read -r l || [ -n "${l}" ]; do ua_feed "${l}"; done
+  ua_takecand
+  printf '%s|%s|%s|%s' "${UA_VERDICT}" "${UA_RUNTIME}" "${UA_LINE}" "${UA_MAIN}"
+}
+{ printf '%s\n' "Sequence:" "- Main Distribution: MiSTer-devel" "_Arcade/cores/Useful_20260929.rbf"
+  for i in $(seq 200); do printf '%s\n' "########################################################################"; done
+  for i in $(seq 300); do printf 'DUPLICATED: _Arcade/Many %s.mra in [a, b] [using a instead]\n' "${i}"; done
+  printf '  ....*.. \n\n'; } >"${TMP}/burst.log"
+ok "a useful line under 200 rules and 300 DUPLICATED lines is still the line" \
+   "$(batched <"${TMP}/burst.log")" "||_Arcade/cores/Useful_20260929.rbf|yes"
+for f in "${TMP}/log.running" "${TMP}/log.success" "${TMP}/log.failed" "${TMP}/burst.log"; do
+  ok "held back or taken in full, the same: ${f##*/}" "$(batched <"${f}")" "$(seqparse <"${f}")"
+done
+printf 'a\r\n  - Arcade Organizer  \r\nb\n' >"${TMP}/cr.log"
+ok "and with carriage returns" "$(batched <"${TMP}/cr.log")" "$(seqparse <"${TMP}/cr.log")"
+
 LONG="_Arcade/cores/some/deep/folder/Arcade-NamcoS2_SG_20260927.rbf"
 ok "a long path keeps its end" "$(ua_shorten "${LONG}")" ".../some/deep/folder/Arcade-NamcoS2_SG_20260927.rbf"
 ok "at the status line's 51 columns" "$(ua_shorten "${LONG}" | wc -c | tr -d ' ')" "51"
@@ -728,8 +753,9 @@ printf '%s\n' "Running Arcade Organizer" >>"${LOG}"
 pass
 ok "the downloader done, the update is not: the label stays" "$(wire)" "CMDBUSYLINE,Running Arcade Organizer|"
 
-# The verdict: the label becomes the finish, the bar runs off.
-cp "${TMP}/log.success" "${LOG}"
+# The verdict: the label becomes the finish, the bar runs off. Appended, as
+# update_all writes it.
+tail -n 7 "${TMP}/log.success" >>"${LOG}"
 pass
 ok "success: Update Complete, and the run time under it" "$(wire)" \
    "CMDBUSY,0,Update Complete,-2|CMDBUSYLINE,Finished in 00:49|"
@@ -814,6 +840,80 @@ rm -rf "${PROC_ROOT}/500"
 T0="$(tenths)"; pass; T1="$(tenths)"
 ok "and no wait" "$(( T1 - T0 < 5 ))" "1"
 
+# ---------------------------------------------------------------------------
+# 0.7.3b: the line followed ten times a second, and nothing started to do it
+# ---------------------------------------------------------------------------
+# A writer appending a line every 100ms, as the downloader does - faster, in
+# truth. Started before anything else so its own processes are its own.
+writer() {  # writer <lines> [then]
+  ( for i in $(seq "${1}"); do printf '%s\n' "_Console/Core${i}_20260929.rbf" >>"${LOG}"; sleep 0.1; done
+    [ -n "${2:-}" ] && tail -n 7 "${TMP}/log.success" >>"${LOG}" ) &
+  WRITER=$!
+}
+busylines() { grep -ac '^CMDBUSYLINE,' "${WIRE}"; }
+
+UPDATE_ALL_POLL="1"
+uastart 0.7.0b
+writer 12; : >"${WIRE}"; pass; wait "${WRITER}"
+ok "firmware before 0.7.3b: one line a pass, as before" "$(busylines)" "1"
+
+uastart 0.7.3b
+writer 12; : >"${WIRE}"; pass; wait "${WRITER}"
+ok "0.7.3b: the line follows the log within the pass" "$(( $(busylines) >= 6 ))" "1"
+ok "the latest line, not a queue of them" "$(( $(busylines) <= 11 ))" "1"
+
+# Nothing is started while it follows: every command the daemon could reach
+# for is a logging stand-in on PATH for the length of it. The capture is a
+# FIFO with its reader already running, so the plumbing starts nothing either.
+FORKLOG="${TMP}/forks"; FORKBIN="${TMP}/forkbin"; rm -rf "${FORKBIN}"; mkdir -p "${FORKBIN}"
+for c in stat tail awk tr grep sleep cat date head sed wc cut printf; do
+  real="$(command -v "${c}")" || continue
+  printf '#!/bin/sh\necho %s >>"%s"\nexec %s "$@"\n' "${c}" "${FORKLOG}" "${real}" >"${FORKBIN}/${c}"
+  chmod +x "${FORKBIN}/${c}"
+done
+FIFO="${TMP}/wire-fifo"; rm -f "${FIFO}"; mkfifo "${FIFO}"
+( while :; do cat "${FIFO}"; done >>"${WIRE}" ) 2>/dev/null &
+READER=$!
+uastart 0.7.3b
+nap 0.01                                   # its pipe, set up once, outside the watch
+writer 8
+: >"${WIRE}"; : >"${FORKLOG}"
+KEEP="${PATH}"; PATH="${FORKBIN}:${PATH}"; KEEPTTY="${TTYDEV}"; TTYDEV="${FIFO}"
+T0="$(tenths)"; ua_follow 1000; T1="$(tenths)"
+PATH="${KEEP}"; TTYDEV="${KEEPTTY}"
+wait "${WRITER}"; sleep 0.3; kill "${READER}" 2>/dev/null; rm -f "${FIFO}"
+ok "following the log for a second starts no process" "$(tr '\n' ' ' <"${FORKLOG}")" ""
+ok "and sends the lines as they come" "$(( $(busylines) >= 5 ))" "1"
+ok "for the second it was given" "$(( T1 - T0 >= 9 && T1 - T0 <= 13 ))" "1"
+
+# The verdict ends it early, for the pass to put the finish up at once.
+uastart 0.7.3b
+writer 2 then
+T0="$(tenths)"; ua_follow 3000 >/dev/null; T1="$(tenths)"; wait "${WRITER}"
+ok "a verdict ends the follow at once" "$(( T1 - T0 < 15 ))|${UA_VERDICT}" "1|ok"
+
+# A line still being written waits for its newline.
+uastart 0.7.3b
+ua_readlog fast; BEFORE="${UA_LINE}"
+printf 'Installing abc' >>"${LOG}"; ua_readlog fast
+ok "half a line is not shown" "${UA_LINE}" "${BEFORE}"
+printf 'def\n' >>"${LOG}"; ua_readlog fast
+ok "the whole of it is, once it ends" "${UA_LINE}" "Installing abcdef"
+printf 'Last words' >>"${LOG}"; ua_readlog final
+ok "and a last line with no newline, when nothing more is coming" "${UA_LINE}" "Last words"
+
+# Replaced: another file at the path. Cut short: the same file, rewritten.
+uastart 0.7.3b
+printf '%s\n' "Sequence:" "Fresh line" >"${LOG}.new"; mv "${LOG}.new" "${LOG}"
+ua_readlog fast
+ok "a file replaced under it is opened again, from the start" "${UA_LINE}" "Fresh line"
+printf 'Short\n' >"${LOG}"
+ua_readlog fast
+ok "one cut short is not noticed on a quick look" "${UA_LINE}" "Fresh line"
+ua_readlog slow
+ok "but is on the once-a-second one" "${UA_LINE}" "Short"
+UPDATE_ALL_POLL="0"
+
 uareset
 mv "${TMP}/update_all.gsc.away" "${bannerfolder}/update_all.gsc"
 UA_RUN="no"; UA_DONE_AT=""; TTYDEV="${WIRE}"
@@ -878,6 +978,46 @@ SELFUPDATE_SHOWN="no"
 
 ok "the daemon's wait times out for it even with the update_all screen off" \
    "$(grep -c 'SELF_UPDATE_SCREEN:-yes}" = "yes" \] || degauss_possible' "${ROOT}/tty2oled.sh")" "1"
+
+# ---------------------------------------------------------------------------
+section "the firmware's version, asked again when the display was not ready"
+# ---------------------------------------------------------------------------
+# checkversion itself, on a port that never answers: quiet says nothing.
+ok "no answer: said, the first time" \
+   "$(TTYDEV=/dev/null checkversion 2>&1 | grep -c 'did not answer')" "1"
+ok "and not on a quiet retry" "$(TTYDEV=/dev/null checkversion quiet 2>&1)" ""
+
+# The retries, with checkversion answering from a list: "" is no answer.
+ANSWERS=()
+ASKED=0
+checkversion() { ASKED=$((ASKED + 1)); FW_VERSION="${ANSWERS[0]:-}"; ANSWERS=("${ANSWERS[@]:1}"); }
+FW_VERSION=""; DEFERRED_DONE="yes"; FW_ASKS=1; FW_ASK_AT=$(( $(date +%s) + FW_ASK_SECS ))
+fw_pass
+ok "not asked again before FW_ASK_SECS" "${ASKED}" "0"
+FW_ASK_AT=0; ANSWERS=("")
+fw_pass
+ok "then asked" "${ASKED}" "1"
+ok "no answer again: the next try FW_ASK_SECS away" "$(( FW_ASK_AT - $(date +%s) ))" "${FW_ASK_SECS}"
+FW_ASK_AT=0; ANSWERS=("0.7.3b")
+fw_pass
+ok "an answer is kept" "${FW_VERSION}" "0.7.3b"
+FW_ASK_AT=0; fw_pass; fw_pass
+ok "and not asked for again" "${ASKED}" "2"
+
+FW_VERSION=""; FW_ASKS=1; ASKED=0
+MSG="$(for i in 1 2 3 4 5 6; do FW_ASK_AT=0; ANSWERS=(""); fw_pass; done; echo "asked ${ASKED}")"
+ok "at most FW_ASK_MAX tries in all" "${MSG##*asked }" "$(( FW_ASK_MAX - 1 ))"
+ok "then it says so, once" "$(printf '%s\n' "${MSG}" | grep -c 'never said which firmware')" "1"
+FW_VERSION=""; FW_ASKS=1; FW_ASK_AT=0; DEFERRED_DONE="no"; ASKED=0
+fw_pass
+ok "not before the startup handshake has asked once itself" "${ASKED}" "0"
+ok "which starts the count again" \
+   "$(sed -n '/^deferred_setup()/,/^}/p' "${ROOT}/tty2oled.sh" | grep -c 'FW_ASKS=1; FW_ASK_AT=')" "1"
+ok "and the loop asks, before the notice that needs the answer" \
+   "$(grep -A4 'if ! sleepmode_pass; then' "${ROOT}/tty2oled.sh" | grep -A2 '^ *fw_pass$' | grep -c '^ *updatenote_pass$')" "1"
+unset -f checkversion
+eval "$(sed -n '/^checkversion() {/,/^}/p' "${ROOT}/tty2oled.sh")"
+FW_VERSION=""; DEFERRED_DONE="no"
 
 # ---------------------------------------------------------------------------
 section "Degauss: a frontend over the menu core, found by its process"
@@ -1027,7 +1167,8 @@ ok "and shown nowhere" "$(wire)" ""
 reset_checks; FAKE_CURL_RC=6; SC_NEXT=$(( $(nowish) + 999 ))
 updatenote_pass; settle; updatenote_pass
 ok "offline: nothing flagged" "$(yesno_e "${UPDATE_FLAG}")" "no"
-ok "and tried again in five minutes" "$(( UC_NEXT - $(nowish) ))" "${UC_RETRY_SECS}"
+left=$(( UC_NEXT - $(nowish) ))
+ok "and tried again in five minutes" "$(( left >= UC_RETRY_SECS - 1 && left <= UC_RETRY_SECS ))" "1"
 FAKE_CURL_RC=0
 
 reset_checks; FAKE_CURL_SLEEP=30; SC_NEXT=$(( $(nowish) + 999 ))
@@ -1035,7 +1176,8 @@ updatenote_pass; STUCK="${BG_PID[uc]}"
 BG_STARTED[uc]=$(( $(nowish) - BG_GIVEUP_uc - 1 ))
 updatenote_pass
 ok "a check stuck past its limit is stopped" "$(kill -0 "${STUCK}" 2>/dev/null && echo alive || echo gone)" "gone"
-ok "and retried like a failure" "$(( UC_NEXT - $(nowish) ))" "${UC_RETRY_SECS}"
+left=$(( UC_NEXT - $(nowish) ))
+ok "and retried like a failure" "$(( left >= UC_RETRY_SECS - 1 && left <= UC_RETRY_SECS ))" "1"
 FAKE_CURL_SLEEP=0
 
 section "updates waiting: the system"
@@ -1093,7 +1235,8 @@ ok "update_all never ran: nothing flagged" "${SC_FLAGGED}" ""
 ok "looked at again an interval later" "$(( SC_NEXT - $(nowish) > 29 * 60 ))" "1"
 reset_checks; UC_NEXT=$(( $(nowish) + 999 )); FAKE_SC="error none of 65 databases could be reached"
 updatenote_pass; settle; updatenote_pass
-ok "offline: tried again in five minutes" "$(( SC_NEXT - $(nowish) ))" "${UC_RETRY_SECS}"
+left=$(( SC_NEXT - $(nowish) ))
+ok "offline: tried again in five minutes" "$(( left >= UC_RETRY_SECS - 1 && left <= UC_RETRY_SECS ))" "1"
 
 section "updates waiting: the switches and the words"
 reset_checks; FAKE_LATEST="0.7.2b"; FAKE_SC="yes a: b"
@@ -1133,9 +1276,9 @@ ok "and the three messages" \
 # The loop runs it on every pass that owns the port, and the upstream path's
 # wait polls for it.
 ok "the main loop runs it first thing after sleep mode" \
-   "$(grep -A2 'if ! sleepmode_pass; then' "${ROOT}/tty2oled.sh" | grep -c '^ *updatenote_pass$')" "1"
+   "$(grep -A4 'if ! sleepmode_pass; then' "${ROOT}/tty2oled.sh" | grep -c '^ *updatenote_pass$')" "1"
 ok "and the upstream path's wait on every timeout" \
-   "$(grep -A1 '\[ "\$?" -eq 2 \] || break' "${ROOT}/tty2oled.sh" | grep -c '^ *updatenote_pass$')" "1"
+   "$(grep -A2 '\[ "\$?" -eq 2 \] || break' "${ROOT}/tty2oled.sh" | grep -c '^ *updatenote_pass$')" "1"
 ok "which times out for it" "$(grep -c '|| update_check_on TTY2OLED || update_check_on SYSTEM; }' "${ROOT}/tty2oled.sh")" "1"
 ok "a display that comes back is told again" "$(sed -n '/^serialready()/,/^}/p' "${ROOT}/tty2oled.sh" | grep -c 'NOTE_SENT="?"')" "1"
 ok "and so is one handed back by sleep mode" "$(sed -n '/^sleepmode_pass()/,/^}/p' "${ROOT}/tty2oled.sh" | grep -c 'NOTE_SENT="?"')" "1"

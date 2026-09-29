@@ -589,7 +589,7 @@ sendflip() {
 # actually are. The firmware answers CMDHWINF with "HW<board>;<version>;" and
 # acknowledges every other command with "ttyack;", so read ';'-delimited
 # tokens - upstream's own idiom - until the board id turns up.
-checkversion() {
+checkversion() {  # checkversion [quiet] - quiet: say nothing if there is no answer
   local tok="" fwver="" tries=0
   exec 3<"${TTYDEV}" || { dbug "Cannot open ${TTYDEV} for reading"; return 0; }
   echo "CMDHWINF" >${TTYDEV}
@@ -609,7 +609,7 @@ checkversion() {
 
   FW_VERSION="${fwver}"
   if [ -z "${fwver}" ]; then
-    echo "tty2oled+ ${TTY2OLED_VERSION:-unknown} (the display did not answer CMDHWINF)"
+    [ "${1:-}" = "quiet" ] || echo "tty2oled+ ${TTY2OLED_VERSION:-unknown} (the display did not answer CMDHWINF)"
     dbug "No CMDHWINF reply after ${tries} tokens"
     return 0
   fi
@@ -621,6 +621,32 @@ checkversion() {
     echo "tty2oled: the two ship together. Reflash with:  ./tools/deploy-mister.sh --firmware --flash"
   fi
   dbug "Script version ${TTY2OLED_VERSION:-unknown}, firmware version ${fwver}"
+}
+
+# The display did not answer CMDHWINF - still booting after a flash or a
+# replug, when the daemon asked straight away. Without an answer FW_VERSION is
+# empty and everything newer than 0.7.0b is withheld for the life of the
+# daemon: the update notice, update_all's status line. So it is asked again,
+# FW_ASK_SECS apart, up to FW_ASK_MAX times. Each unanswered try blocks for
+# the two seconds checkversion waits; an answered one returns at once.
+FW_ASKS=0
+FW_ASK_AT=0
+FW_ASK_MAX=5
+FW_ASK_SECS=10
+fw_pass() {
+  [ -z "${FW_VERSION}" ] && [ "${DEFERRED_DONE}" = "yes" ] || return 0
+  [ "${FW_ASKS}" -lt "${FW_ASK_MAX}" ] || return 0
+  local now="${EPOCHSECONDS:-$(date +%s)}"
+  [ "${now}" -ge "${FW_ASK_AT}" ] || return 0
+  FW_ASKS=$(( FW_ASKS + 1 ))
+  dbug "Asking the display its version again (${FW_ASKS} of ${FW_ASK_MAX})"
+  checkversion quiet
+  if [ -z "${FW_VERSION}" ]; then
+    FW_ASK_AT=$(( now + FW_ASK_SECS ))
+    [ "${FW_ASKS}" -ge "${FW_ASK_MAX}" ] \
+      && echo "tty2oled: the display never said which firmware it runs - the update notice and update_all's status line stay off until the daemon restarts."
+  fi
+  return 0
 }
 
 # Is the display's firmware at least <version>? Ours is always N.N.N with a
@@ -668,6 +694,7 @@ deferred_setup() {
     echo "tty2oled: the arcade wheel logos (${wheelindex%/*}) are missing - arcade cores show their name as text. Run Update from the tty2oledplus menu to fetch them."
   fi
 
+  FW_ASKS=1; FW_ASK_AT=$(( ${EPOCHSECONDS:-$(date +%s)} + FW_ASK_SECS ))
   checkversion												# Scripts and firmware in step?
   sendtime													# Set time and date
   senddim													# Set idle dimming
@@ -1380,11 +1407,27 @@ selfupdate_pass() {
 # its launcher runs first - so until then the file is the previous run's, and
 # that one ends in a verdict. It is trusted only once it differs, by inode or
 # mtime, from what was there when update_all was first seen.
+#
+# Followed, not re-read. Once trusted the file is held open (UA_FD) and each
+# look reads only the lines added since, with bash's own read: no process is
+# started, which is what lets the line keep up with the MiSTer's screen - a
+# tail, tr and awk per look cost the DE10 ~50ms, and the stat and two /proc
+# scans beside them as much again. A file replaced under it (not the one open
+# any more, -ef) or cut short (smaller than at the last once-a-second look)
+# is opened again from the start.
 UA_PRINTLOG="${UA_PRINTLOG:-/tmp/update_all_print.log}"
 # Written when update_all exits; where the verdict is looked for if the print
 # log had none - an update_all too old to write one.
 UA_FINALLOG="${UA_FINALLOG:-/media/fat/Scripts/.config/update_all/update_all.log}"
 UA_LINE_COLS=51     # the 5x7 status line's width, 256 pixels / 5
+# How often the status line is looked at while it follows the log, on
+# firmware that takes it without the 15ms acknowledgement delay every other
+# command costs (0.7.3b): ten a second. Each is a line of 60 bytes or so -
+# about 5% of the port at 115200 - and the panel redraws a frame the busy bar
+# redraws hundreds of times a second anyway. Only a change is sent, and only
+# the latest: a burst of files between two looks shows the last of them.
+UA_LINE_MS=100
+UA_FD=""            # the print log, open once trusted
 
 # Milliseconds, for the finish screen's minimum time.
 ms_now() {
@@ -1393,41 +1436,188 @@ ms_now() {
   else echo "$(( $(date +%s) * 1000 ))"; fi
 }
 
-ua_logref() { stat -c '%i %Y' "${UA_PRINTLOG}" 2>/dev/null; }
-
-# The last useful line, and the verdict and run time if the run is over:
-# three lines out - verdict (ok, failed or empty), run time, line. Rules,
-# blank lines and the downloader's progress dots are not useful; nor are its
-# DUPLICATED warnings, which come in hundreds and say nothing about progress.
-ua_parselog() {
-  tr '\r' '\n' | LC_ALL=C tr -cd '\n\040-\176' | awk '
-    {
-      sub(/^[ \t]+/, ""); sub(/[ \t]+$/, "")
-      if ($0 ~ /^Success!/) v = "ok"
-      else if ($0 ~ /^There were some errors in the Updaters/) v = "failed"
-      if ($0 ~ /^Update All / && match($0, /[0-9][0-9:]*\.[0-9]+s/)) {
-        rt = substr($0, RSTART, RLENGTH); sub(/\.[0-9]+s$/, "", rt)
-      }
-      if ($0 == "" || $0 ~ /^[-#=*._ ]+$/ || $0 ~ /^DUPLICATED:/) next
-      sub(/^- /, "")
-      last = $0
-    }
-    END { print v; print rt; print last }'
+# The same into NOW_MS, without the subshell a $(ms_now) costs.
+now_ms() {
+  local t="${EPOCHREALTIME:-}"
+  if [ -n "${t}" ]; then t="${t//[.,]/}"; NOW_MS=$(( 10#${t} / 1000 ))
+  else NOW_MS=$(( $(date +%s) * 1000 )); fi
 }
 
-# Into UA_VERDICT, UA_RUNTIME, UA_LINE; latches UA_MAIN once update_all has
-# printed its "Sequence:" - the main run has begun, and from there to the end
-# is all update, downloader or not.
-ua_readlog() {
-  UA_VERDICT=""; UA_RUNTIME=""; UA_LINE=""
-  [ -r "${UA_PRINTLOG}" ] || return 0
-  if [ "${UA_LOG_FRESH:-no}" != "yes" ]; then
-    [ "$(ua_logref)" = "${UA_LOG_REF:-}" ] && return 0
-    UA_LOG_FRESH="yes"
+# Sleep without starting a process: a read that times out on a pipe nothing
+# ever writes to. The external sleep where that cannot be set up.
+NAP_FD=""
+nap() {  # nap <seconds, fractions allowed>
+  if [ -z "${NAP_FD}" ]; then
+    exec {NAP_FD}<> <(:) 2>/dev/null || NAP_FD="none"
   fi
-  [ "${UA_MAIN:-no}" = "yes" ] || ! grep -qs '^Sequence:' "${UA_PRINTLOG}" || UA_MAIN="yes"
-  { IFS= read -r UA_VERDICT; IFS= read -r UA_RUNTIME; IFS= read -r UA_LINE; } \
-    < <(tail -c 8192 "${UA_PRINTLOG}" | ua_parselog)
+  if [ "${NAP_FD}" = "none" ]; then sleep "${1}"; return 0; fi
+  read -r -t "${1}" -u "${NAP_FD}" _ 2>/dev/null
+  return 0
+}
+
+ua_logref() { stat -c '%i %Y' "${UA_PRINTLOG}" 2>/dev/null; }
+
+# One line of update_all's output into the run's state: UA_VERDICT (ok,
+# failed), UA_RUNTIME, UA_LINE - the last useful line - and the UA_MAIN latch,
+# which "Sequence:" sets: the main run has begun, and from there to the end is
+# all update, downloader or not. Rules, blank lines and the downloader's
+# progress dots are not useful; nor are its DUPLICATED warnings, which come in
+# hundreds and say nothing about progress. A carriage return starts a line
+# over; anything but printable ASCII - a box drawn in UTF-8 - goes.
+#
+# Expects the C locale, which its callers set once (ua_readlog, ua_parselog):
+# switching it here, per line, was a third of what a line cost on the DE10.
+ua_takeline() {
+  local l="${1}" seg rt='[0-9][0-9:]*\.[0-9]+s'
+  while :; do
+    seg="${l%%$'\r'*}"
+    case "${seg}" in
+      *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*)
+        ua_clean "${seg}"; seg="${UA_TRIMMED}"
+        case "${seg}" in
+          Success!*) UA_VERDICT="ok" ;;
+          "There were some errors in the Updaters"*) UA_VERDICT="failed" ;;
+          "Update All "*) [[ "${seg}" =~ ${rt} ]] && UA_RUNTIME="${BASH_REMATCH[0]%.*}" ;;
+          Sequence:*) UA_MAIN="yes" ;;
+        esac ;;
+      *) ua_clean "${seg}" ;;
+    esac
+    [ -n "${UA_CLEAN}" ] && UA_LINE="${UA_CLEAN}"
+    [ "${l}" != "${l#*$'\r'}" ] || break
+    l="${l#*$'\r'}"
+  done
+}
+
+# One segment of a line: printable ASCII only, trimmed, into UA_TRIMMED; and
+# into UA_CLEAN as the status line would show it, or empty when it is not a
+# useful line.
+ua_clean() {
+  local seg="${1//[^ -~]/}"
+  seg="${seg#"${seg%%[! ]*}"}"; seg="${seg%"${seg##*[! ]}"}"
+  UA_TRIMMED="${seg}"; UA_CLEAN=""
+  [ -n "${seg}" ] || return 0
+  # A rule, or dots: nothing but these. A glob - a regex is compiled afresh
+  # every time.
+  [[ "${seg}" == *[!-#=*._\ ]* ]] || return 0
+  [ "${seg#DUPLICATED:}" = "${seg}" ] || return 0
+  UA_CLEAN="${seg#- }"
+}
+
+# The last useful line of the ones held back, newest first. A burst of the
+# downloader's output is hundreds of lines between two looks, and only the
+# last useful one is ever shown - so only that one, and whatever useless
+# lines follow it, are worked over.
+UA_CAND=()
+ua_takecand() {
+  local i
+  for (( i = ${#UA_CAND[@]} - 1; i >= 0; i-- )); do
+    case "${UA_CAND[i]}" in ""|DUPLICATED:*) continue ;; esac
+    ua_clean "${UA_CAND[i]}"
+    [ -n "${UA_CLEAN}" ] && { UA_LINE="${UA_CLEAN}"; break; }
+  done
+  UA_CAND=()
+}
+
+# One line into the run's state, the cheap way: a line that can say anything
+# but "this is what is happening now" - the verdict, the run time, Sequence:,
+# a carriage return - is taken in full and in order; any other is held back
+# for ua_takecand. The two give what ua_takeline gives over every line.
+ua_feed() {
+  case "${1}" in
+    *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*|*$'\r'*)
+      ua_takecand; ua_takeline "${1}" ;;
+    ""|DUPLICATED:*) ;;
+    *) UA_CAND+=("${1}")
+       # Resolved rather than cut, or a useful line followed by a run of rules
+       # would be lost with them.
+       [ "${#UA_CAND[@]}" -ge 64 ] && ua_takecand ;;
+  esac
+}
+
+# The same over a whole file on stdin, three lines out - verdict, run time,
+# line - for update_all's own log, read once when it has gone.
+ua_parselog() {
+  local LC_ALL=C UA_VERDICT="" UA_RUNTIME="" UA_LINE="" UA_MAIN="" UA_CAND=() l
+  while IFS= read -r l || [ -n "${l}" ]; do ua_feed "${l}"; done
+  ua_takecand
+  printf '%s\n%s\n%s\n' "${UA_VERDICT}" "${UA_RUNTIME}" "${UA_LINE}"
+}
+
+ua_closelog() {
+  [ -n "${UA_FD}" ] && exec {UA_FD}<&-
+  UA_FD=""; UA_SIZE=0; UA_PARTIAL=""
+}
+
+# Open the print log, from the start, with the run's state as it would be
+# having read none of it.
+ua_openlog() {
+  ua_closelog
+  UA_VERDICT=""; UA_RUNTIME=""; UA_LINE=""; UA_CAND=()
+  exec {UA_FD}<"${UA_PRINTLOG}" 2>/dev/null || { UA_FD=""; return 0; }
+  UA_SIZE="$(stat -c %s "${UA_PRINTLOG}" 2>/dev/null || echo 0)"
+}
+
+# What update_all has added since the last look, into the run's state.
+# "slow" also checks the file is still the one open and no shorter than what
+# has been read, which costs a stat; "final" takes a last line with no newline
+# too, since nothing more is coming.
+ua_readlog() {  # ua_readlog [slow|fast|final]
+  local how="${1:-slow}" l size
+  # C, for byte-wise patterns; set here unless the caller has (ua_follow sets
+  # it once for all its looks - each switch costs the DE10 half a millisecond).
+  [ "${LC_ALL:-}" = "C" ] || local LC_ALL=C
+  if [ -z "${UA_FD}" ]; then
+    [ "${how}" = "fast" ] && return 0
+    [ -r "${UA_PRINTLOG}" ] || return 0
+    if [ "${UA_LOG_FRESH:-no}" != "yes" ]; then
+      [ "$(ua_logref)" = "${UA_LOG_REF:-}" ] && return 0
+      UA_LOG_FRESH="yes"
+    fi
+    ua_openlog
+    [ -n "${UA_FD}" ] || return 0
+  elif ! [ "${UA_PRINTLOG}" -ef "/dev/fd/${UA_FD}" ]; then
+    [ -r "${UA_PRINTLOG}" ] || return 0
+    ua_openlog; [ -n "${UA_FD}" ] || return 0
+  elif [ "${how}" != "fast" ]; then
+    # Cut short and written again: smaller than it was a look ago.
+    size="$(stat -c %s "${UA_PRINTLOG}" 2>/dev/null)"
+    if [ -n "${size}" ] && [ "${size}" -lt "${UA_SIZE:-0}" ]; then
+      ua_openlog; [ -n "${UA_FD}" ] || return 0
+    fi
+    UA_SIZE="${size:-0}"
+  fi
+  # Everything new at once: mapfile takes a line in a fifteenth of the time a
+  # read loop does, which is the difference that matters when the downloader
+  # has printed five hundred lines since the last look. Newlines kept, so a
+  # last line still being written can be told from a whole one.
+  UA_NEW=()
+  mapfile -u "${UA_FD}" UA_NEW
+  [ "${#UA_NEW[@]}" -gt 0 ] && ua_absorb
+  if [ "${how}" = "final" ] && [ -n "${UA_PARTIAL}" ]; then
+    ua_feed "${UA_PARTIAL}"; UA_PARTIAL=""; ua_takecand
+  fi
+  return 0
+}
+
+# The lines just read, in UA_NEW, into the run's state.
+ua_absorb() {
+  local n="${#UA_NEW[@]}" l
+  if [ -n "${UA_PARTIAL}" ]; then UA_NEW[0]="${UA_PARTIAL}${UA_NEW[0]}"; UA_PARTIAL=""; fi
+  if [ "${UA_NEW[n-1]}" = "${UA_NEW[n-1]%$'\n'}" ]; then
+    UA_PARTIAL="${UA_NEW[n-1]}"; unset 'UA_NEW[n-1]'
+  fi
+  UA_NEW=("${UA_NEW[@]%$'\n'}")
+  # Only a line that says more than "this is happening" - the verdict, the
+  # run time, Sequence:, a carriage return - needs taking one by one, and a
+  # run has a handful. Looked for once, over the whole batch.
+  local IFS=$'\n' all
+  all="${UA_NEW[*]}"
+  case "${all}" in
+    *Success!*|*"There were some errors in the Updaters"*|*"Update All "*|*Sequence:*|*$'\r'*)
+      for l in "${UA_NEW[@]}"; do ua_feed "${l}"; done ;;
+    *) UA_CAND+=("${UA_NEW[@]}") ;;
+  esac
+  ua_takecand
 }
 
 # update_all has exited without a verdict in the print log: its full log, if
@@ -1441,24 +1631,71 @@ ua_readfinal() {
 # Shortened to the status line's width: a path loses its beginning, since the
 # file name is the part that says something; anything else its end.
 ua_shorten() {
-  local s="${1}" max="${UA_LINE_COLS}"
-  if [ "${#s}" -le "${max}" ]; then printf '%s' "${s}"; return; fi
-  case "${s}" in
-    */*) printf '...%s' "${s: -$((max - 3))}" ;;
-    *)   printf '%s...' "${s:0:$((max - 3))}" ;;
-  esac
+  local out; ua_shorten_into out "${1}"; printf '%s' "${out}"
+}
+# Into a variable of the caller's - no subshell. Its own names are odd so they
+# cannot hide the caller's variable from printf -v.
+ua_shorten_into() {  # ua_shorten_into <variable> <text>
+  local _us_s="${2}" _us_max="${UA_LINE_COLS}"
+  if [ "${#_us_s}" -gt "${_us_max}" ]; then
+    case "${_us_s}" in
+      */*) _us_s="...${_us_s: -$((_us_max - 3))}" ;;
+      *)   _us_s="${_us_s:0:$((_us_max - 3))}..." ;;
+    esac
+  fi
+  printf -v "${1}" '%s' "${_us_s}"
 }
 
 # The status line under the busy label. Only what changed goes out, and only
 # to firmware that knows the command - to any other it would be drawn as text.
-sendbusyline() {
-  local line; line="$(ua_shorten "${1}")"
+# Firmware that takes it without the acknowledgement delay (0.7.3b) needs no
+# wait after it either: the next look is UA_LINE_MS away.
+sendbusyline() {  # sendbusyline <text> [fast: the caller knows it is 0.7.3b or later]
+  local line
+  ua_shorten_into line "${1}"
   [ "${line}" = "${BUSYLINE_LAST:-}" ] && return 0
-  fw_atleast 0.7.0 || return 0
+  if [ "${2:-}" != "fast" ]; then fw_atleast 0.7.0 || return 0; fi
   BUSYLINE_LAST="${line}"
   dbug "Sending: CMDBUSYLINE,${line}"
   echo "CMDBUSYLINE,${line}" >${TTYDEV}
-  cmdwait
+  [ "${2:-}" = "fast" ] || fw_atleast 0.7.3 || cmdwait
+}
+
+# Follow the log for <ms>, sending its line each time it changes, and never
+# starting a process to do it. Returns early with a verdict, for the pass to
+# put the finish up at once.
+#
+# A look that finds nothing new is five statements: on the DE10 each costs
+# 50-100us, so what is not needed every tenth of a second is not done then.
+ua_follow() {  # ua_follow <ms>
+  local end secs t LC_ALL=C
+  printf -v secs '%d.%03d' $(( UA_LINE_MS / 1000 )) $(( UA_LINE_MS % 1000 ))
+  now_ms; end=$(( NOW_MS + ${1} ))
+  nap 0                                          # its pipe, opened once
+  [ "${UPDATE_ALL_DETAILS:-yes}" = "yes" ] && sendbusyline "${UA_LINE}" fast
+  while :; do
+    if [ "${UA_PRINTLOG}" -ef "/dev/fd/${UA_FD}" ]; then
+      mapfile -u "${UA_FD}" UA_NEW
+      if [ "${#UA_NEW[@]}" -gt 0 ]; then
+        ua_absorb
+        [ -n "${UA_VERDICT}" ] && return 0
+        [ "${UPDATE_ALL_DETAILS:-yes}" = "yes" ] && sendbusyline "${UA_LINE}" fast
+      fi
+    else
+      ua_readlog fast                            # replaced: opened again
+      [ -z "${UA_FD}" ] && return 0
+    fi
+    t="${EPOCHREALTIME//[.,]/}"
+    [ $(( 10#${t} / 1000 )) -lt "${end}" ] || return 0
+    if [ "${NAP_FD}" = "none" ]; then sleep "${secs}"
+    else read -r -t "${secs}" -u "${NAP_FD}" _; fi
+  done
+}
+
+# Is the status line following the log closely right now?
+ua_following() {
+  [ "${UPDATEALL_BUSY:-no}" = "yes" ] && [ "${UPDATE_ALL_DETAILS:-yes}" = "yes" ] \
+    && [ -n "${UA_FD}" ] && [ -z "${UA_DONE_AT:-}" ] && fw_atleast 0.7.3
 }
 
 # The finish screen: "Update Complete" (or failed) in place of the label, the
@@ -1527,6 +1764,7 @@ updateall_pass() {
     if [ "${UA_RUN:-no}" != "yes" ]; then
       UA_RUN="yes"; UA_MAIN="no"; UA_DONE_AT=""; UA_LOG_FRESH="no"
       UA_LOG_REF="$(ua_logref)"; UA_SEEN_AT="$(date +%s)"
+      ua_closelog; UA_VERDICT=""; UA_RUNTIME=""; UA_LINE=""
     fi
     if [ "${UPDATEALL_SHOWN:-no}" != "yes" ]; then
       dbug "update_all is running"
@@ -1560,14 +1798,17 @@ updateall_pass() {
         sendbusy 0; UPDATEALL_BUSY="no"; sendupdateall
       fi
     fi
-    sleep "$(ua_poll)"
+    # The rest of the look: the line followed closely, or a plain wait. The
+    # process checks - update_all, the downloader - stay at this pace.
+    if ua_following; then ua_follow "$(( $(ua_poll) * 1000 ))"
+    else sleep "$(ua_poll)"; fi
     return 0
   fi
   if [ "${UPDATEALL_SHOWN:-no}" = "yes" ]; then
     # It may have printed its verdict and exited between two looks.
     if [ -z "${UA_DONE_AT:-}" ] && ua_finishes \
        && { [ "${UPDATEALL_BUSY:-no}" = "yes" ] || [ "${UA_MAIN:-no}" = "yes" ]; }; then
-      ua_readlog
+      ua_readlog final
       [ -n "${UA_VERDICT}" ] || ua_readfinal
       [ -n "${UA_VERDICT}" ] && ua_done
     fi
@@ -1579,6 +1820,7 @@ updateall_pass() {
     oldcore=""
     META_WIRE_LAST=""
   fi
+  [ "${UA_RUN:-no}" = "yes" ] && ua_closelog
   UA_RUN="no"; UA_DONE_AT=""
   return 1
 }
@@ -1608,6 +1850,8 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
       # Sleep mode: the display belongs to something else - see sleepmode_pass.
       # Nothing below this may write to the port while it is held.
       if ! sleepmode_pass; then
+        # The firmware's version, if the display was not ready to say.
+        fw_pass
         # A newer release, and the notice for it: never blocks.
         updatenote_pass
         # update_all takes the screen over whatever core is loaded, and our
@@ -1669,6 +1913,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
                 inotifywait ${upwait} -e modify "${corenamefile}"      # but not -qq when debugging
               fi
               [ "$?" -eq 2 ] || break
+              fw_pass
               updatenote_pass
               updateall_running && break
               selfupdate_running && break

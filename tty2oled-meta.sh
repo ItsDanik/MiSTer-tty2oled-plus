@@ -47,7 +47,7 @@
 # "games/GBA" is on the SD and "../usb0/games/PSX" is on USB - but a ROM set
 # can be installed on either, and the same relative path is valid on both.
 # Searched in order, first hit wins; missing roots are skipped.
-: "${GAME_ROOTS:=/media/fat /media/usb0 /media/usb1 /media/usb2 /media/usb3 /media/usb4 /media/usb5 /media/fat/cifs}"
+: "${GAME_ROOTS:=/media/fat /media/usb0 /media/usb1 /media/usb2 /media/usb3 /media/usb4 /media/usb5 /media/usb6 /media/usb7 /media/fat/cifs}"
 
 : "${TITLE_INDEX_DIR:=/media/fat/tty2oledplus/titleindex}"
 

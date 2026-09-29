@@ -135,7 +135,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `.../bootoutro.h`, `busybar.h` | Boot screen as menu picture + power-on outro; the sweep as a busy bar. |
 | `.../bandnote.h` | Frontends' 54-row picture + band; `CMDNOTE` fading in/out there. |
 | `.../MiSTer_SSD1322_USB.ino` | Includes the headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | ~2500 checks, no hardware. |
+| `tests/` | ~2550 checks, no hardware. |
 | `tools/build-title-index.sh`, `dat2index.awk`, `index-emit.awk`, `mamexml2index.awk` | CRC32 title index from libretro-database (+ MAME XML for Neo Geo). W. |
 | `tools/png2gsc.py` | PNG -> 4bpp `.gsc`. W **and** M: Pillow, ImageMagick, or a stdlib PNG decoder. |
 | `tools/wheels2gsc.py`, `tools/gscpack.py` | Wheel PNGs -> 256x64 `.gsc` (`--nodupes`); pack into `.bin`+`.idx`. W. |
@@ -222,9 +222,18 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   The bar waits out a Fade and stops on any command not in `boot_quietCommand`.
 - **update_all's own words** (firmware >= 0.7.0b, `fw_atleast`, from
   `checkversion`): update_all flushes every screen line to
-  `/tmp/update_all_print.log` (downloader output relayed live). `ua_parselog`
-  takes the last useful line (no rules, dots, `DUPLICATED:`) -> `CMDBUSYLINE`,
-  polled every 1s while it follows. The file is the **previous run's** until
+  `/tmp/update_all_print.log` (downloader output relayed live). The last
+  useful line (no rules, dots, `DUPLICATED:`) -> `CMDBUSYLINE`. **Followed,
+  not re-read**: once trusted the file is held open (`UA_FD`); `mapfile` takes
+  what is new, `ua_absorb` looks for the rare lines that matter one by one
+  (verdict, run time, `Sequence:`, CR) with one glob over the batch and
+  otherwise cleans only the newest useful line (`ua_takecand`); `ua_feed` +
+  `ua_takecand` must equal `ua_takeline` over every line (tested). Reopened
+  when replaced (`-ef /dev/fd/N`) or smaller than at the last slow look.
+  With firmware >= 0.7.3b `ua_follow` looks every `UA_LINE_MS` (100) between
+  the once-a-second process checks, **starting no process** (tested with
+  logging stand-ins on PATH): builtin `nap` (`read -t` on a pipe), `mapfile`,
+  `printf -v`, `EPOCHREALTIME`. Older firmware: once a second. The file is the **previous run's** until
   update_all recreates it, so it is trusted only once its inode/mtime differs
   from when update_all was seen (`UA_LOG_REF`). `Sequence:` latches `UA_MAIN`:
   the bar stays from there to the end, downloader or not. `Success!` /
@@ -478,7 +487,7 @@ send them). Additions, ESP32 only:
 | `CMDBOOTPIC,<core>,<effect>` | boot image as the core's picture (MENU, `BOOTSCREEN_AS_MENU`); no transition if the power-on screen is up |
 | `CMDTFADE,<fade ms>,<blank ms>` | Fade timings 0..4000; before the first picture |
 | `CMDBUSY,<0\|1>[,<label>[,<effect>]]` | sweep in the band; 0 finishes the cycle. A label blacks the panel above and shows alone; same label ignored, new one redraws. `0` with a new label (0.7.0b) swaps it in above the band without the line - the finish - or, with no busy screen up, draws it whole with no bar. Any drawing command stops it |
-| `CMDBUSYLINE,<text>` | the busy screen's status line (5x7, grey, 51 columns), rest of the line; empty removes it; ignored with no label up; waits out a transition (`busyTextDirty`). Quiet for the bar |
+| `CMDBUSYLINE,<text>` | the busy screen's status line (5x7, grey, 51 columns), rest of the line; empty removes it; ignored with no label up; waits out a transition (`busyTextDirty`). Quiet for the bar. From 0.7.3b acked **without** the 15ms `cDelay`, which stops `loop()` - it comes ten times a second |
 | `CMDMSG,<effect>,<text>` | centred message, transitioned; text is the rest of the line |
 | `CMDCOR,<core>,<effect>,band` | a frontend's picture: 54 rows, band blacked, the notice composed in. Older firmware reads past `,band` (`toInt()`) |
 | `CMDNOTE,<text>` | the frontends' band notice, rest of the line, 51 columns; empty removes. Quiet; kept until changed (0.7.1b) |
@@ -551,7 +560,9 @@ on MiSTer's `ini_settings.sh`.
 
 - **Imports `games/<folder>/gamelist.xml`** (EmulationStation format: Skraper,
   ES-DE, Batocera, Skyscraper) on every `GAME_ROOTS` root, name matched
-  without case, into `scraped/<system>.txt`. `tty2oledplus_scrape.sh` picks
+  without case, into `scraped/<system>.txt`. **Each file once, by
+  `(st_dev, st_ino)`**: MiSTer can mount one partition twice (`/dev/sda1` on
+  `usb0` and `usb1`), and a path string cannot tell. `tty2oledplus_scrape.sh` picks
   systems; `tty2oledplus_scrape.py` (stdlib, Python 3.9) does the work.
 - Offered: consoles with an icon (`SYSTEMS` keyed by icon, `ICON_ALIASES`
   dedupes) and Arcade always. A system's first folder is taken whole; later
@@ -894,6 +905,15 @@ row 57..63  build version        BOOT_VER_Y, 5x7 font
   table (read at `0x8000`) matches; otherwise the whole image.
 - **CI builds three boards against today's libraries** (`v0.4.0b`: GFX 1.12.6
   made `round(<int>)` ambiguous). See step 3.
+- **Bash on the DE10 costs 50-100us a statement**, a fork ~10ms, a locale
+  switch (`local LC_ALL=C`) 0.5ms, a `[[ =~ ]]` a regex compile; `mapfile`
+  reads a line in 10us where a `read` loop takes 150us. Anything run ten
+  times a second is written for that (`ua_follow`). Measure CPU from
+  `/proc/$$/stat`, not `$(times)` - that is the subshell's.
+- **A display asked too early does not answer**: straight after a flash or a
+  replug `CMDHWINF` goes unanswered and `FW_VERSION` stays empty, withholding
+  everything gated on `fw_atleast`. `fw_pass` asks again every `FW_ASK_SECS`
+  up to `FW_ASK_MAX` times (`checkversion quiet`).
 - **`CMDBOOTPIC` draws**, though it is on `boot_quietCommand`'s list; the busy
   bar uses the list minus it, and whoever puts a busy screen up takes it down.
 - **A theory that fits is not a cause** - reproduce it. The "flash hang" was

@@ -132,7 +132,8 @@ def load_config(install):
     if not cfg.get("SCRAPE_DIR"):
         cfg["SCRAPE_DIR"] = os.path.join(install, "scraped")
     cfg.setdefault("GAME_ROOTS", "/media/fat /media/usb0 /media/usb1 /media/usb2 "
-                                 "/media/usb3 /media/usb4 /media/usb5 /media/fat/cifs")
+                                 "/media/usb3 /media/usb4 /media/usb5 /media/usb6 /media/usb7 "
+                                 "/media/fat/cifs")
     return cfg
 
 
@@ -266,7 +267,13 @@ def _key(name):
 
 def find_gamelists(system, roots):
     """Every games/<folder>/gamelist.xml for this system, with whether the
-    folder is the system's own."""
+    folder is the system's own.
+
+    Each file once, however many roots reach it. MiSTer can mount one drive
+    twice - the same /dev/sda1 on /media/usb0 and /media/usb1 - and a path
+    tells two copies of a file from one file seen twice no better than a
+    name does, so the file is known by its device and inode. The first root
+    to reach it names it."""
     out, seen = [], set()
     for root in roots.split():
         games = os.path.join(root, "games")
@@ -285,8 +292,15 @@ def find_gamelists(system, roots):
                     continue
                 for fn in names:
                     path = os.path.join(base, fn)
-                    if fn.lower() == "gamelist.xml" and path not in seen:
-                        seen.add(path)
+                    if fn.lower() != "gamelist.xml":
+                        continue
+                    try:
+                        st = os.stat(path)
+                    except OSError:
+                        continue
+                    ident = (st.st_dev, st.st_ino)
+                    if ident not in seen:
+                        seen.add(ident)
                         out.append((path, n == 0))
     return out
 

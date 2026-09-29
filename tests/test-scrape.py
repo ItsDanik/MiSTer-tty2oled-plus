@@ -47,12 +47,18 @@ shutil.rmtree(TMP, ignore_errors=True)
 INSTALL = os.path.join(TMP, "tty2oledplus")
 ROOT_A = os.path.join(TMP, "sd")
 ROOT_B = os.path.join(TMP, "usb0")
+# The same drive mounted a second time, as MiSTer has been seen to do - one
+# /dev/sda1 on both /media/usb0 and /media/usb1. A symlink is the same thing
+# to a stat: one device, one inode, two names.
+ROOT_B2 = os.path.join(TMP, "usb1")
+os.makedirs(ROOT_B)
+os.symlink(ROOT_B, ROOT_B2)
 os.makedirs(os.path.join(INSTALL, "pics", "icon"))
 shutil.copy(os.path.join(ROOT, "tty2oled-system.ini"), INSTALL)
 for icon in ("NES", "SNES", "MegaDrive", "Genesis", "NEOGEO", "GBC"):
     open(os.path.join(INSTALL, "pics", "icon", icon + ".gsc"), "w").close()
 with open(os.path.join(INSTALL, "tty2oled-user.ini"), "w") as f:
-    f.write('GAME_ROOTS="%s %s %s"\n' % (ROOT_A, ROOT_B, os.path.join(TMP, "nowhere")))
+    f.write('GAME_ROOTS="%s %s %s %s"\n' % (ROOT_A, ROOT_B, ROOT_B2, os.path.join(TMP, "nowhere")))
 
 
 def write(path, data):
@@ -155,6 +161,9 @@ ok("an entry with nothing but a path is not a game found", entry("NES", "Nothing
 ok("a folder shared with another system gives only this one's games",
    [r[0] for r in db("GBC")], ["Wario Land 2"])
 ok("the summary counts files, games and descriptions", "2      3            2" in out, True)
+ok("a drive mounted twice gives its gamelist once, by the first name",
+   [l.split(" - ")[0].strip() for l in out.splitlines() if "GameList.xml" in l],
+   [os.path.join(ROOT_B, "games", "nes", "GameList.xml")])
 
 # ---------------------------------------------------------------------------
 section("the daemon reads what the importer wrote")
