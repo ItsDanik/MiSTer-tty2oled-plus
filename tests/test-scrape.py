@@ -93,8 +93,8 @@ def entry(system, key):
 section("which systems are offered")
 rc, out = run("--list-systems")
 listed = [l.split("\t") for l in out.splitlines()]
-ok("one per console with an icon, and the arcade, keyed and labelled", [l[0] for l in listed],
-   ["NES", "SNES", "GBC", "MegaDrive", "NeoGeo", "Arcade"])
+ok("one per console with an icon, the arcade and ScummVM, keyed and labelled", [l[0] for l in listed],
+   ["NES", "SNES", "GBC", "MegaDrive", "NeoGeo", "Arcade", "ScummVM"])
 ok("the Mega Drive once, though both of its icons ship", sum(1 for l in listed if l[0] == "MegaDrive"), 1)
 ok("a label to show in the menu", listed[0][1], "Nintendo NES")
 rc, out = run("--systems", "")
@@ -226,6 +226,40 @@ ok("the daemon finds a set by the .mra's set name",
 ok("or by the core name when the .mra names no set",
    daemon_arcade("", "dkong"), "Donkey Kong|A barrel of fun.")
 ok("and nothing for a set no gamelist lists", daemon_arcade("puckman", "puckman"), "miss")
+
+# ---------------------------------------------------------------------------
+section("ScummVM: games/ScummVM, keyed by folder or by .scummvm file")
+# A scraper names a ScummVM game by its folder, or by a .scummvm file holding
+# the target; Batocera's folders are called "<name>.scummvm". A dot inside a
+# name is not an extension: splitext made "Castle of Dr" of the first.
+write(os.path.join(ROOT_A, "games", "ScummVM", "gamelist.xml"), b"""<gameList>
+  <game><path>./Castle of Dr. Brain (CD DOS)</path><name>Castle of Dr. Brain</name>
+    <desc>Puzzles.</desc></game>
+  <game><path>./ft.scummvm</path><name>Full Throttle</name><desc>Bikers.</desc></game>
+  <game><path>./Sam &amp; Max.scummvm/</path><name>Sam and Max</name><desc>Freelance.</desc></game>
+  <game><path>./monkey.svm</path><name>Monkey Island</name><desc>Pirates.</desc></game>
+</gameList>""")
+rc, out = run("--systems", "ScummVM")
+ok("imported", rc, 0)
+ok("a folder with a dot in its name keeps it", entry("ScummVM", "Castle of Dr. Brain (CD DOS)")[11], "Puzzles.")
+ok("a .scummvm file is its target", entry("ScummVM", "ft")[3], "Full Throttle")
+ok("a Batocera folder loses its .scummvm", entry("ScummVM", "Sam & Max")[11], "Freelance.")
+ok("and .svm too", entry("ScummVM", "monkey")[3], "Monkey Island")
+
+sh_svm = r'''
+SCRAPE_DIR="%s/scraped"
+. "%s"
+lookup_scraped "$1" "" ScummVM || { echo miss; exit; }
+printf '%%s' "${SCR_DESC}"
+''' % (INSTALL, META)
+
+
+def daemon_svm(name):
+    return subprocess.run(["bash", "-c", sh_svm, "x", name], capture_output=True, text=True).stdout.strip()
+
+
+ok("the daemon finds it by the game's folder", daemon_svm("Castle of Dr. Brain (CD DOS)"), "Puzzles.")
+ok("or by the target", daemon_svm("ft"), "Bikers.")
 
 # ---------------------------------------------------------------------------
 section("importing again")

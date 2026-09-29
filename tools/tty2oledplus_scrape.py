@@ -7,7 +7,7 @@ says about each game in scraped/<system>.txt for the daemon: the title,
 release date, players, rating, genre, developer, publisher, series and a
 description. No account and no network: the scraping was done elsewhere.
 Arcade games are one more system, whose gamelist sits in games/mame beside
-the zips.
+the zips, and ScummVM's another, in games/ScummVM beside its games' folders.
 
     tty2oledplus_scrape.py --list-systems
     tty2oledplus_scrape.py --systems NES,SNES,Arcade
@@ -77,6 +77,12 @@ SYSTEMS = [
 # daemon looks it up by. _Arcade is not searched: its .mra files are not what
 # a scraper scrapes, and a set's name is the key both sides agree on.
 ARCADE = ("Arcade", "Arcade (games/mame)", ["mame", "hbmame"], "zip 7z")
+
+# ScummVM runs its games through the split layout too, with its own icons, so
+# it is always offered. A scraper names a ScummVM game by its folder - "Full
+# Throttle (CD DOS)" - or by a .scummvm file holding its target, "ft.scummvm";
+# the daemon looks the running game up both ways.
+SCUMMVM = ("ScummVM", "ScummVM (games/ScummVM)", ["ScummVM"], "scummvm svm")
 
 # Other names an icon goes by. Both spellings ship in pics/icon, and one
 # system should appear once in the menu, not twice.
@@ -155,6 +161,7 @@ def supported_systems(install):
         if any(n.lower() in have for n in names):
             out.append(s)
     out.append(ARCADE)
+    out.append(SCUMMVM)
     return out
 
 
@@ -261,8 +268,16 @@ def db_write(path, entries):
 # Only the system's own folder is looked in, games/<folder>/gamelist.xml: that
 # is where the frontends write it, beside the games it describes.
 # ---------------------------------------------------------------------------
+# What a game is known by: its file name less the extension - the same rule
+# the daemon's lookup_scraped applies to CURRENTPATH, so the two agree on
+# names with a dot in them ("Castle of Dr. Brain (CD DOS)" has no extension;
+# splitext thought it was " Brain (CD DOS)"). ScummVM's own long extensions
+# go too.
+_EXT = re.compile(r"\.([A-Za-z0-9]{1,4}|scummvm)$", re.IGNORECASE)
+
+
 def _key(name):
-    return os.path.splitext(os.path.basename(name))[0].replace("|", "/")
+    return _EXT.sub("", os.path.basename(name)).replace("|", "/")
 
 
 def find_gamelists(system, roots):
@@ -391,7 +406,8 @@ def import_summary(totals, problems):
         lines.append("")
         lines.append("No gamelist.xml was found. Put one in each system's own games")
         lines.append("folder - games/NES/gamelist.xml, or games/mame/gamelist.xml")
-        lines.append("for arcade - and import again.")
+        lines.append("for arcade, games/ScummVM/gamelist.xml for ScummVM - and")
+        lines.append("import again.")
     if problems:
         lines.append("")
         lines.append("Could not be read:")

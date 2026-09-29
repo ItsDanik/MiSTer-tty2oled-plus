@@ -345,13 +345,26 @@ senddata() {
 
 # Strip the characters that would break the CMDMETA wire format, plus anything
 # non-printable that could desynchronise the serial stream.
+#
+# metasan <variable> <text> does it into a variable, without starting a
+# process: sendbuiltmeta runs it on the title and on every label and value,
+# every pass, and a subshell and a tr cost 30ms a call on the DE10 - 0.4s a
+# pass for a game with six fields, which a ScummVM game shares two cores with.
+# globasciiranges (on since bash 5.0) keeps the range to those bytes in any
+# locale; bash strings hold no NUL.
+metasan() {
+  local -n __ms_out="${1}"
+  local __ms="${2}"
+  __ms="${__ms//|/ }"       # field separator
+  __ms="${__ms//,/ }"       # command separator
+  __ms="${__ms//=/ }"       # label/value separator
+  __ms_out="${__ms//[$'\001'-$'\037'$'\177']/}"
+}
+
 metasanitize() {
-  local s="${1}"
-  s="${s//|/ }"       # field separator
-  s="${s//,/ }"       # command separator
-  s="${s//=/ }"       # label/value separator
-  s="$(printf '%s' "${s}" | tr -d '\000-\037\177')"
-  printf '%s' "${s}"
+  local __out=""
+  metasan __out "${1}"
+  printf '%s' "${__out}"
 }
 
 # Map META_KIND onto the numeric kind the firmware expects.
@@ -376,6 +389,12 @@ findicon() {
   local key="${1}"
   ICONFILE=""
   [ -n "${key}" ] || return 1
+  # A path is a file already: a ScummVM game's icon, converted into its cache.
+  if [ "${key:0:1}" = "/" ]; then
+    [ -e "${key}" ] || return 1
+    ICONFILE="${key}"
+    return 0
+  fi
   [ -e "${iconfolder}/${key}.gsc" ] || return 1
   ICONFILE="${iconfolder}/${key}.gsc"
   return 0
@@ -399,13 +418,14 @@ sendmetaoff() {
   echo "CMDMETAOFF" >${TTYDEV}
   sleep ${WAITSECS}
   META_WIRE_LAST="OFF"
+  ICON_SENT=""
 }
 
 # Put what build_meta produced on the wire: CMDMETA and the description, or
 # CMDMETAOFF when there is no game to describe. Nothing at all when it would
 # repeat the last thing sent.
 sendbuiltmeta() {
-  local kindnum="" payload="" label="" value="" f="" wire=""
+  local kindnum="" payload="" label="" value="" f="" wire="" l="" v=""
 
   # Computer cores stay on plain full-screen artwork by design, and so does a
   # console core sitting at its menu with no game loaded - there is nothing to
@@ -416,13 +436,16 @@ sendbuiltmeta() {
     return 1
   fi
 
-  kindnum="$(metakindnum "${META_KIND}")"
-  payload="$(metasanitize "${META_TITLE}")"
+  case "${META_KIND}" in                  # metakindnum, without a subshell
+    arcade) kindnum=1 ;; console) kindnum=2 ;; computer) kindnum=3 ;; *) kindnum=0 ;;
+  esac
+  metasan payload "${META_TITLE}"
 
   for f in "${META_FIELDS[@]}"; do
     label="${f%%$'\t'*}"
     value="${f#*$'\t'}"
-    payload="${payload}|$(metasanitize "${label}")=$(metasanitize "${value}")"
+    metasan l "${label}"; metasan v "${value}"
+    payload="${payload}|${l}=${v}"
   done
 
   # The two counts go between the interval and the title: how many fields are
@@ -452,6 +475,7 @@ sendbuiltmeta() {
   sleep ${WAITSECS}
   senddesc
   META_WIRE_LAST="${sent}"
+  ICON_SENT=""
   return 0
 }
 
@@ -482,9 +506,23 @@ senddesc() {
 # Refresh metadata without redrawing the artwork. Used when the game changed
 # but the core did not - loading a ROM does not touch /tmp/CORENAME, so there
 # is nothing to redraw, only new text to send.
+#
+# Two things a new line does not cover. A game ending under a core that keeps
+# running - ScummVM back in its own launcher - puts the core's picture back up
+# as a core change would: CMDMETAOFF alone leaves the layout on the panel. And
+# an icon that turns up after its game's layout went out - ScummVM's, converted
+# in the background - is sent on its own, as soon as it is there.
 refreshmeta() {
   local corename="${1}"
-  if sendmeta "${corename}"; then
+  [ "${SHOW_METADATA}" = "yes" ] || return 0
+  build_meta "${corename}"
+  if [ "${META_SHOWCORE:-}" = "yes" ]; then
+    dbug "The game has ended, back to the ${corename} picture"
+    senddata "${corename}"
+  elif sendbuiltmeta; then
+    sendicon "${META_ICON}"
+  elif [ "${META_GAME:-no}" = "yes" ] && [ "${META_WIRE_LAST:-}" != "OFF" ] &&
+       findicon "${META_ICON}" && [ "${ICONFILE}" != "${ICON_SENT:-}" ]; then
     sendicon "${META_ICON}"
   fi
   return 0
@@ -498,7 +536,57 @@ metawatchlist() {
            "${MISTER_GAMEID}" "${MISTER_STARTPATH}"; do
     [ -e "${f}" ] && out="${out} ${f}"
   done
+  # ScummVM starts a game by rewriting its ini. The folder, not the file: the
+  # ini may be replaced rather than written in place. It is the only file in
+  # there, and a folder with a space in its name is not watched.
+  if scummvm_core "${oldcore:-}" && [ -n "${SVM_INI:-}" ]; then
+    f="${SVM_INI%/*}"
+    [ -d "${f}" ] && [[ "${f}" != *" "* ]] && out="${out} ${f}"
+  fi
   printf '%s' "${out# }"
+}
+
+# ---------------------------------------------------------------------------
+# ScummVM: its games index and icons, built in the background
+# ---------------------------------------------------------------------------
+#
+# Both come out of ScummVM's own icon packs (tty2oledplus_scummvm.py), and
+# both are slow on the MiSTer - the standard library's PNG reader takes
+# seconds over a 512x512 icon - so they run niced beside the loop, the way the
+# update checks do. The index is brought up to date once each time ScummVM
+# starts (a no-op when the packs have not changed); an icon is converted the
+# first time its game is played, and kept. A game whose icon cannot be made is
+# not tried again until ScummVM is next started.
+SCUMMVM_TOOL="${SCUMMVM_TOOL:-${TTY2OLED_PATH:-/media/fat/tty2oledplus}/tty2oledplus_scummvm.py}"
+BG_GIVEUP_svi=300
+BG_GIVEUP_svc=300
+SVM_INDEXED=""                  # the ScummVM pid the index was checked for
+declare -A SVM_ICON_TRIED=()    # "<pid>|<engine>|<gameid>" already attempted
+
+scummvm_jobs() {
+  local now="${EPOCHSECONDS:-$(date +%s)}" engine="" gid="" out=""
+  if bg_collect svi "${now}"; then
+    dbug "ScummVM index: ${BG_LINE:-exit ${BG_RC:-killed}}"
+    SVM_BUILT=""                # look the game up again, in the new index
+  fi
+  bg_collect svc "${now}" && dbug "ScummVM icon: ${BG_LINE:-exit ${BG_RC:-killed}}"
+
+  scummvm_core "${oldcore}" && [ -n "${SVM_PID}" ] || return 0
+  [ -r "${SCUMMVM_TOOL}" ] && scummvm_icondirs || return 0
+  if [ "${SVM_INDEXED}" != "${SVM_PID}" ] && ! bg_running svi; then
+    SVM_INDEXED="${SVM_PID}"
+    dbug "ScummVM: checking the games index against ${SVM_DIRS[*]}"
+    bg_start svi "${now}" nice -n 19 python3 "${SCUMMVM_TOOL}" index \
+      --out "${SCUMMVM_CACHE}/games.idx" "${SVM_DIRS[@]}"
+  fi
+  if [ -n "${SVM_NEED_ICON}" ] && [ -z "${SVM_ICON_TRIED[${SVM_PID}|${SVM_NEED_ICON%|*}]:-}" ] &&
+     ! bg_running svc; then
+    SVM_ICON_TRIED[${SVM_PID}|${SVM_NEED_ICON%|*}]=1
+    IFS='|' read -r engine gid out <<<"${SVM_NEED_ICON}"
+    dbug "ScummVM: converting the icon for ${engine}-${gid}"
+    bg_start svc "${now}" nice -n 19 python3 "${SCUMMVM_TOOL}" icon \
+      --out "${out}" --engine "${engine}" --game "${gid}" "${SVM_DIRS[@]}"
+  fi
 }
 
 # Send the 86x64 console icon, if one exists for this core.
@@ -512,6 +600,7 @@ sendicon() {
   sleep ${WAITSECS}
   tail -n +4 "${ICONFILE}" | xxd -r -p >${TTYDEV}
   sleep ${WAITSECS}
+  ICON_SENT="${ICONFILE}"
   return 0
 }
 
@@ -1874,6 +1963,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
             dbug "Core unchanged, refreshing metadata only"
             refreshmeta "${newcore}"
           fi
+          scummvm_jobs
           [ "${1}" = "tty2x" ] && exit 9
           deferred_setup						  # the half of startup the picture did not need
           metawatch="$(metawatchlist)"
@@ -1884,6 +1974,10 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
           # Shorter while Degauss could come or go, which changes none of them.
           mpoll="${METADATA_POLL:-5}"
           degauss_possible && mpoll="${UPDATE_ALL_POLL:-2}"
+          # Not shorter for ScummVM, though nothing is written when a game goes
+          # back to its launcher: a pass costs ~190ms of CPU on the DE10, and
+          # ScummVM runs on the same two cores. The ini's folder is watched, so
+          # a game starting is seen at once; the way back takes 5 to 10s.
           if [ "${debug}" = "false" ]; then
             inotifywait -qq -t "${mpoll}" -e modify,create,moved_to ${metawatch}
           else

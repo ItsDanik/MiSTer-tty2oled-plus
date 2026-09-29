@@ -4,6 +4,40 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.7.4b — 2026-09-29
+
+- **ScummVM games get the console layout.** Until now the display showed the
+  ScummVM banner for as long as ScummVM ran. Start a game from ScummVM's
+  launcher and it now gets the same split layout as a console game: the
+  game's title, with its year and company, engine, platform (DOS, Windows,
+  Amiga...), language and series paging underneath. The picture beside it is
+  the game's own icon from ScummVM's icon packs - Full Throttle's bikers,
+  EcoQuest's dolphin - converted to the panel's greys the first time the
+  game is played and kept from then on. It takes a few seconds on the MiSTer;
+  meanwhile the ScummVM icon stands in, when there is one in `pics/icon`. Go
+  back to ScummVM's launcher and the banner returns within ten seconds.
+  Everything comes from ScummVM's own files already on the SD card, with
+  nothing to download.
+  - Games that keep their files open while they play (the LucasArts SCUMM
+    games and Sierra's SCI games are two) are noticed going back to the
+    launcher. The older Sierra AGI games open nothing for long, so their
+    details stay up until you pick another game or quit ScummVM.
+  - Scrape metadata has a ScummVM entry: a `gamelist.xml` in
+    `games/ScummVM` adds genre, developer, rating and a description page. A
+    game is matched by its folder's name or by its ScummVM id (`ft`,
+    `ft.scummvm`).
+  - `METADATA_FIELDS` gains Platform, Engine and Language, which only
+    ScummVM games have. If you set your own list, add them to see them.
+- **The daemon takes less of the MiSTer's processor while a game is shown.**
+  Every five seconds it checked whether the game's details had changed, and
+  building the line to compare cost about half a second of processor time on
+  the DE10, a sixth of it per detail shown. It now costs a twentieth of that.
+  A core runs on the FPGA and never noticed; ScummVM runs on the same
+  processor as the daemon, and did.
+- **Scrape metadata no longer cuts names at a dot.** A game without a file
+  extension but with a dot in its name - "Castle of Dr. Brain (CD DOS)" -
+  was imported as "Castle of Dr" and never matched.
+
 ## 0.7.3b — 2026-09-29
 
 - **update_all's status line keeps up.** The small grey line under

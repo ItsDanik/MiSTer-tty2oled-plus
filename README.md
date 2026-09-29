@@ -57,6 +57,18 @@ row](docs/img/arcade-card-2.png)
 ![The card's description page: NBA Jam's description scrolling under its
 title](docs/img/arcade-description.png)
 
+**ScummVM games** get the console layout too. While ScummVM sits on its own
+launcher the panel shows the ScummVM banner; start a game and the title comes
+up with its year and company, engine, platform, language and series, and the
+game's own icon beside them. All of it comes from ScummVM's own files: its
+settings say which game was started, and its icon packs hold the details
+and a picture for each game. The icon is converted for the panel the first
+time a game is played, which takes a few seconds (the ScummVM icon stands in
+meanwhile), and is kept after that. Go back to ScummVM's launcher and the
+banner returns within ten seconds. The exception is the older Sierra games
+(AGI), which give no sign of it, so their details stay up until you pick
+another game or quit.
+
 **Computer cores** show the core's artwork full-screen, and nothing else, yet.  
 Computer metadata support coming in the future.
 
@@ -217,7 +229,9 @@ cartridge metadata sets carry release dates and publishers, and the disc set
 carries neither.
 
 Arcade cores do not use the index at all — everything on the card is read
-straight out of the `.mra` file the core was started from.
+straight out of the `.mra` file the core was started from. Nor do ScummVM
+games: ScummVM's own icon packs (`gui-icons-*.dat`) carry its games list,
+with each game's year, company, series and engine.
 
 Cores are named on screen the way your MiSTer menu names them, from `names.txt`
 if you have one.
@@ -238,6 +252,7 @@ folder, beside the games it describes —
 /media/fat/games/NES/gamelist.xml
 /media/usb0/games/SNES/gamelist.xml
 /media/fat/games/mame/gamelist.xml
+/media/usb0/games/ScummVM/gamelist.xml
 ```
 
 — then tick the systems and **Import**. **Select all** and **Select none**
@@ -248,7 +263,10 @@ description page is part of the split layout. **Arcade** is always offered:
 its gamelist is the one in `games/mame`, beside the zips, and games are
 matched by MAME set name, the `<setname>` in each `.mra`. The `.mra`'s own
 year, maker and players win over the gamelist's; the gamelist adds the
-developer, the rating and the description.
+developer, the rating and the description. **ScummVM** is always offered
+too: its gamelist is the one in `games/ScummVM`, and a game is matched by its
+folder's name ("Full Throttle (CD DOS)") or by its ScummVM id (`ft`, as in
+`ft.scummvm`).
 
 Games are matched by file name, so the gamelist has to come from the same
 ROMs, not renamed since. An import replaces what was there for the games it
@@ -357,7 +375,7 @@ sent over when it restarts, so nothing needs reflashing.
 | `SHOW_METADATA` | `yes` | Master switch. `no` shows core artwork only. |
 | `core_bootscreen_time` | `3000` | A console core launched with its game already chosen holds its own full-screen artwork this long, in ms, before the game's details replace it. `0` goes straight to the details. A game loaded into a running core is unaffected. |
 | `METADATA_INTERVAL` | `12` | Seconds per page, console and arcade. Arcade: artwork, each card page in turn, then the artwork again. Console: each page of fields in turn. Either way a description page stays until its text has scrolled through. `0` never turns a page. |
-| `METADATA_FIELDS` | `System Year Genre Region Format Players Rating Released Series` | Which console fields show, and in what order. Four fit at once; the rest take turns, a page every `METADATA_INTERVAL`. Available: System Region Year Company Genre Developer Format Players Rating Released Series — the last four only for games Scrape metadata imported. |
+| `METADATA_FIELDS` | `System Year Genre Region Format Platform Engine Language Players Rating Released Series` | Which console fields show, and in what order. Four fit at once; the rest take turns, a page every `METADATA_INTERVAL`. Available: System Region Year Company Genre Developer Format Platform Engine Language Players Rating Released Series — Platform, Engine and Language only for ScummVM games, the last four only for games Scrape metadata imported. |
 | `METADATA_PINNED` | `System` | Fields that stay put while the rest page under them. The title is always there. |
 | `COMPACT_YEAR_COMPANY` | `yes` | Fold the publisher into the year: `1989, Acclaim` on one row. |
 | `SHOW_DESCRIPTION` | `yes` | The description page, for games Scrape metadata imported a description for — console and arcade. |

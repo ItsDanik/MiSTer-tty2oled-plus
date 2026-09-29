@@ -75,6 +75,7 @@ META_ICON=""        # icon key used to find the 86x64 art
 META_SOURCE=""      # where the title came from: mra | index | scraped | filename | core
 META_GAME="no"      # yes when a real game is loaded, not just a core
 META_DESC=""        # the game's description, for the description page
+META_SHOWCORE=""    # yes when the core's own picture should go back up
 
 # The selection rejected as leftover at the last core change, as
 # "<romref>|<CURRENTPATH mtime>". Polls keep rejecting exactly this one until
@@ -100,6 +101,7 @@ meta_reset() {
   META_SOURCE=""
   META_DESC=""
   META_GAME="no"        # yes once an actual game, not just a core, is identified
+  META_SHOWCORE=""      # yes: a game has ended under a running core (ScummVM)
 }
 
 # Read a file into a variable, tolerating absence. Avoids a subshell.
@@ -745,7 +747,8 @@ _scr_rating() {
 
 # The order used when METADATA_FIELDS is not set. The last four come only from
 # an imported gamelist - a game it does not list simply has none of them.
-_FIELD_ORDER_DEFAULT="System Region Year Company Genre Developer Format Players Rating Released Series"
+# Engine, Platform and Language are ScummVM's: no console game has them.
+_FIELD_ORDER_DEFAULT="System Region Year Company Genre Developer Format Platform Engine Language Players Rating Released Series"
 
 # The arcade card draws from the MRA, which has a vocabulary of its own - an
 # arcade board has players, a joystick and named buttons where a console game
@@ -1005,6 +1008,359 @@ arcade_addfields_ordered() {
 }
 
 # ---------------------------------------------------------------------------
+# ScummVM - a Linux program, not a core, that knows its games better than
+# MiSTer does.
+#
+# Its Scripts launcher writes "ScummVM" to CORENAME and "MENU" back when it
+# exits, and that is all MiSTer ever hears of it. What is playing has to be
+# read off ScummVM itself:
+#
+#   scummvm.ini       ScummVM rewrites it whenever its launcher closes, which
+#                     is how a game starts: lastselectedgame names the game,
+#                     and the game's section its engine, id, path, platform
+#                     and language. So an ini newer than the process means a
+#                     game has been started.
+#   /proc/<pid>/fd    Going back to ScummVM's launcher writes nothing at all.
+#                     But SCUMM and SCI hold their data files open for as long
+#                     as the game runs, and close them on the way out. AGI
+#                     holds nothing - it opens, reads and closes - so a game
+#                     never seen holding a file is taken to run until the ini
+#                     changes again or ScummVM exits.
+#   gui-icons-*.dat   Its icon packs: the year, company, series and engine
+#                     (tty2oledplus_scummvm.py index -> games.idx), and a
+#                     512x512 icon per game, converted once to 86x64 and kept.
+#
+# The process is found by its binary's name (scummvm, scummvmmaster...), its
+# ini by --config or its HOME, so no one launcher script is assumed. A game
+# named on the command line - a per-game launcher - is running from the start.
+# ---------------------------------------------------------------------------
+: "${SCUMMVM_CACHE:=/media/fat/tty2oledplus/cache/scummvm}"
+SCUMMVM_HZ=100            # USER_HZ, what /proc/<pid>/stat counts start time in
+SCUMMVM_GONE_SECS=3       # files closed this long = back in ScummVM's launcher:
+                          # two looks, METADATA_POLL apart, not one
+
+SVM_PID=""; SVM_START=0; SVM_INI=""; SVM_AUTO=""; SVM_ICONDIRS=()
+SVM_INI_SEEN=""           # the ini's mtime when it was last parsed
+SVM_LAST=""; SVM_ICONPATH=""
+declare -A SVM_SEC=()     # lastselectedgame's section (or the autostart's)
+SVM_KEY=""                # which start of which game the rest is about
+SVM_GAMEDIR=""            # its path, resolved, as /proc shows open files
+SVM_HELD="no"             # has it been seen holding a file there?
+SVM_GONE_AT=""            # when it was first seen holding none
+SVM_PLAYING="no"          # the last build's verdict, for META_SHOWCORE
+SVM_DISPLAY=""            # ScummVM's name in names.txt, once a core change
+SVM_NEED_ICON=""          # "<engine>|<gameid>" when the icon is not cached yet
+SVM_BUILT=""              # the SVM_KEY the layout below was worked out for
+SVM_C_TITLE=""; SVM_C_DESC=""; SVM_C_FIELDS=(); SVM_C_PINNED=0
+
+scummvm_core() { [ "${1,,}" = "scummvm" ]; }
+
+scummvm_reset() {
+  SVM_PID=""; SVM_START=0; SVM_INI=""; SVM_AUTO=""; SVM_ICONDIRS=()
+  SVM_INI_SEEN=""; SVM_LAST=""; SVM_ICONPATH=""; SVM_SEC=()
+  SVM_KEY=""; SVM_GAMEDIR=""; SVM_HELD="no"; SVM_GONE_AT=""
+  SVM_PLAYING="no"; SVM_NEED_ICON=""; SVM_BUILT=""
+}
+
+# Is this pid a ScummVM binary? By argv[0]'s name, so neither the launcher
+# script (ScummVM_Master.sh) nor anything else naming the folder counts.
+_svm_is() {
+  local a0=""
+  IFS= read -r -d '' a0 2>/dev/null <"${PROC_ROOT:-/proc}/${1}/cmdline" || [ -n "${a0}" ] || return 1
+  a0="${a0##*/}"
+  [[ "${a0,,}" == scummvm* ]]
+}
+
+# Find the running ScummVM and everything about it that does not change while
+# it runs: start time, ini, icon folders, a game given on the command line.
+# The pid is kept, and checked each time with a read rather than a search.
+scummvm_find() {
+  local proc="${PROC_ROOT:-/proc}" f="" pid="" args=() a="" prev="" i=0
+  local home="" xdg="" e="" st="" rest="" btime="" line="" cfg="" iconsopt=""
+
+  [ -n "${SVM_PID}" ] && _svm_is "${SVM_PID}" && return 0
+  scummvm_reset
+  for f in $(grep -lsai -e 'scummvm' "${proc}"/[0-9]*/cmdline 2>/dev/null); do
+    pid="${f%/cmdline}"; pid="${pid##*/}"
+    _svm_is "${pid}" && { SVM_PID="${pid}"; break; }
+  done
+  [ -n "${SVM_PID}" ] || return 1
+
+  # ScummVM takes a game to start as its last argument. An option's value may
+  # be attached ("--config=f", "-cf") or the next argument ("-c f"), so an
+  # argument after one of the options that take a value is that value.
+  mapfile -d '' args <"${proc}/${SVM_PID}/cmdline" 2>/dev/null
+  for ((i = 1; i < ${#args[@]}; i++)); do
+    a="${args[i]}"
+    case "${prev}" in
+      -c|--config)  cfg="${a}"; prev=""; continue ;;
+      --iconspath)  iconsopt="${a}"; prev=""; continue ;;
+      -[bdegmopqrst]|--path|--savepath|--extrapath|--themepath|--language|--platform|--gfx-mode|--music-driver|--debuglevel|--debugflags|--engine|--game)
+                    prev=""; continue ;;
+    esac
+    case "${a}" in
+      --config=*)    cfg="${a#*=}" ;;
+      --iconspath=*) iconsopt="${a#*=}" ;;
+      -c?*)          cfg="${a#-c}" ;;
+      -*)            ;;
+      *)             [ "${i}" -eq $((${#args[@]} - 1)) ] && SVM_AUTO="${a}" ;;
+    esac
+    prev="${a}"
+  done
+
+  while IFS= read -r -d '' e; do
+    case "${e}" in
+      HOME=*)            home="${e#HOME=}" ;;
+      XDG_CONFIG_HOME=*) xdg="${e#XDG_CONFIG_HOME=}" ;;
+    esac
+  done <"${proc}/${SVM_PID}/environ" 2>/dev/null
+
+  if [ -z "${cfg}" ]; then
+    cfg="${xdg:-${home}/.config}/scummvm/scummvm.ini"
+    [ ! -e "${cfg}" ] && [ -e "${home}/.scummvmrc" ] && cfg="${home}/.scummvmrc"
+  fi
+  SVM_INI="${cfg}"
+  # Where ScummVM keeps icons unless the ini says otherwise.
+  SVM_ICONDIRS=(${iconsopt:+"${iconsopt}"} ${home:+"${home}/.cache/scummvm/icons"})
+
+  # Its start, in epoch seconds: field 22 of stat is clock ticks since boot.
+  # Everything after the ")" that closes the name, which may hold spaces.
+  IFS= read -r st <"${proc}/${SVM_PID}/stat" 2>/dev/null
+  rest="${st##*) }"
+  read -r -a args <<<"${rest}"
+  while IFS= read -r line; do
+    case "${line}" in btime\ *) btime="${line#btime }" ;; esac
+  done <"${proc}/stat" 2>/dev/null
+  if [[ "${args[19]:-}" =~ ^[0-9]+$ ]] && [[ "${btime}" =~ ^[0-9]+$ ]]; then
+    SVM_START=$(( btime + args[19] / SCUMMVM_HZ ))
+  fi
+  return 0
+}
+
+# The ini, re-read only when it has changed: lastselectedgame and iconspath
+# from [scummvm], and the running game's own section.
+scummvm_readini() {
+  local mtime="${1}" target="" k="" v=""
+  [ "${mtime}" = "${SVM_INI_SEEN}" ] && return 0
+  SVM_INI_SEEN="${mtime}"; SVM_LAST=""; SVM_ICONPATH=""; SVM_SEC=()
+  [ -r "${SVM_INI}" ] || return 1
+  target="${SVM_AUTO}"
+  while IFS='=' read -r k v; do
+    case "${k}" in
+      .last)      SVM_LAST="${v}" ;;
+      .iconspath) SVM_ICONPATH="${v}" ;;
+      *)          SVM_SEC[${k}]="${v}" ;;
+    esac
+  done < <(awk -v want="${target,,}" '
+    { sub(/\r$/, "") }
+    /^\[.*\]$/ { sec = tolower(substr($0, 2, length($0) - 2)); next }
+    !index($0, "=") { next }
+    {
+      k = substr($0, 1, index($0, "=") - 1); v = substr($0, index($0, "=") + 1)
+      if (sec == "scummvm") {
+        if (k == "lastselectedgame") { last = tolower(v); print ".last=" v }
+        else if (k == "iconspath") print ".iconspath=" v
+        next
+      }
+      if (k !~ /^(description|gameid|engineid|path|platform|language|extra)$/) next
+      val[sec, k] = v; has[sec] = 1
+    }
+    END {
+      t = (want != "") ? want : last
+      if (!(t in has)) exit
+      split("description gameid engineid path platform language extra", K, " ")
+      for (i = 1; i <= 7; i++) if ((t, K[i]) in val) print K[i] "=" val[t, K[i]]
+    }
+  ' "${SVM_INI}" 2>/dev/null)
+  return 0
+}
+
+# Is a game running, and which? Sets SVM_PLAYING, and SVM_SEC holds its
+# section. Returns 1 in ScummVM's own launcher.
+scummvm_state() {
+  local mtime="" target="" key="" now="${EPOCHSECONDS:-$(date +%s)}" fds=""
+  SVM_PLAYING="no"
+  scummvm_find || return 1
+  mtime="$(stat -c %Y "${SVM_INI}" 2>/dev/null)" || mtime=""
+  scummvm_readini "${mtime}"
+
+  if [ -n "${SVM_AUTO}" ]; then
+    target="${SVM_AUTO}"
+  elif [ -n "${mtime}" ] && [ "${mtime}" -gt $((SVM_START + 1)) ]; then
+    # Newer than the process by more than a second: the launcher closed on a
+    # game. A second of slack for a ScummVM that rewrites its ini as it starts.
+    target="${SVM_LAST}"
+  fi
+  [ -n "${target}" ] && [ -n "${SVM_SEC[gameid]:-}" ] || return 1
+
+  # A new start - even of the same game, which rewrites the ini - begins with
+  # nothing known about its files.
+  key="${target}|${mtime}"
+  if [ "${key}" != "${SVM_KEY}" ]; then
+    SVM_KEY="${key}"; SVM_HELD="no"; SVM_GONE_AT=""
+    SVM_GAMEDIR="$(readlink -f "${SVM_SEC[path]:-/nonexistent}" 2>/dev/null)"
+    SVM_GAMEDIR="${SVM_GAMEDIR%/}"
+  fi
+
+  if [ -n "${SVM_GAMEDIR}" ]; then
+    fds="$(ls -l "${PROC_ROOT:-/proc}/${SVM_PID}/fd" 2>/dev/null)"
+    if [[ "${fds}" == *" -> ${SVM_GAMEDIR}/"* ]]; then
+      SVM_HELD="yes"; SVM_GONE_AT=""
+    elif [ "${SVM_HELD}" = "yes" ]; then
+      # Closed. Held a moment ago, so this engine holds its files while it
+      # plays - but give a file swap a few seconds before calling it over.
+      SVM_GONE_AT="${SVM_GONE_AT:-${now}}"
+      [ $((now - SVM_GONE_AT)) -ge "${SCUMMVM_GONE_SECS}" ] && return 1
+    fi
+  fi
+  SVM_PLAYING="yes"
+  return 0
+}
+
+# ScummVM's platform and language codes, as a person would say them, into
+# the variable named first - no subshell, as these run every pass.
+_svm_platform() {
+  local -n _out="${1}"
+  case "${2,,}" in
+    pc)          _out='DOS' ;;          windows)     _out='Windows' ;;
+    amiga)       _out='Amiga' ;;        atari)       _out='Atari ST' ;;
+    macintosh)   _out='Macintosh' ;;    macintosh2)  _out='Macintosh II' ;;
+    apple2)      _out='Apple II' ;;     2gs)         _out='Apple IIgs' ;;
+    c64)         _out='C64' ;;          fmtowns)     _out='FM Towns' ;;
+    pc98)        _out='PC-98' ;;        pce)         _out='PC Engine' ;;
+    segacd)      _out='Sega CD' ;;      3do)         _out='3DO' ;;
+    nes)         _out='NES' ;;          linux)       _out='Linux' ;;
+    playstation) _out='PlayStation' ;;  cdi)         _out='CD-i' ;;
+    acorn)       _out='Acorn' ;;        coco|coco3)  _out='CoCo' ;;
+    atari8)      _out='Atari 8-bit' ;;  zx)          _out='ZX Spectrum' ;;
+    ti994)       _out='TI-99/4A' ;;     os2)         _out='OS/2' ;;
+    *)           _out="${2}" ;;
+  esac
+}
+
+_svm_language() {
+  local -n _out="${1}"
+  case "${2,,}" in
+    en|gb|us) _out='English' ;;    de)    _out='German' ;;
+    fr)       _out='French' ;;     es)    _out='Spanish' ;;
+    it)       _out='Italian' ;;    pt|br) _out='Portuguese' ;;
+    nl)       _out='Dutch' ;;      se|sv) _out='Swedish' ;;
+    da)       _out='Danish' ;;     no|nb) _out='Norwegian' ;;
+    fi)       _out='Finnish' ;;    pl)    _out='Polish' ;;
+    cz|cs)    _out='Czech' ;;      hu)    _out='Hungarian' ;;
+    ru)       _out='Russian' ;;    gr|el) _out='Greek' ;;
+    he)       _out='Hebrew' ;;     ca)    _out='Catalan' ;;
+    jp|ja)    _out='Japanese' ;;   kr|ko) _out='Korean' ;;
+    cn|zh|zh-cn|tw|zh-tw) _out='Chinese' ;;
+    *)        _out="${2}" ;;
+  esac
+}
+
+# The console layout for the running ScummVM game, or its launcher.
+# META_SHOWCORE says a game shown until now has ended: the caller puts the
+# ScummVM picture back, as CMDMETAOFF alone leaves the layout on the panel.
+#
+# This runs every pass while ScummVM is up, beside a game using both cores, so
+# the layout is worked out once a start (SVM_BUILT) and kept: a pass costs the
+# ini's stat and a listing of the open files, and nothing else starts a
+# process. The daemon clears SVM_BUILT when a new index lands.
+scummvm_meta() {
+  local was="${SVM_PLAYING}" engine="" gid="" title="" dir="" icon=""
+  local i_name="" i_company="" i_year="" i_series="" i_engine="" hit=""
+  local platform="" language="" rating=""
+  META_KIND="console"
+  SVM_NEED_ICON=""
+  if ! scummvm_state; then
+    META_TITLE="${DISPLAY_CORENAME}"
+    META_SOURCE="core"
+    META_ICON=""
+    [ "${was}" = "yes" ] && META_SHOWCORE="yes"
+    return 0
+  fi
+
+  engine="${SVM_SEC[engineid]:-}"; gid="${SVM_SEC[gameid]}"
+  META_SOURCE="scummvm"
+  META_GAME="yes"
+
+  # The icon, once converted - named as the pack names it. Until then the
+  # daemon converts it in the background, and sends it when it is there;
+  # meanwhile, and for a game with none, ScummVM's own (pics/icon/ScummVM).
+  printf -v icon '%s/icons/%s-%s.gsc' "${SCUMMVM_CACHE}" "${engine,,}" "${gid,,}"
+  META_ICON="${DISPLAY_CORENAME:+ScummVM}"
+  if [ -e "${icon}" ]; then META_ICON="${icon}"
+  else SVM_NEED_ICON="${engine,,}|${gid,,}|${icon}"; fi
+
+  if [ "${SVM_BUILT}" = "${SVM_KEY}" ]; then
+    META_TITLE="${SVM_C_TITLE}"; META_DESC="${SVM_C_DESC}"
+    META_FIELDS=("${SVM_C_FIELDS[@]}"); META_PINNED_COUNT="${SVM_C_PINNED}"
+    return 0
+  fi
+  SVM_BUILT="${SVM_KEY}"
+
+  [ -r "${SCUMMVM_CACHE}/games.idx" ] &&
+    hit="$(awk -F'|' -v e="${engine,,}" -v g="${gid,,}" \
+             '$1 == e && $2 == g { print; exit }' "${SCUMMVM_CACHE}/games.idx" 2>/dev/null)"
+  [ -n "${hit}" ] && IFS='|' read -r _ _ i_name i_company i_year i_series i_engine <<<"${hit}"
+
+  # An imported gamelist, keyed by the game's folder - what a scraper names
+  # it - or by the target, as a .scummvm file named after it would be.
+  # Batocera's folders are "Full Throttle.scummvm", and the importer drops that
+  # extension as it does ".svm".
+  dir="${SVM_SEC[path]:-}"; dir="${dir%/}"; dir="${dir##*/}"
+  [[ "${dir,,}" == *.scummvm ]] && dir="${dir%.*}"
+  lookup_scraped "${dir}" "" ScummVM || lookup_scraped "${gid}" "" ScummVM
+
+  # ScummVM's own title, else its description less the variant in brackets -
+  # "Full Throttle (Version A/English)" - else a gamelist's.
+  title="${SVM_SEC[description]:-}"
+  title="${title% (*}"
+  META_TITLE="${i_name:-${title:-${SCR_TITLE:-${gid}}}}"
+  [ "${SHOW_DESCRIPTION:-yes}" = "yes" ] && META_DESC="${SCR_DESC}"
+
+  local _year="${i_year:-${SCR_RELEASED:0:4}}" _company="${i_company:-${SCR_PUBLISHER}}"
+  if [ "${COMPACT_YEAR_COMPANY}" = "yes" ] && [ -n "${_year}" ] && [ -n "${_company}" ]; then
+    _year="${_year}, ${_company}"; _company=""
+  fi
+  # ScummVM names a one-game engine after its game ("Lure of the
+  # Temptress"): as a field that only repeats the title.
+  i_engine="${i_engine:-${engine^^}}"
+  [ "${i_engine,,}" = "${META_TITLE,,}" ] && i_engine=""
+  _svm_platform platform "${SVM_SEC[platform]:-}"
+  _svm_language language "${SVM_SEC[language]:-}"
+  [ -n "${SCR_RATING}" ] && rating="$(_scr_rating "${SCR_RATING}")"
+  META_AVAIL=(
+    [System]="${DISPLAY_CORENAME}"
+    [Year]="${_year}"
+    [Company]="${_company}"
+    [Genre]="${SCR_GENRE}"
+    [Developer]="${SCR_DEVELOPER}"
+    [Engine]="${i_engine}"
+    [Platform]="${platform}"
+    [Language]="${language}"
+    [Players]="${SCR_PLAYERS}"
+    [Rating]="${rating}"
+    [Released]="${SCR_RELEASED}"
+    [Series]="${i_series:-${SCR_SERIES}}"
+  )
+  meta_addfields_ordered
+
+  SVM_C_TITLE="${META_TITLE}"; SVM_C_DESC="${META_DESC}"
+  SVM_C_FIELDS=("${META_FIELDS[@]}"); SVM_C_PINNED="${META_PINNED_COUNT}"
+  return 0
+}
+
+# The folders to look for icon packs in, into SVM_DIRS: the ini's iconspath,
+# then the command line's and ScummVM's default - those that exist.
+scummvm_icondirs() {
+  local d=""
+  SVM_DIRS=()
+  for d in ${SVM_ICONPATH:+"${SVM_ICONPATH}"} "${SVM_ICONDIRS[@]}"; do
+    [ -d "${d}" ] && SVM_DIRS+=("${d}")
+  done
+  [ "${#SVM_DIRS[@]}" -gt 0 ]
+}
+
+# ---------------------------------------------------------------------------
 # build_meta - top level. Produces META_KIND/META_TITLE/META_FIELDS/META_ICON
 # for the core named in $1 (normally the contents of /tmp/CORENAME).
 #
@@ -1018,7 +1374,25 @@ build_meta() {
 
   meta_reset
   [ "${corechange}" = "corechange" ] && META_LAST_SELECTED=""
+
+  # Not a core: the menu core is loaded underneath, and RBFNAME/STARTPATH
+  # still name it - so they are no names for this. Ahead of classify_core,
+  # and names.txt read once a core change: this runs every pass beside a
+  # ScummVM game, and each of those is a process.
+  if scummvm_core "${corename}"; then
+    if [ "${corechange}" = "corechange" ] || [ -z "${SVM_DISPLAY:-}" ]; then
+      SVM_PLAYING="no"
+      CORE_STARTPATH=""
+      display_corename "${corename}"
+      SVM_DISPLAY="${DISPLAY_CORENAME}"
+    fi
+    DISPLAY_CORENAME="${SVM_DISPLAY}"
+    scummvm_meta
+    return 0
+  fi
+
   classify_core "${corename}"
+
   _slurp _rbf "${MISTER_RBFNAME}"
   display_corename "${corename}" "${_rbf}"
 

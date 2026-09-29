@@ -135,7 +135,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `.../bootoutro.h`, `busybar.h` | Boot screen as menu picture + power-on outro; the sweep as a busy bar. |
 | `.../bandnote.h` | Frontends' 54-row picture + band; `CMDNOTE` fading in/out there. |
 | `.../MiSTer_SSD1322_USB.ino` | Includes the headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | ~2550 checks, no hardware. |
+| `tests/` | ~2620 checks, no hardware. |
 | `tools/build-title-index.sh`, `dat2index.awk`, `index-emit.awk`, `mamexml2index.awk` | CRC32 title index from libretro-database (+ MAME XML for Neo Geo). W. |
 | `tools/png2gsc.py` | PNG -> 4bpp `.gsc`. W **and** M: Pillow, ImageMagick, or a stdlib PNG decoder. |
 | `tools/wheels2gsc.py`, `tools/gscpack.py` | Wheel PNGs -> 256x64 `.gsc` (`--nodupes`); pack into `.bin`+`.idx`. W. |
@@ -151,6 +151,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `tools/tty2oledplus.sh` | The launcher, the one Scripts entry: Settings / Update / Scrape metadata / Uninstall. M. |
 | `tools/tty2oledplus_{settings,scrape,update,uninstall}.sh`, `_scrape.py` | The launcher's entries, in the install folder. M. |
 | `tools/tty2oledplus_syscheck.py` | Would update_all update something installed? The daemon runs it in the background. M. |
+| `tools/tty2oledplus_scummvm.py` | ScummVM's icon packs -> `cache/scummvm/games.idx` + per-game 86x64 icons. Daemon, background. M. |
 | `tools/tty2oledplus_install.sh` | The starter users drop in Scripts. M. |
 | `tools/flash-mister.sh`, `tools/fw-segments.py` | Flashes firmware, writing only segments with data. M. |
 | `tools/tty2oled-bootimg.sh` | Sets/clears/queries the stored boot image. M. |
@@ -591,6 +592,55 @@ on MiSTer's `ini_settings.sh`.
   while animating). Speeds are px/s in ini and wire, periods in firmware;
   default vertical 6.
 
+## ScummVM
+
+A Linux program under the menu core, not a core: its Scripts launcher writes
+`ScummVM` to `CORENAME` (and `MENU` on exit), `RBFNAME`/`STARTPATH` still say
+menu. `scummvm_core` routes `build_meta` to `scummvm_meta` (console kind,
+`DISPLAY_CORENAME` without RBFNAME). Everything is read off ScummVM itself -
+**all measured on the real MiSTer** with Full Throttle, EcoQuest, SQ2:
+
+- **Process**: `/proc/*/cmdline` whose argv[0] basename is `scummvm*`
+  (`scummvmmaster`; the launcher script is bash). Pid kept, re-checked with a
+  read. ini = `--config`/`-c`, else `$XDG_CONFIG_HOME|$HOME/.config/scummvm/scummvm.ini`
+  from `/proc/<pid>/environ` (`HOME=/media/fat/ScummVM`). Start time = btime +
+  stat field 22 / 100. A last argument that is not an option's value is an
+  autostart target: running from the start.
+- **Game started** = ini mtime > start + 1s. ScummVM flushes the ini when its
+  launcher closes (`lastselectedgame=<target>`, `[target]` has
+  `description gameid engineid path platform language extra`). **Nothing at
+  all is written going back to the launcher** (ini, log, console, `/tmp`).
+- **Back in the launcher** = the game held a file under its `path` (`ls -l
+  /proc/<pid>/fd`, one fork) and has held none for `SCUMMVM_GONE_SECS` (3).
+  SCUMM and SCI hold files; **AGI holds none** (opens, reads, closes) - a
+  game never seen holding one runs until the ini changes or ScummVM exits.
+  Engines are compiled in (no plugin to see load), fb is fixed 320x240 by
+  `vmode`: no other signal exists. Editing options in the launcher also
+  rewrites the ini and looks like a start.
+- `META_SHOWCORE`: a shown game ended; `refreshmeta` calls `senddata`
+  (`CMDMETAOFF` redraws nothing). The daemon watches the ini's **folder**; the
+  poll stays `METADATA_POLL` (5s) - **a pass costs ~190ms of CPU on the DE10**
+  (update checks 93ms, the two `/proc` greps 55ms; ScummVM's own ~18ms), and
+  a 2s poll took 9% of a core from the game. Way back: two looks, 5-10s.
+- **Metadata**: `gui-icons-*.dat` (zips in the ini's `iconspath`, here
+  `/media/fat/ScummVM/ICONS`) carry `games.xml`/`companies`/`engines`/`series`
+  (all 167 of the user's targets hit) and `icons/<engine>-<gameid>.png`
+  512x512 (165 of 167; `icons/<engine>.png` fallback). Keyed by **engine and
+  id** - ids repeat across engines. Later packs win.
+- **Jobs** (`scummvm_jobs`, `bg_start`): `svi` index check once per pid
+  (no-op on the same packs), `svc` one icon per game not yet cached, niced -
+  the stdlib PNG path is ~10s on the DE10. Icon cached as
+  `SCUMMVM_CACHE/icons/<engine>-<gameid>.gsc`; until then `pics/icon/ScummVM`.
+  A late icon is sent alone (`ICON_SENT`). Index landing clears `SVM_BUILT`.
+- **Per pass**: the layout is built once per start (`SVM_BUILT`/`SVM_C_*`);
+  a pass is the ini `stat` + the fd `ls`. ScummVM pins both DE10 cores
+  (`taskset 03`) - keep it that way.
+- Scraped: `ScummVM.txt`, keyed by the game folder's basename (Batocera's
+  `.scummvm` suffix dropped) or the target id. The importer's `_key` strips
+  only a 1-4 alnum or `.scummvm` extension, as `lookup_scraped` does.
+- Tests: `test-scummvm.sh`, a fake `PROC_ROOT` with the real cmdline, environ,
+  stat and fd links; packs built as zips.
+
 ## Arcade descriptions from history.xml
 
 `tools/history2gamelist.py` (not shipped, nor its output - the file's licence)
@@ -623,9 +673,9 @@ own `fold()`/`clip_desc()`.
 
 ## Tests
 
-`./tests/run-all.sh` - fifteen suites (metadata, wire, index, version,
-daemon, deploy, settings, png2gsc, scrape, syscheck, history2gamelist,
-installer, flash, firmware parser, firmware layout). CI runs all with inotify-tools and
+`./tests/run-all.sh` - sixteen suites (metadata, wire, index, version,
+daemon, deploy, settings, ScummVM, png2gsc, scrape, syscheck,
+history2gamelist, installer, flash, firmware parser, firmware layout). CI runs all with inotify-tools and
 ImageMagick. No shellcheck in `run-all.sh`.
 
 - Installer: builds a real release from the working copy, serves it via
@@ -982,6 +1032,8 @@ row 57..63  build version        BOOT_VER_Y, 5x7 font
 ## Not done yet
 
 - 20 console cores have no icon (split layout, black panel beside it).
+- ScummVM: AGI (and any engine that holds no file) cannot tell its launcher
+  from its game.
 - WonderSwan resolves per game; misses are non-No-Intro filenames.
 - Neo Geo: 203 sets from MAME 2003-Plus, matched by title.
 - The LEDC shim is a clean upstream PR on its own.

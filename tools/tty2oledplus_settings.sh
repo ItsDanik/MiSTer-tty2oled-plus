@@ -80,7 +80,7 @@ cat_label() {
 # The vocabularies. Console fields are what tty2oled-meta.sh can fill in from
 # the filename and the title index; arcade fields are the tags an .mra carries,
 # and the five an imported gamelist adds.
-CONSOLE_FIELDS_ALL="System Region Year Company Genre Developer Format Players Rating Released Series"
+CONSOLE_FIELDS_ALL="System Region Year Company Genre Developer Format Platform Engine Language Players Rating Released Series"
 ARCADE_FIELDS_ALL="Year Manufacturer Region Orientation Core Author Set MAME Genre Platform Version Players Controls Buttons Developer Publisher Rating Released Series"
 
 # The transition effects, as tty2oled-system.ini lists them. Kept in step with

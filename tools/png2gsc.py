@@ -407,6 +407,30 @@ def load_grey_magick(path, w, h, stretch, dither, invert):
     return list(out)
 
 
+def load_grey(path, w, h, stretch=False, dither=False, invert=False, backend="auto"):
+    """The image as w*h greys, 0..255, through the backend asked for; "auto"
+    is Pillow when installed, then ImageMagick, then the built-in PNG reader.
+    tty2oledplus_scummvm.py converts ScummVM's icons through this too."""
+    if backend == "auto":
+        try:
+            import PIL  # noqa: F401
+            backend = "pillow"
+        except ImportError:
+            backend = "magick" if (shutil.which("magick") or shutil.which("convert")) \
+                      else "pure"
+    if backend == "pillow":
+        try:
+            import PIL  # noqa: F401
+        except ImportError:
+            die("--backend pillow, but Pillow is not installed")
+        return load_grey_pillow(path, w, h, stretch, dither, invert)
+    if backend == "magick":
+        return load_grey_magick(path, w, h, stretch, dither, invert)
+    # PNG only - the format the MiSTer path actually gets, and the one the
+    # standard library can reach without a decoder for each of the others.
+    return load_grey_pure(path, w, h, stretch, dither, invert)
+
+
 def to_gsc(pixels, w, h):
     # 8 bits per sample down to 4, to the nearest level. 255 -> f.
     nibbles = "".join("%x" % level(p) for p in pixels)
@@ -502,27 +526,8 @@ def main():
             die("give an image, or --blank to write an empty one")
         if not os.path.isfile(args.image):
             die(f"no such file: {args.image}")
-        backend = args.backend
-        if backend == "auto":
-            try:
-                import PIL  # noqa: F401
-                backend = "pillow"
-            except ImportError:
-                backend = "magick" if (shutil.which("magick") or shutil.which("convert")) \
-                          else "pure"
-        if backend == "pillow":
-            try:
-                import PIL  # noqa: F401
-            except ImportError:
-                die("--backend pillow, but Pillow is not installed")
-            pixels = load_grey_pillow(args.image, w, h, args.stretch, args.dither, args.invert)
-        elif backend == "magick":
-            pixels = load_grey_magick(args.image, w, h, args.stretch, args.dither, args.invert)
-        else:
-            # PNG only - the format the MiSTer path actually gets, and the one
-            # the standard library can reach without a decoder for each of the
-            # others.
-            pixels = load_grey_pure(args.image, w, h, args.stretch, args.dither, args.invert)
+        pixels = load_grey(args.image, w, h, args.stretch, args.dither, args.invert,
+                           args.backend)
 
     if len(pixels) != w * h:
         die(f"got {len(pixels)} pixels, expected {w * h}")

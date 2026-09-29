@@ -358,6 +358,10 @@ ok "comma removed"  "$(metasanitize 'a,b')"  "a b"
 ok "equals removed" "$(metasanitize 'a=b')"  "a b"
 ok "newline removed" "$(printf '%s' "$(metasanitize "$(printf 'a\nb')")")" "ab"
 ok "tab removed"     "$(printf '%s' "$(metasanitize "$(printf 'a\tb')")")" "ab"
+ok "DEL and the other control bytes removed" "$(metasanitize "$(printf 'a\001b\037c\177d')")" "abcd"
+ok "a letter beyond ASCII kept, byte for byte" "$(metasanitize 'Café')" "Café"
+metasan SAN 'x|y,z=w'
+ok "metasan: the same, into a variable" "${SAN}" "x y z w"
 ok "plain text untouched" "$(metasanitize 'Street Fighter II: The World Warrior')" \
                           "Street Fighter II: The World Warrior"
 
@@ -751,8 +755,10 @@ section "an icon must not cut to the layout the transition is about to reach"
 # changed the screen with no transition at all. The draw is for an icon
 # arriving for a layout that is already up, and nothing else.
 INO="${ROOT}/MiSTer_SSD1322_USB/MiSTer_SSD1322_USB.ino"
+# Three: the core change, the game change, and an icon arriving after its
+# game's layout (ScummVM's, converted in the background).
 ok "the daemon sends an icon on a game change, not just a core change" \
-   "$(grep -c 'sendicon "\${META_ICON}"' "${ROOT}/tty2oled.sh")" "2"
+   "$(grep -c 'sendicon "\${META_ICON}"' "${ROOT}/tty2oled.sh")" "3"
 ok "so the icon only draws when nothing is owed a first draw" \
    "$(grep -c 'metaKind==MKIND_CONSOLE && !coreBootHolding && !metaNeedsDraw' "${INO}")" "1"
 
