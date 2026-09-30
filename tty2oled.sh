@@ -1354,9 +1354,11 @@ frontend_core() {
 #
 # Both run in the background (bg_start): a check can take its whole timeout
 # offline, and the loop cannot stop drawing for that. Each pass collects
-# whatever has finished. A check that fails is tried again after
-# UC_RETRY_SECS rather than a whole interval: the first one runs at boot,
-# often before the network is up.
+# whatever has finished. A check that fails is tried again soon rather than
+# a whole interval later - UC_RETRY_FIRST, doubling each failure in a row up
+# to UC_RETRY_SECS: the first one runs at boot, usually before the network is
+# up (curl 6, no name resolved), and waiting the full five minutes for the
+# second left the notice off for most of that.
 #
 # CMDNOTE carries the text to the firmware (0.7.1b and later), which keeps it
 # and shows it in the band of every frontend picture: faded in where one is up,
@@ -1365,6 +1367,9 @@ UPDATE_URL="${UPDATE_URL:-https://github.com/ItsDanik/MiSTer-tty2oled-plus/relea
 UPDATE_CACERT="${UPDATE_CACERT:-/etc/ssl/certs/cacert.pem}"   # MiSTer's curl finds none itself
 SYSCHECK="${SYSCHECK:-${TTY2OLED_PATH:-/media/fat/tty2oledplus}/tty2oledplus_syscheck.py}"
 UC_RETRY_SECS=300
+UC_RETRY_FIRST=30
+UC_FAILS=0          # failures in a row, each check
+SC_FAILS=0
 UC_OUT="/tmp/.tty2oledplus-check.$$"
 SC_CACHE="${SC_CACHE:-/tmp/.tty2oledplus-check.etags}"   # the databases' ETags, between checks
 declare -A BG_PID=() BG_STARTED=()
@@ -1449,11 +1454,18 @@ update_check_on() {  # update_check_on <TTY2OLED|SYSTEM>
   [ "${UC_MINUTES}" -gt 0 ]
 }
 
-# When the next check is due after one that ended: an interval, or
-# UC_RETRY_SECS if that is sooner and it failed.
-next_after() {  # next_after <now> <failed: yes|no>
-  local secs=$(( $(update_check_minutes) * 60 ))
-  [ "${2}" = "yes" ] && [ "${secs}" -gt "${UC_RETRY_SECS}" ] && secs="${UC_RETRY_SECS}"
+# When the next check is due after one that ended: an interval, or - the
+# nth failure in a row - UC_RETRY_FIRST doubled n-1 times, at most
+# UC_RETRY_SECS, if that is sooner.
+next_after() {  # next_after <now> <failed: yes|no> [failures in a row]
+  local secs=$(( $(update_check_minutes) * 60 )) retry="${UC_RETRY_FIRST}" n="${3:-1}"
+  if [ "${2}" = "yes" ]; then
+    while [ "${n}" -gt 1 ] && [ "${retry}" -lt "${UC_RETRY_SECS}" ]; do
+      retry=$(( retry * 2 )); n=$(( n - 1 ))
+    done
+    [ "${retry}" -gt "${UC_RETRY_SECS}" ] && retry="${UC_RETRY_SECS}"
+    [ "${secs}" -gt "${retry}" ] && secs="${retry}"
+  fi
   printf '%s' "$(( ${1} + secs ))"
 }
 
@@ -1484,9 +1496,11 @@ uc_pass() {  # uc_pass <now>
   if bg_collect uc "${now}"; then
     v="${BG_LINE//[[:space:]]/}"
     if [ "${BG_RC}" != "0" ] || [ -z "${v}" ]; then
-      dbug "The release check failed (curl ${BG_RC:-stopped}); again in ${UC_RETRY_SECS}s"
-      UC_NEXT="$(next_after "${now}" yes)"
+      UC_FAILS=$(( UC_FAILS + 1 ))
+      UC_NEXT="$(next_after "${now}" yes "${UC_FAILS}")"
+      dbug "The release check failed (curl ${BG_RC:-stopped}); again in $(( UC_NEXT - now ))s"
     else
+      UC_FAILS=0
       UC_NEXT="$(next_after "${now}" no)"
       if version_newer "${v}" "${TTY2OLED_VERSION:-}"; then
         printf '%s\n' "${v}" >"${UPDATE_FLAG}"
@@ -1500,7 +1514,7 @@ uc_pass() {  # uc_pass <now>
   update_flagged && return 0
   bg_running uc && return 0
   due "${UC_NEXT}" "${now}" || return 0
-  command -v curl >/dev/null 2>&1 || { UC_NEXT="$(next_after "${now}" yes)"; return 0; }
+  command -v curl >/dev/null 2>&1 || { UC_NEXT="$(next_after "${now}" yes "${UC_FAILS}")"; return 0; }
   dbug "Looking for a newer tty2oled+ at ${UPDATE_URL}"
   bg_start uc "${now}" uc_fetch
 }
@@ -1521,7 +1535,7 @@ sysupdate_process() {
   SYSUPD=""; SYSUPD_PID=""
   proc_hits
   for f in "${PROC_HITS[@]}"; do
-    args=(); mapfile -d '' -t args <"${f}" 2>/dev/null
+    args=(); mapfile -d '' -t args 2>/dev/null <"${f}"
     a0="${args[0]:-}"; a1="${args[1]:-}"
     if [ "${a0}" = "/tmp/downloader.sh" ] || [ "${a1%/Scripts/update.sh}" != "${a1}" ]; then
       case " ${args[*]} " in *" --list-dbs "*) continue ;; esac
@@ -1556,17 +1570,18 @@ sc_pass() {  # sc_pass <now>
       case "${BG_LINE}" in
         yes*)
           SC_FLAGGED="${BG_LINE#yes }"
-          SC_NEXT="$(next_after "${now}" no)"
+          SC_FAILS=0; SC_NEXT="$(next_after "${now}" no)"
           echo "tty2oled: a system update is waiting (${SC_FLAGGED}) - update_all installs it." ;;
         no)
           dbug "No system update waiting"
-          SC_NEXT="$(next_after "${now}" no)" ;;
+          SC_FAILS=0; SC_NEXT="$(next_after "${now}" no)" ;;
         nostate)
           dbug "No update_all state to check against - it has not run yet"
-          SC_NEXT="$(next_after "${now}" no)" ;;
+          SC_FAILS=0; SC_NEXT="$(next_after "${now}" no)" ;;
         *)
-          dbug "The system check failed (${BG_LINE:-exit ${BG_RC:-stopped}}); again in ${UC_RETRY_SECS}s"
-          SC_NEXT="$(next_after "${now}" yes)" ;;
+          SC_FAILS=$(( SC_FAILS + 1 ))
+          SC_NEXT="$(next_after "${now}" yes "${SC_FAILS}")"
+          dbug "The system check failed (${BG_LINE:-exit ${BG_RC:-stopped}}); again in $(( SC_NEXT - now ))s" ;;
       esac
     fi
   fi
@@ -1611,13 +1626,13 @@ sam_running() {
   local f args=()
   [ -e "${SAM_SCRIPT}" ] || return 1          # not installed: no /proc to search
   if [ -n "${SAM_PID}" ]; then
-    mapfile -d '' -t args <"${PROC_ROOT:-/proc}/${SAM_PID}/cmdline" 2>/dev/null
+    mapfile -d '' -t args 2>/dev/null <"${PROC_ROOT:-/proc}/${SAM_PID}/cmdline"
     sam_loop "${args[@]}" && return 0
     SAM_PID=""
   fi
   proc_hits
   for f in "${PROC_HITS[@]}"; do
-    args=(); mapfile -d '' -t args <"${f}" 2>/dev/null
+    args=(); mapfile -d '' -t args 2>/dev/null <"${f}"
     if sam_loop "${args[@]}"; then f="${f%/cmdline}"; SAM_PID="${f##*/}"; return 0; fi
   done
   return 1
@@ -1776,7 +1791,7 @@ downloader_running() {
   local f="" args=()
   proc_hits
   for f in "${PROC_HITS[@]}"; do
-    args=(); mapfile -d '' -t args <"${f}" 2>/dev/null
+    args=(); mapfile -d '' -t args 2>/dev/null <"${f}"
     case " ${args[*]} " in *ua_downloader*) ;; *) continue ;; esac
     case " ${args[*]} " in *--list-dbs*) continue ;; esac
     return 0
@@ -1874,8 +1889,12 @@ selfupdate_pids() {  # into SELFUPD_PIDS, and on stdout
   SELFUPD_PIDS=""
   proc_hits
   for f in "${PROC_HITS[@]}"; do
-    args=(); mapfile -d '' -t args <"${f}" 2>/dev/null
-    case "${args[*]}" in *tty2oledplus_update*|*update_tty2oledplus*) ;; *) continue ;; esac
+    args=(); mapfile -d '' -t args 2>/dev/null <"${f}"
+    # A shell running the script, by its file name - not any command line
+    # with the name in it: the update flag is /tmp/tty2oledplus_update, and
+    # a "cat" of it put "Updating TTY2OLED+..." on the panel.
+    case "${args[0]##*/}" in bash|sh) ;; *) continue ;; esac
+    case "${args[1]:-}" in */tty2oledplus_update.sh|tty2oledplus_update.sh|*/update_tty2oledplus.sh|update_tty2oledplus.sh) ;; *) continue ;; esac
     p="${f%/cmdline}"; SELFUPD_PIDS="${SELFUPD_PIDS}${p##*/} "
   done
   printf '%s' "${SELFUPD_PIDS}"
@@ -1980,7 +1999,7 @@ now_ms() {
 NAP_FD=""
 nap() {  # nap <seconds, fractions allowed>
   if [ -z "${NAP_FD}" ]; then
-    exec {NAP_FD}<> <(:) 2>/dev/null || NAP_FD="none"
+    { exec {NAP_FD}<> <(:); } 2>/dev/null || NAP_FD="none"   # braced: see ua_openlog
   fi
   if [ "${NAP_FD}" = "none" ]; then sleep "${1}"; return 0; fi
   read -r -t "${1}" -u "${NAP_FD}" _ 2>/dev/null
@@ -2107,7 +2126,9 @@ ua_closelog() {
 ua_openlog() {
   ua_closelog
   UA_VERDICT=""; UA_RUNTIME=""; UA_LINE=""; UA_DLSUM=""; UA_CAND=()
-  exec {UA_FD}<"${UA_LOG}" 2>/dev/null || { UA_FD=""; return 0; }
+  # Braced: on exec with no command a redirection is the shell's for good,
+  # and "2>/dev/null" there silenced the daemon's errors from then on.
+  { exec {UA_FD}<"${UA_LOG}"; } 2>/dev/null || { UA_FD=""; return 0; }
   UA_SIZE="$(stat -c %s "${UA_LOG}" 2>/dev/null || echo 0)"
 }
 

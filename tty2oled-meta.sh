@@ -107,7 +107,7 @@ meta_reset() {
 # Read a file into a variable, tolerating absence. Avoids a subshell.
 _slurp() {
   local __var="${1}" __file="${2}" __val=""
-  [ -r "${__file}" ] && IFS= read -r __val <"${__file}" 2>/dev/null
+  [ -r "${__file}" ] && IFS= read -r __val 2>/dev/null <"${__file}"
   printf -v "${__var}" '%s' "${__val}"
 }
 
@@ -1250,7 +1250,7 @@ scummvm_find() {
   # ScummVM takes a game to start as its last argument. An option's value may
   # be attached ("--config=f", "-cf") or the next argument ("-c f"), so an
   # argument after one of the options that take a value is that value.
-  mapfile -d '' args <"${proc}/${SVM_PID}/cmdline" 2>/dev/null
+  mapfile -d '' args 2>/dev/null <"${proc}/${SVM_PID}/cmdline"
   for ((i = 1; i < ${#args[@]}; i++)); do
     a="${args[i]}"
     case "${prev}" in
@@ -1274,7 +1274,7 @@ scummvm_find() {
       HOME=*)            home="${e#HOME=}" ;;
       XDG_CONFIG_HOME=*) xdg="${e#XDG_CONFIG_HOME=}" ;;
     esac
-  done <"${proc}/${SVM_PID}/environ" 2>/dev/null
+  done 2>/dev/null <"${proc}/${SVM_PID}/environ"
 
   if [ -z "${cfg}" ]; then
     cfg="${xdg:-${home}/.config}/scummvm/scummvm.ini"
@@ -1286,12 +1286,12 @@ scummvm_find() {
 
   # Its start, in epoch seconds: field 22 of stat is clock ticks since boot.
   # Everything after the ")" that closes the name, which may hold spaces.
-  IFS= read -r st <"${proc}/${SVM_PID}/stat" 2>/dev/null
+  IFS= read -r st 2>/dev/null <"${proc}/${SVM_PID}/stat"
   rest="${st##*) }"
   read -r -a args <<<"${rest}"
   while IFS= read -r line; do
     case "${line}" in btime\ *) btime="${line#btime }" ;; esac
-  done <"${proc}/stat" 2>/dev/null
+  done 2>/dev/null <"${proc}/stat"
   if [[ "${args[19]:-}" =~ ^[0-9]+$ ]] && [[ "${btime}" =~ ^[0-9]+$ ]]; then
     SVM_START=$(( btime + args[19] / SCUMMVM_HZ ))
   fi
@@ -1540,7 +1540,7 @@ meta_inputs() {  # meta_inputs <corename>
   for f in "${MISTER_RBFNAME}" "${MISTER_STARTPATH}" "${MISTER_FULLPATH}" \
            "${MISTER_CURRENTPATH}" "${MISTER_FILESELECT}" "${MISTER_GAMEID}"; do
     v=""
-    [ -r "${f}" ] && IFS= read -r -d '' v <"${f}" 2>/dev/null
+    [ -r "${f}" ] && IFS= read -r -d '' v 2>/dev/null <"${f}"
     out="${out}"$'\x1f'"${v}"
   done
   META_INPUTS="${out}"$'\x1f'"${META_STATSIG}"

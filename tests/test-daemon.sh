@@ -1081,6 +1081,14 @@ TTYDEV="${WIRE}"
 
 SELF_UPDATE_SCREEN="yes"; SELFUPDATE_SHOWN="no"; SHOW_METADATA="yes"
 selfupdate_running; ok "no updater running" "${?}" "1"
+# The update flag is /tmp/tty2oledplus_update: looking at it is no update,
+# nor is an editor open on the script.
+mkproc 690 cat /tmp/tty2oledplus_update
+mkproc 691 ls -l /tmp/tty2oledplus_update
+mkproc 692 vi /media/fat/tty2oledplus/tty2oledplus_update.sh
+mkproc 693 bash -c 'cat /tmp/tty2oledplus_update'
+selfupdate_running; ok "a look at the update flag is not an update" "${?}" "1"
+rm -rf "${PROC_ROOT}/690" "${PROC_ROOT}/691" "${PROC_ROOT}/692" "${PROC_ROOT}/693"
 mkproc 700 /bin/bash /media/fat/Scripts/tty2oledplus_update.sh
 selfupdate_running; ok "tty2oledplus_update seen" "${?}" "0"
 SELF_UPDATE_SCREEN="no"
@@ -1441,7 +1449,7 @@ reset_checks() {
     BG_PID[${j}]=""
   done
   rm -f "${UC_OUT}".*
-  UC_NEXT=""; SC_NEXT=""; SC_FLAGGED=""; SC_UA="no"; NOTE_SENT="?"
+  UC_NEXT=""; SC_NEXT=""; SC_FLAGGED=""; SC_UA="no"; NOTE_SENT="?"; UC_FAILS=0; SC_FAILS=0
   rm -f "${UPDATE_FLAG}"; FAKE_LATEST="0.7.1b"; FAKE_SC="no"; fresh
 }
 nowish() { date +%s; }
@@ -1497,7 +1505,18 @@ reset_checks; FAKE_CURL_RC=6; SC_NEXT=$(( $(nowish) + 999 ))
 updatenote_pass; settle; updatenote_pass
 ok "offline: nothing flagged" "$(yesno_e "${UPDATE_FLAG}")" "no"
 left=$(( UC_NEXT - $(nowish) ))
-ok "and tried again in five minutes" "$(( left >= UC_RETRY_SECS - 1 && left <= UC_RETRY_SECS ))" "1"
+# At boot the network is not up yet (curl 6): soon, then less often.
+ok "and tried again soon" "$(( left >= UC_RETRY_FIRST - 1 && left <= UC_RETRY_FIRST ))" "1"
+for want in 60 120 240 300 300; do
+  UC_NEXT=0; updatenote_pass; settle; updatenote_pass
+  left=$(( UC_NEXT - $(nowish) ))
+  ok "failing again: in ${want}s" "$(( left >= want - 1 && left <= want ))" "1"
+done
+FAKE_CURL_RC=0; UC_NEXT=0; updatenote_pass; settle; updatenote_pass
+ok "an answer starts the count again" "${UC_FAILS}" "0"
+FAKE_CURL_RC=6; UC_NEXT=0; updatenote_pass; settle; updatenote_pass
+left=$(( UC_NEXT - $(nowish) ))
+ok "so the next failure is soon again" "$(( left >= UC_RETRY_FIRST - 1 && left <= UC_RETRY_FIRST ))" "1"
 FAKE_CURL_RC=0
 
 reset_checks; FAKE_CURL_SLEEP=30; SC_NEXT=$(( $(nowish) + 999 ))
@@ -1506,7 +1525,7 @@ BG_STARTED[uc]=$(( $(nowish) - BG_GIVEUP_uc - 1 ))
 updatenote_pass
 ok "a check stuck past its limit is stopped" "$(kill -0 "${STUCK}" 2>/dev/null && echo alive || echo gone)" "gone"
 left=$(( UC_NEXT - $(nowish) ))
-ok "and retried like a failure" "$(( left >= UC_RETRY_SECS - 1 && left <= UC_RETRY_SECS ))" "1"
+ok "and retried like a failure" "$(( left >= UC_RETRY_FIRST - 1 && left <= UC_RETRY_FIRST ))" "1"
 FAKE_CURL_SLEEP=0
 
 section "updates waiting: the system"
@@ -1565,7 +1584,10 @@ ok "looked at again an interval later" "$(( SC_NEXT - $(nowish) > 29 * 60 ))" "1
 reset_checks; UC_NEXT=$(( $(nowish) + 999 )); FAKE_SC="error none of 65 databases could be reached"
 updatenote_pass; settle; updatenote_pass
 left=$(( SC_NEXT - $(nowish) ))
-ok "offline: tried again in five minutes" "$(( left >= UC_RETRY_SECS - 1 && left <= UC_RETRY_SECS ))" "1"
+ok "offline: tried again soon" "$(( left >= UC_RETRY_FIRST - 1 && left <= UC_RETRY_FIRST ))" "1"
+SC_NEXT=0; updatenote_pass; settle; updatenote_pass
+left=$(( SC_NEXT - $(nowish) ))
+ok "and later the longer it fails" "$(( left >= 2 * UC_RETRY_FIRST - 1 && left <= 2 * UC_RETRY_FIRST ))" "1"
 
 section "updates waiting: the switches and the words"
 reset_checks; FAKE_LATEST="0.7.2b"; FAKE_SC="yes a: b"

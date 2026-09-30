@@ -4,6 +4,23 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.8.0b — 2026-09-30
+
+- **"TTY2OLED+ Update Available" appears soon after boot.** The first look
+  for a new release happens at boot, usually before the network is up, and a
+  failed look was only tried again five minutes later - so a waiting update
+  went unmentioned for the first minutes after every power-on. A failed look
+  is now tried again after 30 seconds, then a minute, two, four, and every
+  five minutes after that.
+- **Checking for an update no longer says "Updating TTY2OLED+...".**
+  Anything whose command line merely mentioned the updater's name - looking
+  at the update notice's own file over SSH, for one - was taken for the
+  updater running, and put its screen on the panel until it finished. Only
+  the updater itself counts now.
+- **The daemon's error messages are kept after update_all has run.** From
+  the first update_all run on, they were silently thrown away, which made
+  anything going wrong after that invisible in the log.
+
 ## 0.7.9b — 2026-09-30
 
 - **SAM's countdown now shows with SAM Video on.** 0.7.8b left the timer
