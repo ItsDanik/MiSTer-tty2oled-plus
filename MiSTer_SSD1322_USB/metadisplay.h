@@ -111,6 +111,12 @@
 #define HEAD_TIMER_FONT  0              // 5x7
 #define HEAD_TIMER_GAP   5
 #define HEAD_TIMER_MAX   5999           // 99:59
+// At 0:00 SAM is not done: with SAM Video it downloads the next clip first,
+// ten seconds and more with the game still up. So the count's place says
+// HEAD_TIMER_DONE instead, flashing - HEAD_TIMER_BLINK_MS lit, as long dark -
+// until the game goes. Four characters, as "0:00" is: nothing moves.
+#define HEAD_TIMER_DONE      "NEXT"
+#define HEAD_TIMER_BLINK_MS  250
 #define CON_HEADER_Y     11             // header baseline
 #define CON_GAP_HEADER   1              // blank rows between header and rule
 #define CON_RULE_Y       (CON_HEADER_Y + CON_GAP_HEADER + 1)          // 13
@@ -303,7 +309,8 @@ bool          metaHeadRedraw  = false;
 // takes both away together.
 long          metaTimerSecs   = -1;     // -1: no timer
 unsigned long metaTimerAt     = 0;      // millis() when it was given
-long          metaTimerShown  = -2;     // what the header last drew; -2 nothing
+long          metaTimerShown  = -2;     // what the header last drew; -2 nothing,
+                                        // -3/-4 NEXT lit/dark (meta_timerState)
 
 // Also set by a description arriving for a layout already on the panel: its
 // page adds a pip, so the same picture has to be drawn again.
@@ -700,18 +707,29 @@ static void meta_timerText(long left, char *out, size_t n) {
   snprintf(out, n, "%ld:%02ld", left / 60, left % 60);
 }
 
+// What the header's timer shows at `now`, as one number: the seconds left,
+// -1 none, and past the end -3 for NEXT lit, -4 for it dark - so the redraw
+// test is one comparison, and the flash is a change like a second turning.
+static long meta_timerState(unsigned long now) {
+  const long left = meta_timerLeft(now);
+  if (left != 0) return left;
+  const unsigned long over = now - metaTimerAt - (unsigned long)metaTimerSecs * 1000UL;
+  return ((over / HEAD_TIMER_BLINK_MS) % 2) ? -4 : -3;
+}
+
 // The header's caption, in the first of its fonts it fits, maxw wide - and
 // after it, the timer when there is one, which the caption leaves room for.
 static void meta_drawHeader(int x, int maxw) {
   const char *s = meta_headerText();
   char t[12] = "";
   int tw = 0;
-  const long left = meta_timerLeft(millis());
-  metaTimerShown = left;
-  if (left >= 0) {
-    meta_timerText(left, t, sizeof(t));
+  const long state = meta_timerState(millis());
+  metaTimerShown = state;
+  if (state != -1) {
+    if (state >= 0) meta_timerText(state, t, sizeof(t));
+    else            snprintf(t, sizeof(t), "%s", HEAD_TIMER_DONE);
     oled_setfont(HEAD_TIMER_FONT);
-    tw = meta_textWidth(t) + HEAD_TIMER_GAP;
+    tw = meta_textWidth(t) + HEAD_TIMER_GAP;   // dark or lit, the same room
   }
   const int capw = maxw - tw;
   oled_setfont(CON_HEADER_FONT);
@@ -734,6 +752,7 @@ static void meta_drawHeader(int x, int maxw) {
   oled_setfont(HEAD_TIMER_FONT);
   const int tAsc = u8g2.getFontAscent();
   const int ty = CON_HEADER_Y - (capAsc - tAsc) / 2;
+  if (state == -4) return;                     // NEXT's dark half
   u8g2.setCursor(x + cw + HEAD_TIMER_GAP, ty);
   u8g2.print(t);
 }
@@ -1678,7 +1697,7 @@ void meta_parseTimer(const char *cmd) {
 
 // Has the header's timer something new to show? Asked beside the pips' blink.
 static bool meta_timerTick(unsigned long now) {
-  return meta_timerLeft(now) != metaTimerShown && metaTimerShown != -2;
+  return meta_timerState(now) != metaTimerShown && metaTimerShown != -2;
 }
 
 // ---------------------------------------------------------------------------

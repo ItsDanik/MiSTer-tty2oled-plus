@@ -356,9 +356,20 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   **The countdown after it** (`SAM_TIMER`, `samtimer_pass`, 0.7.8b): SAM
   writes `/tmp/SAM_Game.txt` at each launch, sleeps 1s, then counts
   `gametimer` down a second at a time (`run_countdown_timer`), so the next
-  game is due at that file's mtime + 1 + gametimer. `CMDHTIMER` once a game
-  (the file's time against `SAM_STAMP`, `-nt`: no process between games);
-  the firmware counts. gametimer from `MiSTer_SAM.ini` (120 default), 21
+  game is due at about that file's mtime + 1 + gametimer. `CMDHTIMER` at
+  once on a new game (the file's time against `SAM_STAMP`, `-nt`), **always
+  sent** - two games at the same count left the display at 0:00 (0.8.0b);
+  the firmware counts. **SAM's second is `sleep 1` + its loop: 180 counts
+  took ~190s on the DE10**, so `sam_counter` reads SAM's own "Next game in
+  N..." off the last line of `tmux capture-pane -p -t SAM` (~50ms a look):
+  once after a game starts, every `SAM_LOOK_SECS` (30), every pass in the
+  last `SAM_LOOK_NEAR` (15); resent when 2s or more out. A video's pane has
+  no count, so nothing is corrected then. **At 0:00 the firmware shows
+  `HEAD_TIMER_DONE` ("NEXT") flashing** (250ms lit/dark, `meta_timerState`
+  -3/-4, same width, so the caption never moves): with SAM Video SAM then
+  downloads the next clip (`sv_ar_download`, measured 14s) with the game
+  still up, and loads `menu.rbf` only after. Its `keep_local_copy` is
+  compared case-sensitively and not lower-cased: `"Yes"` never caches. gametimer from `MiSTer_SAM.ini` (120 default), 21
   with `m82=yes`. `samvideo=yes` changes nothing (0.7.8b wrongly sent no
   timer): its games use gametimer, and a video plays over `menu.rbf` with
   no header up and no `SAM_Game.txt` written. The caption leaves the timer its

@@ -4,6 +4,20 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.8.1b — 2026-09-30
+
+- **SAM's countdown keeps time with SAM.** SAM's seconds run a little
+  slow - about 190 real seconds to count down 180 - so the display reached
+  0:00 early and sat there. It now reads SAM's own count as the game goes and
+  keeps in step with it.
+- **"NEXT" when the count is done.** With SAM Video on, SAM downloads the
+  next clip after the count reaches zero, with the game still up - ten to
+  fifteen seconds of 0:00. The countdown's place now says NEXT, flashing,
+  until the game goes.
+- **Every game's countdown starts from the top.** When two games in a row
+  began with the same number of seconds, the second one's count was never
+  sent, and the display stayed at 0:00 through the whole game.
+
 ## 0.8.0b — 2026-09-30
 
 - **"TTY2OLED+ Update Available" appears soon after boot.** The first look

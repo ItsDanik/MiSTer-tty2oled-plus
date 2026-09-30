@@ -3766,10 +3766,44 @@ int main() {
         u8g2.resetProbe(); oled.resetProbe();
         okBool("the next second redraws it",         meta_tick(), true);
         okBool("one less",                           u8g2.find("1:41") != nullptr, true);
-        g_fakeMillis += 200000;
+        // Past the end SAM is still busy - downloading its next clip, with
+        // the game up - so the count's place says NEXT, flashing at 2Hz.
+        metaTimerAt = g_fakeMillis; metaTimerSecs = 2;
+        meta_showConsole();
+        g_fakeMillis += 1000;
+        u8g2.resetProbe(); oled.resetProbe(); meta_tick();
+        okBool("0:01 before the end",                u8g2.find("0:01") != nullptr, true);
+        g_fakeMillis += 1000;
+        u8g2.resetProbe(); oled.resetProbe(); meta_tick();
+        const FakeU8g2::Draw *nx = u8g2.find(HEAD_TIMER_DONE);
+        okBool("at the end, NEXT, not 0:00",         nx != nullptr && u8g2.find("0:00") == nullptr, true);
+        if (nx) {
+            okInt ("in the count's place",           nx->x, u8g2.find(SAM)->x + (int)strlen(SAM) * u8g2.find(SAM)->charW + HEAD_TIMER_GAP);
+            okInt ("in the count's font",            nx->charW, 5);
+        }
+        const int capW = u8g2.find(SAM) ? u8g2.find(SAM)->charW : -1;
+        g_fakeMillis += 100;
         u8g2.resetProbe(); oled.resetProbe();
-        meta_tick();
-        okBool("and stops at nought",                u8g2.find("0:00") != nullptr, true);
+        okBool("lit for its first 250ms",            meta_tick() == false && u8g2.draws.empty(), true);
+        g_fakeMillis += 150;
+        u8g2.resetProbe(); oled.resetProbe();
+        okBool("then dark: drawn again",             meta_tick(), true);
+        okBool("without it",                         u8g2.find(HEAD_TIMER_DONE) == nullptr && u8g2.find(SAM) != nullptr, true);
+        if (u8g2.find(SAM)) okInt("the caption where it was, dark or lit", u8g2.find(SAM)->charW, capW);
+        g_fakeMillis += 250;
+        u8g2.resetProbe(); oled.resetProbe(); meta_tick();
+        okBool("and lit again 250ms on",             u8g2.find(HEAD_TIMER_DONE) != nullptr, true);
+        g_fakeMillis += 60000;
+        int flips = 0; bool lit = true;
+        for (int i = 0; i < 40; i++) {
+            g_fakeMillis += 50;
+            u8g2.resetProbe(); oled.resetProbe();
+            if (meta_tick()) { bool now = u8g2.find(HEAD_TIMER_DONE) != nullptr; if (now != lit) flips++; lit = now; }
+        }
+        okInt ("flashing on for as long as it takes: 2s is 8 turns", flips, 8);
+        meta_parseTimer("CMDHTIMER,90");
+        u8g2.resetProbe(); oled.resetProbe(); meta_renderConsole();
+        okBool("the next game's count replaces it",  u8g2.find("1:30") != nullptr && u8g2.find(HEAD_TIMER_DONE) == nullptr, true);
 
         // The caption steps down its fonts to leave the timer room, to 5x7
         // beside the most pips; clear of them either way.

@@ -1655,22 +1655,33 @@ sam_pass() {
 # The time to SAM's next game, after its caption (CMDHTIMER, 0.7.8b).
 #
 # SAM writes the game it launches to /tmp/SAM_Game.txt, tells MiSTer to load
-# it, waits a second, and then counts its gametimer down a second at a time
-# (run_countdown_timer in MiSTer_SAM_on.sh) - so the next game is due the
-# file's time, plus one, plus gametimer. That is sent once a game; the
-# firmware counts it down itself. gametimer is MiSTer_SAM.ini's (120 by
-# default), 21 in M82 mode, whatever the ini says. SAM Video does not change
-# it: its games are timed the same way, and a video in between is played
-# over menu.rbf - the menu's picture, no header to show a count in - and
-# writes no SAM_Game.txt, so the game after it starts a count of its own.
+# it, waits a second, and then counts its gametimer down (run_countdown_timer
+# in MiSTer_SAM_on.sh) - so the next game is due about the file's time, plus
+# one, plus gametimer. That goes out the moment a game is new; the firmware
+# counts it down itself. gametimer is MiSTer_SAM.ini's (120 by default), 21
+# in M82 mode, whatever the ini says. SAM Video does not change it: its games
+# are timed the same way, and a video in between is played over menu.rbf -
+# the menu's picture, no header to show a count in - and writes no
+# SAM_Game.txt, so the game after it starts a count of its own.
 #
-# Looked at every pass while SAM runs, by a test of the file's time against
-# a copy of it (SAM_STAMP) - no process - and read only when a game is new.
+# "About", because SAM's second is a "sleep 1" and the rest of its loop,
+# which on the DE10 is 180 counts in ~190 real seconds: a count from the
+# clock ran out ten seconds early and sat at 0:00. So SAM's own count is read
+# as well - "Next game in N...", the last line of its tmux session's pane -
+# a look shortly after the game starts, every SAM_LOOK_SECS, and every pass
+# in the last SAM_LOOK_NEAR seconds, and the firmware is corrected when it is
+# two seconds or more out. A look is a tmux client, ~50ms; a pass without one
+# is a test of the file's time against a copy of it (SAM_STAMP), no process.
 SAM_INI="${SAM_INI:-/media/fat/Scripts/MiSTer_SAM.ini}"
 SAM_GAMEFILE="${SAM_GAMEFILE:-/tmp/SAM_Game.txt}"
 SAM_STAMP="${SAM_STAMP:-/tmp/.tty2oledplus-samgame}"
+SAM_SESSION="SAM"
+SAM_LOOK_SECS=30
+SAM_LOOK_NEAR=15
 TIMER_SENT="?"       # the seconds last sent, "" none, "?" nothing told yet
+TIMER_AT=0           # ...and when
 SAM_TIMER_REF=""     # "yes" once the current game's timer is worked out
+SAM_LOOKED=0         # when SAM's own count was last read
 
 # gametimer, as SAM will use it, into SAM_GAMETIMER; fails on a value that is
 # not a number.
@@ -1695,6 +1706,17 @@ sam_gametimer() {
   SAM_GAMETIMER="$(( 10#${timer} ))"
 }
 
+# SAM's own count, into SAM_COUNT: the last line of its pane, when that is
+# "Next game in N..." - not during a video, a load, or with no tmux at all.
+sam_counter() {
+  local out="" line=""
+  SAM_COUNT=""
+  out="$(tmux capture-pane -p -t "${SAM_SESSION}" 2>/dev/null)" || return 1
+  line="${out##*$'\n'}"
+  [[ "${line}" =~ ^[[:space:]]*Next\ game\ in\ ([0-9]+) ]] || return 1
+  SAM_COUNT="$(( 10#${BASH_REMATCH[1]} ))"
+}
+
 sendtimer() {  # sendtimer <seconds, or empty for none>
   [ "${1}" = "${TIMER_SENT}" ] && return 0
   fw_atleast 0.7.8 || return 0
@@ -1702,29 +1724,48 @@ sendtimer() {  # sendtimer <seconds, or empty for none>
   echo "CMDHTIMER,${1}" >${TTYDEV}
   cmdwait
   TIMER_SENT="${1}"
+  TIMER_AT="${EPOCHSECONDS:-$(date +%s)}"
 }
 
 samtimer_pass() {
-  local mt="" left=""
+  local mt="" left="" now="${EPOCHSECONDS:-$(date +%s)}" shown=0
   if [ "${SAM_ON}" != "yes" ] || [ "${SAM_TIMER:-yes}" != "yes" ]; then
     SAM_TIMER_REF=""
     sendtimer ""
     return 0
   fi
   [ -r "${SAM_GAMEFILE}" ] || return 0
-  # Already worked out for this game: only the file's time moving says there
-  # is a new one.
-  [ -n "${SAM_TIMER_REF}" ] && ! [ "${SAM_GAMEFILE}" -nt "${SAM_STAMP}" ] && return 0
-  touch -r "${SAM_GAMEFILE}" "${SAM_STAMP}" 2>/dev/null
-  SAM_TIMER_REF="yes"
-  mt="$(stat -c %Y "${SAM_GAMEFILE}" 2>/dev/null)"
-  if [[ "${mt}" =~ ^[0-9]+$ ]] && sam_gametimer; then
-    left=$(( mt + 1 + SAM_GAMETIMER - ${EPOCHSECONDS:-$(date +%s)} ))
-    [ "${left}" -gt $(( SAM_GAMETIMER + 1 )) ] && left=$(( SAM_GAMETIMER + 1 ))
-    # A file from before this SAM session's first game: nothing to count.
-    [ "${left}" -gt 0 ] || left=""
+
+  # A new game - the file's time moved: its count from the clock, at once.
+  if [ -z "${SAM_TIMER_REF}" ] || [ "${SAM_GAMEFILE}" -nt "${SAM_STAMP}" ]; then
+    touch -r "${SAM_GAMEFILE}" "${SAM_STAMP}" 2>/dev/null
+    SAM_TIMER_REF="yes"; SAM_LOOKED=0
+    mt="$(stat -c %Y "${SAM_GAMEFILE}" 2>/dev/null)"
+    if [[ "${mt}" =~ ^[0-9]+$ ]] && sam_gametimer; then
+      left=$(( mt + 1 + SAM_GAMETIMER - now ))
+      [ "${left}" -gt $(( SAM_GAMETIMER + 1 )) ] && left=$(( SAM_GAMETIMER + 1 ))
+      # A file from before this SAM session's first game: nothing to count.
+      [ "${left}" -gt 0 ] || left=""
+    fi
+    # Sent even when it is the same number as the last game's: the display is
+    # still counting that one, at 0:00 by now. It went unsent when two games
+    # both came out at 180.
+    TIMER_SENT="?"
+    sendtimer "${left}"
+    return 0
   fi
-  sendtimer "${left}"
+
+  # A count running: put right from SAM's own, now and then.
+  case "${TIMER_SENT}" in ''|'?') return 0 ;; esac
+  shown=$(( TIMER_SENT - (now - TIMER_AT) ))
+  [ "${shown}" -lt 0 ] && shown=0
+  [ $(( now - SAM_LOOKED )) -ge "${SAM_LOOK_SECS}" ] || [ "${shown}" -le "${SAM_LOOK_NEAR}" ] || return 0
+  SAM_LOOKED="${now}"
+  sam_counter || return 0
+  [ $(( SAM_COUNT - shown )) -ge 2 ] || [ $(( shown - SAM_COUNT )) -ge 2 ] || return 0
+  dbug "SAM says ${SAM_COUNT}s to its next game, the display ${shown}s"
+  TIMER_SENT="?"
+  sendtimer "${SAM_COUNT}"
 }
 
 sendhead() {

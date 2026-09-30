@@ -1212,7 +1212,60 @@ SAM_ON="no"; samtimer_pass
 ok "with the caption" "$(captured | tr -d '\r')" "CMDHTIMER,"
 reset_capture; SAM_ON="yes"; SAM_TIMER="no"; samtimer_pass
 ok "SAM_TIMER=no sends none" "$(captured)" ""
-unset SAM_TIMER; SAM_ON="no"; FW_VERSION=""; TIMER_SENT="?"
+unset SAM_TIMER; SAM_ON="no"; TIMER_SENT="?"
+
+# Two games in a row that both work out at the same count: the second is
+# sent all the same - the display is at 0:00 on the first by then. (0.8.0b
+# kept the first, since the number had not changed.)
+printf 'gametimer="180"\n' > "${SAM_INI}"; SAM_ON="yes"
+touch -d "@$(( EPOCHSECONDS + 1 ))" "${SAM_GAMEFILE}"; samtimer_pass
+touch -d "@$(( EPOCHSECONDS + 3 ))" "${SAM_GAMEFILE}"
+reset_capture; samtimer_pass
+ok "a new game with the last one's count is sent again" "$(captured | tr -d '\r')" "CMDHTIMER,181"
+
+# SAM's own count, from its tmux pane: its seconds are longer than the
+# clock's, and a count from the clock ran out ten seconds early.
+FAKEMUX="${TMP}/fakemux"; mkdir -p "${FAKEMUX}"
+cat > "${FAKEMUX}/tmux" <<'MUX'
+#!/bin/bash
+echo "$*" >> "${FAKEMUX_LOG}"
+[ -r "${FAKEMUX_PANE}" ] || exit 1
+cat "${FAKEMUX_PANE}"
+MUX
+chmod +x "${FAKEMUX}/tmux"
+export FAKEMUX_LOG="${TMP}/fakemux.log" FAKEMUX_PANE="${TMP}/fakemux.pane"
+KEEPPATH="${PATH}"; PATH="${FAKEMUX}:${PATH}"
+looks() { wc -l <"${FAKEMUX_LOG}" | tr -d ' '; }
+pane() { printf '%s\n' "Starting now on the Sega Genesis: Super Thunder Blade" "${1}" "" "" > "${FAKEMUX_PANE}"; }
+: > "${FAKEMUX_LOG}"
+pane " Next game in 150..."
+reset_capture; SAM_LOOKED=0; samtimer_pass
+ok "SAM's count read from its session" "$(tail -1 "${FAKEMUX_LOG}")" "capture-pane -p -t SAM"
+ok "and the display put right when it is out" "$(captured | tr -d '\r')" "CMDHTIMER,150"
+reset_capture; samtimer_pass
+ok "not looked at again straight away" "$(looks)" "1"
+ok "nor anything sent" "$(captured)" ""
+TIMER_AT=$(( EPOCHSECONDS - 31 )); SAM_LOOKED=$(( EPOCHSECONDS - 31 ))
+# 150 sent 31 seconds ago shows 119; a second turning mid-test makes it 118,
+# and the tolerance is a second - so SAM says the same as the display.
+pane " Next game in 119..."
+reset_capture; samtimer_pass
+ok "looked at again after SAM_LOOK_SECS" "$(looks)" "2"
+ok "in step: nothing sent" "$(captured)" ""
+TIMER_SENT=10; TIMER_AT="${EPOCHSECONDS}"; SAM_LOOKED="${EPOCHSECONDS}"
+pane " Next game in 17..."
+reset_capture; samtimer_pass
+ok "near the end, every pass" "$(looks)" "3"
+ok "SAM running over: the display waits for it" "$(captured | tr -d '\r')" "CMDHTIMER,17"
+TIMER_SENT=10; TIMER_AT="${EPOCHSECONDS}"
+printf '%s\n' "Playing video now." "Title: Sonic" "Length: 31 seconds" > "${FAKEMUX_PANE}"
+reset_capture; samtimer_pass
+ok "a video: no count to read, nothing sent" "$(captured)" ""
+rm -f "${FAKEMUX_PANE}"
+reset_capture; samtimer_pass
+ok "no session: nothing sent" "$(captured)" ""
+PATH="${KEEPPATH}"
+SAM_ON="no"; FW_VERSION=""; TIMER_SENT="?"
 
 # ---------------------------------------------------------------------------
 section "scraped metadata: more fields, and the description after the line"
