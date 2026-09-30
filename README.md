@@ -135,6 +135,10 @@ minutes of nothing happening, waking on the next thing the MiSTer sends.
   the game display; the SD and Standard sketch variants are not covered.)
 - A MiSTer that is **online**, for the install.
 
+The hardware and wiring are tty2oled's, unchanged: an ESP32 display built for
+the original works here as it is. To build one, follow tty2oled's
+**[wiring guide]**.
+
 ## Installing
 
 1. Download **[tty2oledplus_install.sh]** from the latest release.
@@ -544,3 +548,4 @@ Game metadata comes from **[libretro-database]** and the MAME project.
 [MiSTer FPGA]: https://github.com/MiSTer-devel
 [libretro-database]: https://github.com/libretro/libretro-database
 [tty2oled]: https://github.com/venice1200/MiSTer_tty2oled
+[wiring guide]: https://github.com/venice1200/MiSTer_tty2oled/wiki/Electrical
