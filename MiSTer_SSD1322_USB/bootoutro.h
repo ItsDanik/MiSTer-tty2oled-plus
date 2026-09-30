@@ -107,7 +107,7 @@ bool boot_quietCommand(const char *cmd) {
     "CMDFADE", "CMDTFADE", "CMDCON", "CMDDIM", "CMDFLIP", "CMDSCROLL", "CMDSAVER",
     "CMDSWSAVER",
     "CMDSETTIME", "CMDHWINF", "CMDMETAOFF", "CMDBOOTPIC", "CMDBOOTINF",
-    "CMDTZONE", "CMDNULL", "CMDNOTE", "CMDHEAD",
+    "CMDTZONE", "CMDNULL", "CMDNOTE", "CMDHEAD", "CMDHTIMER", "CMDCLOCK",
   };
   size_t n = strlen(cmd);
   if (n >= 6 && strcmp(cmd + n - 6, "QWERTZ") == 0) return true;   // the warm-up line

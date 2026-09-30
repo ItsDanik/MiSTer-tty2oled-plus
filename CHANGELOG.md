@@ -4,6 +4,41 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.7.8b — 2026-09-30
+
+- **The date and time under the menu.** When no update is waiting, the
+  small grey line under the picture of the menu, MisterZine, Degauss and
+  Zaparoo shows the date at the left and the time at the right -
+  `30/09/26` and `17:34` by default - in the MiSTer's own time zone. The
+  formats are yours to change in Settings, under "What the display shows",
+  or switch it off there. An update notice still takes that line while an
+  update waits, and the busy bar while one runs.
+- **Super Attract Mode counts down to its next game.** The header that
+  reads "Super Attract Mode" while SAM plays now has the time left until the
+  next game after it - `0:42` - counting down. It follows your
+  `gametimer` from MiSTer_SAM.ini (and M82 mode's 21 seconds); with SAM
+  Video on there is no countdown. Settings can turn it off.
+- **Half-hour time zones get the right time.** India, Nepal, Newfoundland
+  and South Australia were sent no time at all.
+- **Lighter on the MiSTer.** The daemon rebuilt the game's details from
+  scratch every few seconds, starting some forty programs each time, and
+  looked through every running process three to five times a pass. It now
+  rebuilds only when something changed and looks once, which leaves more of
+  the DE10 to the game - ScummVM's especially.
+- **More games show a region.** Names listing several regions, like
+  `(Europe, Australia)` or `(Japan, Europe)`, had none; any list of regions
+  counts now.
+- **Artwork names are lower case.** Two icons named `NeoGeo` and `NEOGEO`
+  were the same file on the SD card. Your own pictures in `pics/user` work
+  in any case, as before.
+- **Smaller fixes.** Stopping the daemon - which Update and Uninstall do -
+  now stops its background checks too, where one could run on for minutes.
+  The display's firmware version is found even when a dozen replies are
+  queued ahead of it at startup, so the update notice and update_all's
+  progress line no longer wait for a second try. `coretypes.ini` matches a
+  core's name exactly. If the file watcher fails, the daemon waits instead
+  of busy-looping.
+
 ## 0.7.7b — 2026-09-30
 
 - **Super Attract Mode says so.** While MiSTer SAM is playing games by

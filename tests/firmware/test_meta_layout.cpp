@@ -3732,6 +3732,90 @@ int main() {
         meta_reset();
     }
 
+    section("CMDHTIMER: Super Attract Mode's countdown, after the caption");
+    {
+        const char *SAM = "Super Attract Mode";
+        transition_cancel();
+        meta_parseHead((std::string("CMDHEAD,") + SAM).c_str());
+        meta_parseTimer("CMDHTIMER,102");
+        meta_parse("CMDMETA,2,0,Sonic|System=Mega Drive|Year=1991");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        const FakeU8g2::Draw *c = u8g2.find(SAM);
+        const FakeU8g2::Draw *t = u8g2.find("1:42");
+        okBool("the caption, whole",                 c != nullptr, true);
+        okBool("and the time left, m:ss",            t != nullptr, true);
+        if (c && t) {
+            okInt ("in 5x7",                         t->charW, 5);
+            okInt ("after the caption, a gap between",
+                   t->x, c->x + (int)strlen(SAM) * c->charW + HEAD_TIMER_GAP);
+            // Centred on the caption: each glyph sits on its ascent's rows
+            // above the baseline (the fakes: 11 for the header, 7 for 5x7).
+            okInt ("centred on the caption's height",  t->y, CON_HEADER_Y - (11 - 7) / 2);
+        }
+
+        // Counted down by the firmware itself, a second at a time.
+        metaNeedsDraw = false; coreBootHolding = false; metaIconRedraw = false;
+        metaHeadRedraw = false;
+        meta_showConsole();
+        u8g2.resetProbe(); oled.resetProbe();
+        g_fakeMillis += 400;
+        meta_tick();
+        okBool("nothing redrawn inside the second",  u8g2.find("1:42") == nullptr && u8g2.find("1:41") == nullptr, true);
+        g_fakeMillis += 700;
+        u8g2.resetProbe(); oled.resetProbe();
+        okBool("the next second redraws it",         meta_tick(), true);
+        okBool("one less",                           u8g2.find("1:41") != nullptr, true);
+        g_fakeMillis += 200000;
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_tick();
+        okBool("and stops at nought",                u8g2.find("0:00") != nullptr, true);
+
+        // The caption steps down its fonts to leave the timer room, to 5x7
+        // beside the most pips; clear of them either way.
+        std::string cmd = "CMDMETA,2,0,3,Game";
+        for (int i = 0; i < 12; i++) {
+            char seg[32];
+            snprintf(seg, sizeof(seg), "|L%02d=V%02d", i, i);
+            cmd += seg;
+        }
+        meta_parse(cmd.c_str());
+        meta_parseTimer("CMDHTIMER,59");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        c = u8g2.find(SAM); t = u8g2.find("0:59");
+        okBool("eight pips and a timer: both drawn", c && t, true);
+        if (c && t) {
+            okInt ("the caption in 5x7 now",          c->charW, 5);
+            okBool("the timer clear of the pips",
+                   t->x + (int)strlen("0:59") * t->charW <= oled.rects[0].x, true);
+        }
+        meta_parse("CMDMETA,2,0,Sonic|System=Mega Drive");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        c = u8g2.find(SAM);
+        okBool("with one page, the room for more",  c && c->charW > 5, true);
+
+        meta_parse("CMDMETA,1,12,NBA Jam|Year=1993|Manufctr=Midway");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderCard();
+        okBool("the card has it too",                u8g2.find("0:59") != nullptr, true);
+
+        meta_parseTimer("CMDHTIMER,");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderCard();
+        okBool("nothing after the comma: gone",      u8g2.find("0:59") == nullptr && u8g2.find(SAM) != nullptr, true);
+        meta_parseTimer("CMDHTIMER,-1");
+        okInt ("a negative one too",                 metaTimerSecs, -1);
+        meta_parseTimer("CMDHTIMER,999999");
+        okInt ("capped at 99:59",                    metaTimerSecs, HEAD_TIMER_MAX);
+        okBool("quiet: the boot screen, bar and band stay", boot_quietCommand("CMDHTIMER,5"), true);
+        meta_parseTimer("CMDHTIMER,");
+        meta_parseHead("CMDHEAD,");
+        meta_reset();
+        transition_cancel();
+    }
+
     section("meta_reset returns to plain picture display");
     {
         meta_parse("CMDMETA,2,0,Game|A=1");
@@ -3971,6 +4055,90 @@ int main() {
         if (d) okInt("at full grey, fading in with the picture", d->fg, BNOTE_GREY);
         okInt("so it is up once the picture is", noteLevel, BNOTE_GREY);
         tfFadeMs = TFADE_MS_DEFAULT; tfBlankMs = TBLANK_MS_DEFAULT;
+        bandReset();
+    }
+
+    section("band: the clock, when no notice is waiting");
+    {
+        const long T = 1790789640L;        // 2026-09-30 17:34:00, local
+        auto clockDraw = [](const char *text) { return u8g2.find(text); };
+        bandReset();
+        clockFmt[0] = '\0'; clockSet = false;
+        memset(logoBin, 0x11, sizeof(logoBin));
+        actPicType = GSC;
+        band_clockParse("CMDCLOCK,%d/%m/%y|%H:%M");
+        band_showPicture(0);
+        okBool("no time yet, no clock", clockDraw("30/09/26") == nullptr, true);
+        band_setTime(T);
+        u8g2.resetProbe();
+        for (int i = 0; i < 100; i++) bandTick(25);
+        const FakeU8g2::Draw *d = clockDraw("30/09/26");
+        const FakeU8g2::Draw *h = clockDraw("17:34");
+        okBool("the date and the time, once it has one", d && h, true);
+        ok    ("fading in as a notice does", noteGreys("30/09/26"), "1 2 3 4 5 6 7 8 ");
+        if (d && h) {
+            okInt ("the date at the left",     d->x, BCLOCK_MARGIN);
+            okInt ("the time at the right",    h->x, DispWidth - BCLOCK_MARGIN - 5 * h->charW);
+            okInt ("on the notice's row",      d->y, BNOTE_Y);
+            okInt ("in its grey, half the panel's", u8g2.draws.back().fg, BNOTE_GREY);
+        }
+
+        // A new minute is drawn over the old one where it stands.
+        u8g2.resetProbe(); oled.resetProbe();
+        g_fakeMillis += 60000;
+        bandTick(25);
+        ok    ("a minute on: drawn again at once, at its grey", noteGreys("17:35"), "8 ");
+        okBool("sent to the panel",        oled.displayCalls > 0, true);
+        okBool("without going out first",  noteGreys("17:34").empty(), true);
+
+        // An update waiting takes the band: the clock goes, the notice comes.
+        u8g2.resetProbe();
+        band_noteParse((std::string("CMDNOTE,") + NOTE).c_str());
+        for (int i = 0; i < 200; i++) bandTick(25);
+        ok    ("a notice: the clock goes out", noteGreys("17:35"), "7 6 5 4 3 2 1 ");
+        ok    ("and the notice comes in",      noteGreys(NOTE), "1 2 3 4 5 6 7 8 ");
+        u8g2.resetProbe();
+        band_noteParse("CMDNOTE,");
+        for (int i = 0; i < 200; i++) bandTick(25);
+        okBool("dealt with: the clock is back", clockDraw("30/09/26") != nullptr && noteLevel == BNOTE_GREY, true);
+
+        // A picture composed with the band has it from the start.
+        band_showPicture(0);
+        okBool("composed into a frontend's picture", clockDraw("30/09/26") != nullptr, true);
+        okInt ("up at once", noteLevel, BNOTE_GREY);
+
+        // Not over a core's picture, and not under the busy bar.
+        band_noteCommand("CMDCOR,SNES,5");
+        u8g2.resetProbe(); oled.resetProbe();
+        g_fakeMillis += 60000;
+        for (int i = 0; i < 40; i++) bandTick(25);
+        okBool("a core's picture has no clock", u8g2.draws.empty() && oled.displayCalls == 0, true);
+        band_showPicture(0);
+        busyActive = true;
+        u8g2.resetProbe(); oled.resetProbe();
+        g_fakeMillis += 60000;
+        for (int i = 0; i < 40; i++) { g_fakeMillis += 25; band_tick(); }
+        okBool("nor the busy bar's band", u8g2.draws.empty(), true);
+        busyActive = false;
+
+        // One format alone is centred, like a notice.
+        band_clockParse("CMDCLOCK,%H:%M");
+        u8g2.resetProbe();
+        band_showPicture(0);
+        const FakeU8g2::Draw *c = u8g2.find("17:37");
+        okBool("one format, no bar: one piece", c != nullptr, true);
+        if (c) okInt("centred", c->x, (DispWidth - 5 * c->charW) / 2);
+
+        // Nothing after the comma: no clock, and it goes out.
+        band_clockParse("CMDCLOCK,%d/%m/%y|%H:%M");
+        band_showPicture(0);
+        u8g2.resetProbe();
+        band_clockParse("CMDCLOCK,");
+        for (int i = 0; i < 100; i++) bandTick(25);
+        okInt ("CMDCLOCK, turns it off", noteLevel, 0);
+        okBool("quiet: CMDCLOCK",   boot_quietCommand("CMDCLOCK,%H"), true);
+        okBool("quiet: CMDSETTIME", boot_quietCommand("CMDSETTIME,1"), true);
+        clockSet = false;
         bandReset();
     }
 

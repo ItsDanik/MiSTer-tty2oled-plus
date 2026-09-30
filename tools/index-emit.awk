@@ -28,17 +28,25 @@ function trim(s) {
   return s
 }
 
-# Pull the region out of the first (...) group that names one. POSIX ERE is
-# leftmost-longest, which is what makes "(USA, Europe)" win over "(USA)" at the
-# same position - the same thing grep -oiE does for clean_romname.
-function region_of(name,    re, r) {
-  re = "\\((World|USA, Europe|USA|Europe|Japan, USA|Japan|Germany|France|Spain|Italy|Australia|Korea|Brazil|Sweden|Netherlands|Canada|China|Taiwan|Asia|UK|US|EU|JP)\\)"
-  if (!match(name, re)) return ""
-  r = substr(name, RSTART + 1, RLENGTH - 2)
-  if (toupper(r) == "US") return "USA"
-  if (toupper(r) == "EU") return "Europe"
-  if (toupper(r) == "JP") return "Japan"
-  return r
+# The region: the first (...) group made only of region names - "(USA)",
+# "(USA, Europe)", "(Europe, Australia)" - as written, short forms spelt out.
+# The same rule as clean_romname's _region_of, name for name.
+function region_of(name,    s, g, n, parts, i, p, u, out, ok) {
+  s = name
+  while (match(s, /\([^)]*\)/)) {
+    g = substr(s, RSTART + 1, RLENGTH - 2)
+    s = substr(s, RSTART + RLENGTH)
+    n = split(g, parts, ",")
+    out = ""; ok = (n > 0)
+    for (i = 1; i <= n && ok; i++) {
+      p = trim(parts[i]); u = toupper(p)
+      if (!(u in REGION)) { ok = 0; break }
+      if (u == "US") p = "USA"; else if (u == "EU") p = "Europe"; else if (u == "JP") p = "Japan"
+      out = out (out == "" ? "" : ", ") p
+    }
+    if (ok && out != "") return out
+  }
+  return ""
 }
 
 function clean_title(name,    work, art, i) {
@@ -68,7 +76,11 @@ function clean_title(name,    work, art, i) {
   return work
 }
 
-BEGIN { FS = "\t"; OFS = "|" }
+BEGIN {
+  FS = "\t"; OFS = "|"
+  nr = split("WORLD|USA|EUROPE|JAPAN|ASIA|UK|US|EU|JP|GERMANY|FRANCE|SPAIN|ITALY|AUSTRALIA|KOREA|BRAZIL|SWEDEN|NETHERLANDS|CANADA|CHINA|TAIWAN|RUSSIA|SCANDINAVIA|HONG KONG|GREECE|PORTUGAL|DENMARK|NORWAY|FINLAND|POLAND|BELGIUM|AUSTRIA|SWITZERLAND|LATIN AMERICA|NEW ZEALAND|INDIA|MEXICO|ARGENTINA|IRELAND|SOUTH AFRICA", RL, "|")
+  for (i = 1; i <= nr; i++) REGION[RL[i]] = 1
+}
 
 NF < 4 { next }
 

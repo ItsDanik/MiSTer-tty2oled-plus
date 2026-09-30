@@ -84,9 +84,10 @@ ARCADE = ("Arcade", "Arcade (games/mame)", ["mame", "hbmame"], "zip 7z")
 # the daemon looks the running game up both ways.
 SCUMMVM = ("ScummVM", "ScummVM (games/ScummVM)", ["ScummVM"], "scummvm svm")
 
-# Other names an icon goes by. Both spellings ship in pics/icon, and one
-# system should appear once in the menu, not twice.
-ICON_ALIASES = {"MegaDrive": ["Genesis"], "NeoGeo": ["NEOGEO"]}
+# Other names an icon goes by: megadrive.gsc and genesis.gsc both ship, and
+# one system should appear once in the menu, not twice. Names are compared
+# without case, so an icon's spelling is not an alias.
+ICON_ALIASES = {"MegaDrive": ["Genesis"]}
 
 # One line a game, "|"-separated like the title index - the daemon's
 # lookup_scraped reads exactly these. The CRC is empty: a gamelist keys on

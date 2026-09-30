@@ -102,6 +102,15 @@
 // either would do. "Now playing" always fits the first.
 #define CON_HEADER_FONT_NARROW 11       // tenthinguys, 10px
 #define CON_HEADER_FONT_SMALL  1        // luBS08
+// ...and, where not even that fits - a timer beside it and eight pips - the
+// 5x7 the fields use. "Super Attract Mode" is 90px in it.
+#define CON_HEADER_FONT_TINY   0        // 5x7
+// The header's timer (CMDHTIMER, 0.7.8b): Super Attract Mode's time to its
+// next game, "1:42", in 5x7 after the caption, centred on the caption's
+// height, HEAD_TIMER_GAP blank columns from it.
+#define HEAD_TIMER_FONT  0              // 5x7
+#define HEAD_TIMER_GAP   5
+#define HEAD_TIMER_MAX   5999           // 99:59
 #define CON_HEADER_Y     11             // header baseline
 #define CON_GAP_HEADER   1              // blank rows between header and rule
 #define CON_RULE_Y       (CON_HEADER_Y + CON_GAP_HEADER + 1)          // 13
@@ -286,6 +295,15 @@ bool          metaIconRedraw  = false;
 // cut, not a transition.
 char          metaHeader[META_HEAD_MAX + 1] = "";
 bool          metaHeadRedraw  = false;
+
+// The header's timer: CMDHTIMER,<seconds> counts down from when it arrives,
+// on the firmware's own clock - one command a game, not one a second - and
+// stops at 0:00. Empty or negative takes it away. Kept, like the caption,
+// across CMDMETAOFF and games; the daemon sends it with SAM's caption and
+// takes both away together.
+long          metaTimerSecs   = -1;     // -1: no timer
+unsigned long metaTimerAt     = 0;      // millis() when it was given
+long          metaTimerShown  = -2;     // what the header last drew; -2 nothing
 
 // Also set by a description arriving for a layout already on the panel: its
 // page adds a pip, so the same picture has to be drawn again.
@@ -669,15 +687,55 @@ static const char *meta_headerText(void) {
 
 static void meta_drawClipped(const char *s, int x, int y, int maxw, int offset);
 
-// The header's caption, in the first of its fonts it fits, maxw wide.
+// The seconds the header's timer shows at `now`, or -1 with none.
+static long meta_timerLeft(unsigned long now) {
+  if (metaTimerSecs < 0) return -1;
+  unsigned long gone = (now - metaTimerAt) / 1000UL;
+  return (gone >= (unsigned long)metaTimerSecs) ? 0 : metaTimerSecs - (long)gone;
+}
+
+// The timer's text: "1:42", "0:05", "12:00".
+static void meta_timerText(long left, char *out, size_t n) {
+  if (left > HEAD_TIMER_MAX) left = HEAD_TIMER_MAX;
+  snprintf(out, n, "%ld:%02ld", left / 60, left % 60);
+}
+
+// The header's caption, in the first of its fonts it fits, maxw wide - and
+// after it, the timer when there is one, which the caption leaves room for.
 static void meta_drawHeader(int x, int maxw) {
   const char *s = meta_headerText();
-  oled_setfont(CON_HEADER_FONT);
-  if (meta_textWidth(s) > maxw) {
-    oled_setfont(CON_HEADER_FONT_NARROW);
-    if (meta_textWidth(s) > maxw) oled_setfont(CON_HEADER_FONT_SMALL);
+  char t[12] = "";
+  int tw = 0;
+  const long left = meta_timerLeft(millis());
+  metaTimerShown = left;
+  if (left >= 0) {
+    meta_timerText(left, t, sizeof(t));
+    oled_setfont(HEAD_TIMER_FONT);
+    tw = meta_textWidth(t) + HEAD_TIMER_GAP;
   }
-  meta_drawClipped(s, x, CON_HEADER_Y, maxw, 0);
+  const int capw = maxw - tw;
+  oled_setfont(CON_HEADER_FONT);
+  if (meta_textWidth(s) > capw) {
+    oled_setfont(CON_HEADER_FONT_NARROW);
+    if (meta_textWidth(s) > capw) {
+      oled_setfont(CON_HEADER_FONT_SMALL);
+      if (tw && meta_textWidth(s) > capw) oled_setfont(CON_HEADER_FONT_TINY);
+    }
+  }
+  meta_drawClipped(s, x, CON_HEADER_Y, capw, 0);
+  if (!t[0]) return;
+
+  // Centred on the caption's glyphs: each is drawn on the ascent's rows above
+  // its baseline, so the two are centred when their baselines differ by half
+  // the difference in ascent.
+  int cw = meta_textWidth(s);
+  if (cw > capw) cw = capw;
+  const int capAsc = u8g2.getFontAscent();
+  oled_setfont(HEAD_TIMER_FONT);
+  const int tAsc = u8g2.getFontAscent();
+  const int ty = CON_HEADER_Y - (capAsc - tAsc) / 2;
+  u8g2.setCursor(x + cw + HEAD_TIMER_GAP, ty);
+  u8g2.print(t);
 }
 
 static void meta_drawClipped(const char *s, int x, int y, int maxw, int offset) {
@@ -1604,6 +1662,26 @@ void meta_parseHead(const char *cmd) {
 }
 
 // ---------------------------------------------------------------------------
+// meta_parseTimer - CMDHTIMER,<seconds>: the header's countdown, from now;
+// nothing after the comma, or a negative number, takes it away. Draws nothing
+// here: the layout up is drawn again once idle, as for a caption.
+// ---------------------------------------------------------------------------
+void meta_parseTimer(const char *cmd) {
+  const char *p = strchr(cmd, ',');
+  long secs = -1;
+  if (p && p[1] && sscanf(p + 1, "%ld", &secs) != 1) secs = -1;
+  if (secs > HEAD_TIMER_MAX) secs = HEAD_TIMER_MAX;
+  metaTimerSecs  = (secs < 0) ? -1 : secs;
+  metaTimerAt    = millis();
+  metaHeadRedraw = true;
+}
+
+// Has the header's timer something new to show? Asked beside the pips' blink.
+static bool meta_timerTick(unsigned long now) {
+  return meta_timerLeft(now) != metaTimerShown && metaTimerShown != -2;
+}
+
+// ---------------------------------------------------------------------------
 // meta_parseScroll - CMDSCROLL,<horizontal px/s>,<vertical px/s>
 //
 // The marquee's speed, and the description's. Pixels per second on the wire
@@ -1730,6 +1808,13 @@ static bool meta_pipTick(unsigned long now, int pages) {
   return true;
 }
 
+// The pips' blink, and the header's timer turning over: either redraws it.
+static bool meta_timerTick(unsigned long now);
+static bool meta_headTick(unsigned long now, int pages) {
+  bool pip = meta_pipTick(now, pages);
+  return meta_timerTick(now) || pip;
+}
+
 // ---------------------------------------------------------------------------
 // meta_cardScrollTick - move the card's marquees on: the title, and the long
 // values on a wide page. Returns true when either moved and the card needs
@@ -1785,7 +1870,7 @@ bool meta_tick(void) {
       lastScrollTick = now;
       moved = true;
     }
-    if (meta_pipTick(now, card ? meta_cardPageCount() : meta_pageCount())) moved = true;
+    if (meta_headTick(now, card ? meta_cardPageCount() : meta_pageCount())) moved = true;
     if (moved) {
       if (card) meta_renderCard(); else meta_renderConsole();
       pf_reshow();
@@ -1850,7 +1935,7 @@ bool meta_tick(void) {
     // artwork comes back. The title marquee carries on above it.
     if (metaShowingCard && meta_cardIsDescPage(cardPage)) {
       bool moved = meta_cardScrollTick(now);     // arms the hold on landing
-      if (cardScrollArmed && meta_pipTick(now, meta_cardPageCount())) moved = true;
+      if (cardScrollArmed && meta_headTick(now, meta_cardPageCount())) moved = true;
       if (cardScrollArmed && now >= descHoldUntil &&
           now - lastDescTick >= metaVStepMs) {
         lastDescTick = now;
@@ -1890,7 +1975,7 @@ bool meta_tick(void) {
     // the panel. The same compose-and-push the console's marquee does.
     if (metaShowingCard) {
       bool moved = meta_cardScrollTick(now);
-      if (cardScrollArmed && meta_pipTick(now, meta_cardPageCount())) moved = true;
+      if (cardScrollArmed && meta_headTick(now, meta_cardPageCount())) moved = true;
       if (moved) {
         meta_renderCard();
         oled.display();
@@ -1970,7 +2055,7 @@ bool meta_tick(void) {
       dirty = true;
     }
 
-    if (meta_pipTick(now, pages)) dirty = true;
+    if (meta_headTick(now, pages)) dirty = true;
 
     if (dirty) meta_showConsole();
     return dirty;
@@ -1987,6 +2072,7 @@ void meta_showPicture(int effect) { (void)effect; }
 void meta_showConsole(void)       { }
 void meta_transitionToConsole(int effect) { (void)effect; }
 void meta_parseHead(const char *cmd) { (void)cmd; }
+void meta_parseTimer(const char *cmd) { (void)cmd; }
 
 #endif  // HAS_METADISPLAY
 

@@ -23,6 +23,15 @@
 //     the start: composed into the frame the transition animates towards, so
 //     it arrives with the picture - faded in with it, wiped in with it.
 //
+// When no notice is waiting, the band can show the date and time instead
+// (0.7.8b): CMDCLOCK,<left>|<right> gives two strftime formats, the first
+// drawn at the band's left edge and the second at its right - "30/09/26" and
+// "17:34" - in the notice's font and grey; CMDCLOCK, with nothing after it
+// turns it off. The time is CMDSETTIME's, local time as the daemon sends it,
+// counted on from there by millis(). It comes and goes as a notice does -
+// fading in on a frontend's picture, out for a notice - but a new minute is
+// drawn over the old in place: a fade every minute would be a flicker.
+//
 // The band is shared. At power-on the boot screen's outro runs there (the
 // sweep finishing, the version fading), and a busy screen's bar runs there;
 // the notice waits for both, and for any picture transition, rather than
@@ -36,6 +45,8 @@
 
 #ifndef BANDNOTE_H
 #define BANDNOTE_H
+
+#include <time.h>                                     // the clock: gmtime_r, strftime
 
 // The line: the 5x7 font the busy screen's status line uses, at half the
 // panel's brightness - it is a footnote to the picture, not part of it.
@@ -55,6 +66,10 @@
 // of the boot screen takes a second, and so does this.
 #define BNOTE_FADE_MS  1000
 #define BNOTE_STEP_MS  (BNOTE_FADE_MS / BNOTE_GREY)
+// The clock's two halves sit this far in from the panel's edges.
+#define BCLOCK_MARGIN  2
+#define BCLOCK_FMT_MAX 40                             // CMDCLOCK's text, both formats
+#define BCLOCK_SEP     '\t'                           // between them, once formatted
 
 #ifdef HAS_METADISPLAY
 
@@ -65,16 +80,75 @@ unsigned long noteLast   = 0;                 // when it last stepped
 bool          bandShown  = false;             // the panel shows a frontend's picture
 bool          picBand    = false;             // the picture just received is one
 
+char          clockFmt[BCLOCK_FMT_MAX + 1] = "";  // "<left>|<right>"; empty: no clock
+long          clockEpoch = 0;                 // CMDSETTIME's local time...
+unsigned long clockSetAt = 0;                 // ...and millis() when it came
+bool          clockSet   = false;
+char          clockText[BNOTE_COLS + 1] = ""; // formatted, BCLOCK_SEP between halves
+long          clockTextAt = -1;               // the second it was formatted for
+
+// The clock as it reads now, into clockText - formatted once a second at
+// most. False when there is no clock: none asked for, or no time yet.
+static bool band_clockNow(void) {
+  if (!clockFmt[0] || !clockSet) { clockText[0] = '\0'; return false; }
+  const long t = clockEpoch + (long)((millis() - clockSetAt) / 1000UL);
+  if (t == clockTextAt && clockText[0]) return true;
+  clockTextAt = t;
+  char fmt[BCLOCK_FMT_MAX + 1];
+  strcpy(fmt, clockFmt);
+  char *right = strchr(fmt, '|');
+  if (right) *right++ = '\0';
+  time_t tt = (time_t)t;
+  struct tm tmv;
+  gmtime_r(&tt, &tmv);                        // the daemon sends local time
+  char l[BNOTE_COLS + 1] = "", r[BNOTE_COLS + 1] = "";
+  if (fmt[0] && !strftime(l, sizeof(l), fmt, &tmv)) l[0] = '\0';
+  if (right && right[0] && !strftime(r, sizeof(r), right, &tmv)) r[0] = '\0';
+  // Both halves on one line of the band: the right one is cut first.
+  size_t ll = strlen(l);
+  if (ll > BNOTE_COLS - 1) { ll = BNOTE_COLS - 1; l[ll] = '\0'; }
+  size_t room = BNOTE_COLS - 1 - ll;
+  if (strlen(r) > room) r[room] = '\0';
+  // No "|", one piece: centred, as a notice is.
+  memcpy(clockText, l, ll);                   // ll + 1 + strlen(r) <= BNOTE_COLS
+  clockText[ll] = '\0';
+  if (right) { clockText[ll] = BCLOCK_SEP; strcpy(clockText + ll + 1, r); }
+  return true;
+}
+
+// The band's line now: the notice, else the clock, else nothing. Into out,
+// BNOTE_COLS + 1 long; true when it is the clock.
+static bool band_want(char *out) {
+  if (noteText[0]) { strcpy(out, noteText); return false; }
+  if (band_clockNow()) { strcpy(out, clockText); return true; }
+  out[0] = '\0';
+  return false;
+}
+
 // The band as it should look at `level`: black, and the notice over it.
+//
+// A notice is centred; the clock is its two halves, one to each edge.
 static void band_drawNote(int level) {
   oled.fillRect(0, BOOT_BAND_Y, DispWidth, BOOT_BAND_H, SSD1322_BLACK);
   if (level <= 0 || !noteDrawn[0]) return;
   oled_setfont(BNOTE_FONT);
-  int x = (DispWidth - u8g2.getUTF8Width(noteDrawn)) / 2;
-  if (x < 0) x = 0;
   u8g2.setForegroundColor((uint16_t)level);
-  u8g2.setCursor(x, BNOTE_Y);
-  u8g2.print(noteDrawn);
+  const char *sep = strchr(noteDrawn, BCLOCK_SEP);
+  if (sep) {
+    char l[BNOTE_COLS + 1];
+    size_t n = (size_t)(sep - noteDrawn);
+    memcpy(l, noteDrawn, n); l[n] = '\0';
+    if (l[0]) { u8g2.setCursor(BCLOCK_MARGIN, BNOTE_Y); u8g2.print(l); }
+    if (sep[1]) {
+      u8g2.setCursor(DispWidth - BCLOCK_MARGIN - u8g2.getUTF8Width(sep + 1), BNOTE_Y);
+      u8g2.print(sep + 1);
+    }
+  } else {
+    int x = (DispWidth - u8g2.getUTF8Width(noteDrawn)) / 2;
+    if (x < 0) x = 0;
+    u8g2.setCursor(x, BNOTE_Y);
+    u8g2.print(noteDrawn);
+  }
   u8g2.setForegroundColor(SSD1322_WHITE);
 }
 
@@ -84,7 +158,7 @@ static void band_drawNote(int level) {
 static void band_render(void) {
   oled.clearDisplay();
   oled.draw4bppBitmap(logoBin);
-  strcpy(noteDrawn, noteText);
+  band_want(noteDrawn);
   noteLevel = noteDrawn[0] ? BNOTE_GREY : 0;
   band_drawNote(noteLevel);
 }
@@ -139,6 +213,26 @@ void band_noteParse(const char *cmd) {
   noteText[len] = '\0';
 }
 
+// CMDCLOCK,<left>|<right> - the clock's formats, the rest of the line;
+// nothing after the comma is no clock. Draws nothing: band_tick does.
+void band_clockParse(const char *cmd) {
+  const char *f = strchr(cmd, ',');
+  f = f ? f + 1 : "";
+  size_t len = strlen(f);
+  if (len > BCLOCK_FMT_MAX) len = BCLOCK_FMT_MAX;
+  memcpy(clockFmt, f, len);
+  clockFmt[len] = '\0';
+  clockTextAt = -1;
+}
+
+// CMDSETTIME,<local seconds since 1970>: what the clock counts on from.
+void band_setTime(long epoch) {
+  clockEpoch  = epoch;
+  clockSetAt  = millis();
+  clockSet    = epoch > 0;
+  clockTextAt = -1;
+}
+
 // Called for every command before it is handled. Anything that draws takes
 // the panel away from the frontend's picture; CMDBOOTPIC and CMDCOR put one
 // back up, and say so themselves. CMDNOTE is on the quiet list.
@@ -150,9 +244,18 @@ void band_noteCommand(const char *cmd) {
 void band_tick(void) {
   if (!bandShown) return;
   if (tfState != TF_IDLE || boActive || busyActive || pf_active()) return;
-  bool changed = strcmp(noteDrawn, noteText) != 0;
+  char want[BNOTE_COLS + 1];
+  const bool wantClock = band_want(want);
+  bool changed = strcmp(noteDrawn, want) != 0;
+  // The clock turning over: drawn again where it stands, at the grey it is.
+  if (changed && wantClock && noteLevel > 0 && strchr(noteDrawn, BCLOCK_SEP)) {
+    strcpy(noteDrawn, want);
+    band_drawNote(noteLevel);
+    oled.display();
+    return;
+  }
   // A different text goes out before the new one comes in.
-  if (changed && noteLevel == 0) { strcpy(noteDrawn, noteText); changed = false; }
+  if (changed && noteLevel == 0) { strcpy(noteDrawn, want); changed = false; }
   int target = (!changed && noteDrawn[0]) ? BNOTE_GREY : 0;
   if (noteLevel == target) return;
   unsigned long now = millis();
@@ -171,6 +274,8 @@ void band_showPicture(int effect)          { oled_transition(effect); }
 void band_heldUnder(void)                  { }
 void band_parsePicture(const char *cmd)    { (void)cmd; }
 void band_noteParse(const char *cmd)       { (void)cmd; }
+void band_clockParse(const char *cmd)      { (void)cmd; }
+void band_setTime(long epoch)              { (void)epoch; }
 void band_noteCommand(const char *cmd)     { (void)cmd; }
 void band_tick(void)                       { }
 

@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.7.7b"
+#define BuildVersion "0.7.8b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -687,8 +687,12 @@ void loop(void) {
   // Not the notice: it can arrive at any time, from a timer, and nobody is
   // any more at the MiSTer for it. Nor the header's caption, which changes
   // when Super Attract Mode starts or stops - nobody is at it then either.
+  // Nor the clock, its time or the header's timer: the daemon keeps them
+  // right on its own schedule, the time once an hour.
   if (updateDisplay && !newCommand.startsWith("CMDNOTE,")
-      && !newCommand.startsWith("CMDHEAD,")) meta_activity();
+      && !newCommand.startsWith("CMDHEAD,") && !newCommand.startsWith("CMDHTIMER,")
+      && !newCommand.startsWith("CMDCLOCK,") && !newCommand.startsWith("CMDSETTIME,"))
+    meta_activity();
 #endif
 
   if (updateDisplay) {                                                                                 // Proceed only if it's allowed because of new data from serial
@@ -923,6 +927,14 @@ void loop(void) {
 
     else if (newCommand.startsWith("CMDHEAD,")) {                           // The layouts' header caption
       meta_parseHead(newCommand.c_str());
+    }
+
+    else if (newCommand.startsWith("CMDHTIMER,")) {                         // The header's countdown
+      meta_parseTimer(newCommand.c_str());
+    }
+
+    else if (newCommand.startsWith("CMDCLOCK,")) {                          // The frontends' clock, in the band
+      band_clockParse(newCommand.c_str());
     }
 
     else if (newCommand=="CMDSHMETA") {                                     // Force the metadata view now
@@ -1237,6 +1249,7 @@ void oled_setTime(void) {
 #ifdef ESP32X                                                      // Set Time only for ESP32 MCU's
   rtc.setTime(tT.toInt());                                        // Read and set RTC
   timeIsSet = true;                                               // Time is set!
+  band_setTime(tT.toInt());                                       // ...and the band's clock
 #endif
 }
 

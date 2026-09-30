@@ -122,6 +122,9 @@ Legend of Zelda, The (USA)
 Super Mario Bros. (World)
 Contra (USA) [!]
 Mega Man 2 (USA, Europe)
+Dragon Quest (Japan, Europe) (Rev 1)
+Sensible Soccer (Europe, Australia) (En,Fr,De)
+Tetris (USA, Korea)
 Castlevania III - Dracula's Curse (USA)
 Adventures of Lolo, An (Europe)
 Bio Miracle Bokutte Upa (Japan) (Rev 1)
@@ -262,9 +265,9 @@ PILEOF
      "$(sed -n '3p' "${TMP}/banner.gsc")" "static unsigned char icon_bits[] = {"
   ok "banner line 4 is already data" \
      "$(sed -n '4p' "${TMP}/banner.gsc" | tr -d '0-9a-f\n' | wc -c)" "0"
-  if [ -f "${REPO}/pics/banner/NES.gsc" ]; then
+  if [ -f "${REPO}/pics/banner/nes.gsc" ]; then
     ok "upstream artwork reduces to the same size" \
-       "$(tail -n +4 "${REPO}/pics/banner/NES.gsc" | xxd -r -p | wc -c)" "8192"
+       "$(tail -n +4 "${REPO}/pics/banner/nes.gsc" | xxd -r -p | wc -c)" "8192"
   fi
   ok "--boot and --banner are not the same size" \
      "$( [ "$(tail -n +4 "${TMP}/boot.gsc" | xxd -r -p | wc -c)" \
@@ -585,14 +588,26 @@ for f in "${REPO}"/pics/icon/*.gsc; do
   fi
 done
 ok "pixel data is hex only"     "${badhex}" "0"
-ok "header says 86 wide"        "$(head -1 "${REPO}/pics/icon/GBA.gsc")" "#define icon_width 86"
+ok "header says 86 wide"        "$(head -1 "${REPO}/pics/icon/gba.gsc")" "#define icon_width 86"
 
 # The names must be the ones CORENAME reports, or findicon looks for a file
 # that is not there. coretypes.ini is the shared source for both.
 for c in GBA VirtualBoy GameGear NEOGEO TGFX16 S32X MegaDrive MegaCD Saturn \
          PSX 3DO GBC AtariLynx WonderSwan WonderSwanColor Atari2600; do
-  ok "stub exists: ${c}" "$([ -e "${REPO}/pics/icon/${c}.gsc" ] && echo yes || echo no)" "yes"
+  ok "stub exists: ${c}" "$([ -e "${REPO}/pics/icon/${c,,}.gsc" ] && echo yes || echo no)" "yes"
 done
+
+# The MiSTer's card is exFAT, which ignores case: two names differing only in
+# case are one file there, and whichever lands last wins. NEOGEO.gsc beside
+# NeoGeo.gsc shipped for releases. The release's pictures are lower case, and
+# nothing in the repository may collide with anything else by case.
+section "names: lower case, and no two alike but for case"
+upper="$(cd "${REPO}" && ls pics/banner pics/icon | grep -c '[A-Z]')"
+ok "pics/banner and pics/icon are lower case" "${upper}" "0"
+if git -C "${REPO}" rev-parse >/dev/null 2>&1; then
+  ok "no two tracked paths differ only in case" \
+     "$(git -C "${REPO}" ls-files | tr 'A-Z' 'a-z' | sort | uniq -d | head -3)" ""
+fi
 
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n' "${PASS}" "${FAIL}"
 [ "${FAIL}" -eq 0 ]

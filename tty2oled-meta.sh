@@ -170,6 +170,86 @@ find_rompath() {
 }
 
 # ---------------------------------------------------------------------------
+# meta_stat - the modification times of everything build_meta reads, in one
+# process: META_MTIME[<path>] (seconds), and all of them as META_STATSIG.
+#
+# One stat a pass, for three things: the selection's time (the leftover-state
+# guard), whether names.txt or coretypes.ini need reading again, and - with
+# the state files' contents - whether anything changed at all since the last
+# pass (meta_inputs), which is most passes: a game being played.
+# ---------------------------------------------------------------------------
+declare -A META_MTIME=()
+META_STATSIG=""
+META_STAT_FRESH=""        # "yes": taken this pass, build_meta need not
+meta_stat() {
+  local l=""
+  META_MTIME=(); META_STATSIG=""
+  while IFS= read -r l; do
+    META_MTIME[${l#* }]="${l%% *}"
+    META_STATSIG="${META_STATSIG}${l}|"
+  done < <(stat -c '%Y %n' -- "${MISTER_CORENAME}" "${MISTER_RBFNAME}" \
+             "${MISTER_STARTPATH}" "${MISTER_FULLPATH}" "${MISTER_CURRENTPATH}" \
+             "${MISTER_FILESELECT}" "${MISTER_GAMEID}" "${NAMES_TXT}" \
+             "${CORETYPE_MAP:-}" "${SCRAPE_DIR}" "${TITLE_INDEX_DIR}" \
+             "${TITLE_INDEX}" 2>/dev/null)
+  return 0
+}
+
+# Whether a file read into a table must be read again: its time as the last
+# meta_stat saw it, against the time it was read at (the variable named).
+# A file meta_stat has not seen - no stat yet, or not there - is always read:
+# that costs only a read of a file, and is never wrong.
+_table_stale() {  # _table_stale <file> <ref variable>
+  local -n _ts_ref="${2}"
+  local now="${META_MTIME[${1}]-none}"
+  [ "${now}" = "none" ] && { _ts_ref="none"; return 0; }
+  [ "${now}" = "${_ts_ref}" ] && return 1
+  _ts_ref="${now}"
+  return 0
+}
+
+# names.txt as a table, key lower-cased -> name; the first of a key wins.
+declare -A NAMES_MAP=()
+NAMES_REF=""
+_names_load() {
+  local line="" k="" v=""
+  _table_stale "${NAMES_TXT:-}" NAMES_REF || return 0
+  NAMES_MAP=()
+  [ -r "${NAMES_TXT:-}" ] || return 0
+  while IFS= read -r line || [ -n "${line}" ]; do
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    case "${line}" in '#'*|';'*|'') continue ;; esac
+    [[ "${line}" == *:* ]] || continue
+    k="${line%%:*}"; v="${line#*:}"
+    k="${k%"${k##*[![:space:]]}"}"
+    v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+    [ -n "${v}" ] && [ -z "${NAMES_MAP[${k,,}]+set}" ] && NAMES_MAP[${k,,}]="${v}"
+  done <"${NAMES_TXT}"
+  return 0
+}
+
+# coretypes.ini as a table, core lower-cased -> kind; the first of a core wins.
+declare -A CORETYPES=()
+CORETYPES_REF=""
+_coretypes_load() {
+  local line="" k="" v=""
+  _table_stale "${CORETYPE_MAP:-}" CORETYPES_REF || return 0
+  CORETYPES=()
+  [ -r "${CORETYPE_MAP:-}" ] || return 0
+  while IFS= read -r line || [ -n "${line}" ]; do
+    line="${line%$'\r'}"
+    [[ "${line}" == *=* ]] || continue
+    k="${line%%=*}"; v="${line#*=}"
+    k="${k#"${k%%[![:space:]]*}"}"; k="${k%"${k##*[![:space:]]}"}"
+    [ -n "${k}" ] || continue
+    case "${k}" in '#'*|';'*) continue ;; esac
+    [ -z "${CORETYPES[${k,,}]+set}" ] && CORETYPES[${k,,}]="${v//[[:space:]]/}"
+  done <"${CORETYPE_MAP}"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # display_corename - the name the user has configured for this core.
 #
 # Looks the core up in names.txt, which MiSTer uses to rename cores in its own
@@ -193,21 +273,12 @@ display_corename() {
   base="${CORE_STARTPATH##*/}"      # "GBA_20260530.rbf", "Game Gear.mgl"
   base="${base%.*}"                 # "GBA_20260530",     "Game Gear"
 
+  _names_load
   for key in "${corename}" "${rbfname}" "${base}" "${base%_*}"; do
     [ -n "${key}" ] || continue
-    # Exact key match on the part before the first colon, no globbing: core
-    # names contain spaces and punctuation ("Neo Geo MVS/AES", "PC Engine/CD").
-    hit="$(awk -F':' -v k="${key,,}" '
-      /^[[:space:]]*[#;]/ { next }
-      {
-        n = $1
-        sub(/^[[:space:]]+/, "", n); sub(/[[:space:]]+$/, "", n)
-        if (tolower(n) != k) next
-        v = substr($0, index($0, ":") + 1)
-        sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v)
-        if (v != "") { print v; exit }
-      }
-    ' "${NAMES_TXT:-}" 2>/dev/null)"
+    # An exact key, without regard to case: core names have spaces and
+    # punctuation in them ("Neo Geo MVS/AES", "PC Engine/CD").
+    hit="${NAMES_MAP[${key,,}]:-}"
     if [ -n "${hit}" ]; then
       DISPLAY_CORENAME="${hit}"
       return 0
@@ -239,16 +310,15 @@ classify_core() {
 
   # 2. User override map wins over folder guessing, so odd setups can be fixed
   #    without patching the script. Format: "corename=kind" per line.
-  if [ -n "${corename}" ] && [ -r "${CORETYPE_MAP}" ]; then
+  #    The name is a key, matched exactly without regard to case - it was a
+  #    regex, so a "." in a core name matched any character.
+  if [ -n "${corename}" ]; then
     local mapped=""
-    mapped="$(grep -iE "^[[:space:]]*${corename}[[:space:]]*=" "${CORETYPE_MAP}" 2>/dev/null | head -n1)"
-    if [ -n "${mapped}" ]; then
-      mapped="${mapped#*=}"
-      mapped="${mapped//[[:space:]]/}"
-      case "${mapped,,}" in
-        arcade|console|computer) META_KIND="${mapped,,}"; return 0 ;;
-      esac
-    fi
+    _coretypes_load
+    mapped="${CORETYPES[${corename,,}]:-}"
+    case "${mapped,,}" in
+      arcade|console|computer) META_KIND="${mapped,,}"; return 0 ;;
+    esac
   fi
 
   # 3. Standard MiSTer SD layout: _Arcade / _Console / _Computer / _Other.
@@ -407,12 +477,54 @@ parse_mra() {
 #   TOSEC:     Super Mario World (1990)(Nintendo)(US)[cr].sfc
 # Strips dump-status tags, collapses whitespace, and pulls out the region.
 #
+# Bash alone, no process: this ran a dozen of them - grep, sed, tr, paste -
+# for every game, and a pass rebuilt the game every few seconds. Whatever it
+# does, tools/index-emit.awk does too, for the index's titles and regions
+# (tests/test-index.sh holds the two to each other).
+#
 # Sets: ROM_TITLE ROM_REGION ROM_EXT ROM_TAGS
 # ---------------------------------------------------------------------------
 ROM_TITLE=""; ROM_REGION=""; ROM_EXT=""; ROM_TAGS=""
 
+# One name of a region, as No-Intro and TOSEC write them, into _RG - its
+# short forms spelt out - or failure if it is not one.
+_region_word() {
+  _RG="${1}"
+  case "${1^^}" in
+    US) _RG="USA" ;; EU) _RG="Europe" ;; JP) _RG="Japan" ;;
+    WORLD|USA|EUROPE|JAPAN|ASIA|UK|GERMANY|FRANCE|SPAIN|ITALY|AUSTRALIA|KOREA|\
+    BRAZIL|SWEDEN|NETHERLANDS|CANADA|CHINA|TAIWAN|RUSSIA|SCANDINAVIA|\
+    "HONG KONG"|GREECE|PORTUGAL|DENMARK|NORWAY|FINLAND|POLAND|BELGIUM|AUSTRIA|\
+    SWITZERLAND|"LATIN AMERICA"|"NEW ZEALAND"|INDIA|MEXICO|ARGENTINA|IRELAND|\
+    "SOUTH AFRICA") ;;
+    *) return 1 ;;
+  esac
+}
+
+# The region: the first (...) group made only of region names - "(USA)",
+# "(USA, Europe)", "(Europe, Australia)" - as written, short forms spelt out.
+# A list used to count only as the two pairs the pattern named; any other,
+# "(Japan, Europe)", had no region at all.
+_region_of() {
+  local s="${1}" g="" part="" out="" ok=""
+  ROM_REGION=""
+  while [[ "${s}" == *"("*")"* ]]; do
+    s="${s#*(}"; g="${s%%)*}"; s="${s#*)}"
+    out=""; ok="${g}"
+    while [ -n "${g}" ]; do
+      part="${g%%,*}"
+      [ "${part}" = "${g}" ] && g="" || g="${g#*,}"
+      part="${part#"${part%%[![:space:]]*}"}"; part="${part%"${part##*[![:space:]]}"}"
+      _region_word "${part}" || { ok=""; break; }
+      out="${out}${out:+, }${_RG}"
+    done
+    [ -n "${ok}" ] && [ -n "${out}" ] && { ROM_REGION="${out}"; return 0; }
+  done
+  return 0
+}
+
 clean_romname() {
-  local path="${1}" base="" work="" seg="" upper=""
+  local path="${1}" base="" work="" head="" rest="" tag=""
   ROM_TITLE=""; ROM_REGION=""; ROM_EXT=""; ROM_TAGS=""
   [ -n "${path}" ] || return 1
 
@@ -426,32 +538,28 @@ clean_romname() {
   fi
 
   work="${base}"
+  _region_of "${work}"
 
-  # Pull region out of any (...) group before we discard the groups.
-  # Longest/most specific names first so "USA, Europe" doesn't match just "USA".
-  local regions="World|USA, Europe|USA|Europe|Japan, USA|Japan|Germany|France|Spain|Italy|Australia|Korea|Brazil|Sweden|Netherlands|Canada|China|Taiwan|Asia|UK|US|EU|JP"
-  local found=""
-  found="$(printf '%s' "${work}" | grep -oiE "\((${regions})\)" | head -n1)"
-  if [ -n "${found}" ]; then
-    ROM_REGION="${found#(}"
-    ROM_REGION="${ROM_REGION%)}"
-    # Normalise the short forms.
-    case "${ROM_REGION^^}" in
-      US) ROM_REGION="USA" ;;
-      EU) ROM_REGION="Europe" ;;
-      JP) ROM_REGION="Japan" ;;
-    esac
-  fi
+  # Every (...) group, then every [...] one, is metadata, not title - the
+  # square ones kept, comma-joined, as the dump-status tags.
+  while [[ "${work}" == *"("*")"* ]]; do
+    head="${work%%(*}"; rest="${work#*(}"; work="${head}${rest#*)}"
+  done
+  while [[ "${work}" == *"["*"]"* ]]; do
+    head="${work%%\[*}"; rest="${work#*\[}"
+    tag="${rest%%\]*}"; tag="${tag//\[/}"
+    ROM_TAGS="${ROM_TAGS}${ROM_TAGS:+,}${tag}"
+    work="${head}${rest#*\]}"
+  done
 
-  # Collect dump-status tags in [...] for optional display.
-  ROM_TAGS="$(printf '%s' "${work}" | grep -oE '\[[^]]*\]' | tr -d '[]' | paste -sd',' - 2>/dev/null)"
-
-  # Remove every (...) and [...] group - these are metadata, not title.
-  work="$(printf '%s' "${work}" | sed -E 's/\([^)]*\)//g; s/\[[^]]*\]//g')"
-
-  # Collapse separators and whitespace.
+  # Collapse separators and whitespace, and a dangling " - " at the end.
   work="${work//_/ }"
-  work="$(printf '%s' "${work}" | tr -s ' ' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]*-[[:space:]]*$//')"
+  work="${work//$'\t'/ }"
+  while [[ "${work}" == *"  "* ]]; do work="${work//  / }"; done
+  work="${work#"${work%%[![:space:]]*}"}"; work="${work%"${work##*[![:space:]]}"}"
+  if [[ "${work}" == *- ]]; then
+    work="${work%-}"; work="${work%"${work##*[![:space:]]}"}"
+  fi
 
   # "Legend of Zelda, The" -> "The Legend of Zelda"
   case "${work}" in
@@ -517,24 +625,25 @@ idx_reset() {
 # Add a line if a core of yours is missing - tty2oled-diag.sh prints the name
 # your MiSTer actually reports, which is the left side.
 _index_alias() {
+  _R=""
   case "${1^^}" in
-    MEGADRIVE|MEGADRIVE32X|SEGAGENESIS|SEGAMD) echo "GENESIS" ;;
-    GBC|GAMEBOYCOLOR|GAMEBOY2|SGB)             echo "GAMEBOY" ;;
-    ATARILYNX)                                 echo "LYNX" ;;
-    WSWAN|WONDERSWANCOLOR|WSC)                 echo "WONDERSWAN" ;;
-    GAMEGEAR|GG|SEGAGG|SG1000|SEGASG1000)      echo "SMS" ;;
-    MASTERSYSTEM|SEGASMS)                      echo "SMS" ;;
-    PCE|PCECD|TGFX16CD|TURBOGRAFX16)           echo "TGFX16" ;;
-    SUPERGRAFX|SGX)                            echo "TGFX16" ;;
-    32X|SEGA32X)                               echo "S32X" ;;
-    NEOGEOPOCKETCOLOR|NGPC)                    echo "NGP" ;;
-    VIRTUALBOY)                                echo "VIRTUALBOY" ;;
-    NINTENDO64)                                echo "N64" ;;
-    GAMEBOYADVANCE)                            echo "GBA" ;;
-    COLECOVISION)                              echo "COLECO" ;;
-    A2600|ATARI2600)                           echo "ATARI2600" ;;
-    A5200|ATARI5200)                           echo "ATARI5200" ;;
-    A7800|ATARI7800)                           echo "ATARI7800" ;;
+    MEGADRIVE|MEGADRIVE32X|SEGAGENESIS|SEGAMD) _R="GENESIS" ;;
+    GBC|GAMEBOYCOLOR|GAMEBOY2|SGB)             _R="GAMEBOY" ;;
+    ATARILYNX)                                 _R="LYNX" ;;
+    WSWAN|WONDERSWANCOLOR|WSC)                 _R="WONDERSWAN" ;;
+    GAMEGEAR|GG|SEGAGG|SG1000|SEGASG1000)      _R="SMS" ;;
+    MASTERSYSTEM|SEGASMS)                      _R="SMS" ;;
+    PCE|PCECD|TGFX16CD|TURBOGRAFX16)           _R="TGFX16" ;;
+    SUPERGRAFX|SGX)                            _R="TGFX16" ;;
+    32X|SEGA32X)                               _R="S32X" ;;
+    NEOGEOPOCKETCOLOR|NGPC)                    _R="NGP" ;;
+    VIRTUALBOY)                                _R="VIRTUALBOY" ;;
+    NINTENDO64)                                _R="N64" ;;
+    GAMEBOYADVANCE)                            _R="GBA" ;;
+    COLECOVISION)                              _R="COLECO" ;;
+    A2600|ATARI2600)                           _R="ATARI2600" ;;
+    A5200|ATARI5200)                           _R="ATARI5200" ;;
+    A7800|ATARI7800)                           _R="ATARI7800" ;;
     *) return 1 ;;
   esac
 }
@@ -543,31 +652,38 @@ _index_alias() {
 # its alias, then a case-insensitive directory match - MiSTer is not
 # consistent about capitalisation and a file named Genesis.idx should still
 # answer for a core calling itself GENESIS.
-_index_file() {
+#
+# Into _R, without a subshell: every lookup starts here.
+_index_file_r() {
   local corename="${1:-}" alias="" cand="" f="" base=""
+  _R=""
 
   if [ -n "${corename}" ]; then
-    alias="$(_index_alias "${corename}")" || alias=""
+    _index_alias "${corename}" && alias="${_R}"
     # Each candidate gets both spellings tried: exact first because it is a
     # single stat, then a case-insensitive sweep of the directory.
     for cand in "${corename}" ${alias:+"${alias}"}; do
       [ -n "${cand}" ] || continue
       if [ -r "${TITLE_INDEX_DIR}/${cand}.idx" ]; then
-        printf '%s' "${TITLE_INDEX_DIR}/${cand}.idx"; return 0
+        _R="${TITLE_INDEX_DIR}/${cand}.idx"; return 0
       fi
       for f in "${TITLE_INDEX_DIR}"/*.idx; do
         [ -r "${f}" ] || continue
         base="${f##*/}"; base="${base%.idx}"
         if [ "${base,,}" = "${cand,,}" ]; then
-          printf '%s' "${f}"; return 0
+          _R="${f}"; return 0
         fi
       done
     done
   fi
 
+  _R=""
   [ -r "${TITLE_INDEX}" ] || return 1
-  printf '%s' "${TITLE_INDEX}"
+  _R="${TITLE_INDEX}"
 }
+
+# The same on stdout, for tty2oled-capture.sh and the tests.
+_index_file() { _index_file_r "${1:-}" || return 1; printf '%s' "${_R}"; }
 
 # ---------------------------------------------------------------------------
 # lookup_name - resolve a cleaned title against the index.
@@ -585,7 +701,8 @@ lookup_name() {
   local title="${1}" region="${2:-}" corename="${3:-}" idx="" hit=""
   idx_reset
   [ -n "${title}" ] || return 1
-  idx="$(_index_file "${corename}")" || return 1
+  _index_file_r "${corename}" || return 1
+  idx="${_R}"
 
   # awk rather than grep: a title is a plain string and may contain regex
   # metacharacters - "Super Mario Bros. 3", "Boulder Dash (Ltd.)".
@@ -614,7 +731,8 @@ lookup_serial() {
   local serial="${1}" corename="${2:-}" idx="" hit=""
   idx_reset
   [ -n "${serial}" ] || return 1
-  idx="$(_index_file "${corename}")" || return 1
+  _index_file_r "${corename}" || return 1
+  idx="${_R}"
 
   hit="$(awk -F'|' -v s="${serial,,}" '
     tolower($8) == s { print; exit }
@@ -635,7 +753,8 @@ lookup_crc() {
   # One index file per core rather than one big one: a MiSTer greps this on
   # every game load, and a per-core file is a few hundred KB where a combined
   # one would be tens of MB. The legacy single file is the fallback.
-  idx="$(_index_file "${corename}")" || return 1
+  _index_file_r "${corename}" || return 1
+  idx="${_R}"
 
   hit="$(grep -m1 -i "^${crc}|" "${idx}" 2>/dev/null)"
   [ -n "${hit}" ] || return 1
@@ -674,23 +793,24 @@ scr_reset
 
 _scrape_systems() {  # the scraped files that may hold this core's games
   case "${1^^}" in
-    GENESIS|MEGADRIVE)          echo "MegaDrive" ;;
-    GAMEBOY|GB)                 echo "GAMEBOY GBC" ;;
-    GBC|GAMEBOYCOLOR)           echo "GBC GAMEBOY" ;;
-    TGFX16|PCE)                 echo "TGFX16 TGFX16CD" ;;
-    TGFX16CD|TGFX16-CD|PCECD)   echo "TGFX16CD TGFX16" ;;
-    NEOGEO)                     echo "NeoGeo" ;;
-    *)                          echo "${1}" ;;
+    GENESIS|MEGADRIVE)          _R="MegaDrive" ;;
+    GAMEBOY|GB)                 _R="GAMEBOY GBC" ;;
+    GBC|GAMEBOYCOLOR)           _R="GBC GAMEBOY" ;;
+    TGFX16|PCE)                 _R="TGFX16 TGFX16CD" ;;
+    TGFX16CD|TGFX16-CD|PCECD)   _R="TGFX16CD TGFX16" ;;
+    NEOGEO)                     _R="NeoGeo" ;;
+    *)                          _R="${1}" ;;
   esac
 }
 
 _scrape_file() {  # the file for one system name, matched case-insensitively
   local want="${1}" f="" base=""
-  [ -r "${SCRAPE_DIR}/${want}.txt" ] && { printf '%s' "${SCRAPE_DIR}/${want}.txt"; return 0; }
+  _R=""
+  [ -r "${SCRAPE_DIR}/${want}.txt" ] && { _R="${SCRAPE_DIR}/${want}.txt"; return 0; }
   for f in "${SCRAPE_DIR}"/*.txt; do
     [ -r "${f}" ] || continue
     base="${f##*/}"; base="${base%.txt}"
-    [ "${base,,}" = "${want,,}" ] && { printf '%s' "${f}"; return 0; }
+    [ "${base,,}" = "${want,,}" ] && { _R="${f}"; return 0; }
   done
   return 1
 }
@@ -705,8 +825,10 @@ lookup_scraped() {
   [[ "${name}" =~ \.[A-Za-z0-9]{1,4}$ ]] && bare="${name%.*}"
   [ -n "${bare}" ] || return 1
 
-  for sys in $(_scrape_systems "${corename}"); do
-    file="$(_scrape_file "${sys}")" || continue
+  _scrape_systems "${corename}"
+  for sys in ${_R}; do
+    _scrape_file "${sys}" || continue
+    file="${_R}"
     # The last line for a key wins, should a file ever carry two. Matched
     # exactly - a file name is a plain string, full of regex metacharacters.
     hit="$(awk -F'|' -v n="${bare,,}" -v f="${name,,}" -v c="${crc,,}" '
@@ -726,12 +848,14 @@ lookup_scraped() {
 
 # "16" out of 20, as the importer stores a rating, reads better out of ten: "8/10",
 # and "7.5/10" for an odd one.
+# Into _R.
 _scr_rating() {
   local n="${1}"
+  _R=""
   case "${n}" in ''|*[!0-9]*) return 0 ;; esac
   [ "${n}" -gt 20 ] && return 0
-  if [ $((n % 2)) -eq 0 ]; then printf '%d/10' $((n / 2))
-  else printf '%d.5/10' $((n / 2)); fi
+  if [ $((n % 2)) -eq 0 ]; then _R="$((n / 2))/10"
+  else _R="$((n / 2)).5/10"; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -793,13 +917,13 @@ _ARCADE_KNOWN="Year Manufacturer Genre Players Controls Buttons Region Platform 
 # A column is about fifteen characters wide, which some of the names are not.
 # None is longer than "Manufctr": the value column is measured off the widest
 # label on the card, and a ninth letter would move every value on it.
-_arcade_display_label() {
+_arcade_display_label() {  # into _R
   case "${1}" in
-    Manufacturer) printf 'Manufctr' ;;
-    Orientation)  printf 'Orient'   ;;
-    Developer)    printf 'Developr' ;;
-    Publisher)    printf 'Publishr' ;;
-    *)            printf '%s' "${1}" ;;
+    Manufacturer) _R='Manufctr' ;;
+    Orientation)  _R='Orient'   ;;
+    Developer)    _R='Developr' ;;
+    Publisher)    _R='Publishr' ;;
+    *)            _R="${1}" ;;
   esac
 }
 
@@ -822,10 +946,13 @@ META_COMPACT_COUNT=0
 # Canonical spelling of a field name, or failure if it is not one we know.
 # The two layouts have separate vocabularies, so each looks its names up in
 # its own list and a console name in ARCADE_FIELDS is simply ignored.
+#
+# Into _R: these ran in a subshell per field, a dozen and more a game.
 _canon_label() {
   local want="${1}" list="${2}" label=""
+  _R=""
   for label in ${list}; do
-    if [ "${label,,}" = "${want,,}" ]; then printf '%s' "${label}"; return 0; fi
+    if [ "${label,,}" = "${want,,}" ]; then _R="${label}"; return 0; fi
   done
   return 1
 }
@@ -860,7 +987,8 @@ meta_addfields_ordered() {
   # Pinned first, in the order METADATA_PINNED gives them. The firmware then
   # only needs "the first N are pinned" and never has to know their names.
   for want in ${METADATA_PINNED}; do
-    label="$(_field_label "${want}")" || continue
+    _field_label "${want}" || continue
+    label="${_R}"
     _field_in_list "${want}" "${order}" || continue
     before="${#META_FIELDS[@]}"
     meta_addfield "${label}" "${META_AVAIL[${label}]:-}"
@@ -869,7 +997,8 @@ meta_addfields_ordered() {
 
   # Then everything else, skipping whatever was already pinned.
   for want in ${order}; do
-    label="$(_field_label "${want}")" || continue
+    _field_label "${want}" || continue
+    label="${_R}"
     _field_in_list "${want}" "${METADATA_PINNED}" && continue
     meta_addfield "${label}" "${META_AVAIL[${label}]:-}"
   done
@@ -890,16 +1019,18 @@ arcade_avail_from_mra() {
   # for whatever it leaves out - the MRA is about this very set, where a
   # gamelist entry may have been matched to a parent or a clone.
   ARCADE_AVAIL[Year]="${MRA_YEAR:-${SCR_RELEASED:0:4}}"
-  ARCADE_AVAIL[Manufacturer]="${MRA_MANUFACTURER:-$(_nocomma "${SCR_PUBLISHER:-${SCR_DEVELOPER}}")}"
+  _nocomma "${SCR_PUBLISHER:-${SCR_DEVELOPER}}"
+  ARCADE_AVAIL[Manufacturer]="${MRA_MANUFACTURER:-${_R}}"
   # catver is the finer-grained of the two - "Platform / Run Jump" against
   # "Platform" - so it wins where the MRA carries it.
-  ARCADE_AVAIL[Genre]="${MRA_CATVER:-${MRA_CATEGORY:-$(_nocomma "${SCR_GENRE}")}}"
+  _nocomma "${SCR_GENRE}"
+  ARCADE_AVAIL[Genre]="${MRA_CATVER:-${MRA_CATEGORY:-${_R}}}"
   ARCADE_AVAIL[Players]="${MRA_PLAYERS:-${SCR_PLAYERS}}"
-  ARCADE_AVAIL[Developer]="$(_nocomma "${SCR_DEVELOPER}")"
-  ARCADE_AVAIL[Publisher]="$(_nocomma "${SCR_PUBLISHER}")"
-  ARCADE_AVAIL[Rating]="$(_scr_rating "${SCR_RATING}")"
+  _nocomma "${SCR_DEVELOPER}"; ARCADE_AVAIL[Developer]="${_R}"
+  _nocomma "${SCR_PUBLISHER}"; ARCADE_AVAIL[Publisher]="${_R}"
+  _scr_rating "${SCR_RATING}"; ARCADE_AVAIL[Rating]="${_R}"
   ARCADE_AVAIL[Released]="${SCR_RELEASED}"
-  ARCADE_AVAIL[Series]="$(_nocomma "${SCR_SERIES}")"
+  _nocomma "${SCR_SERIES}"; ARCADE_AVAIL[Series]="${_R}"
   ARCADE_AVAIL[Controls]="${MRA_JOYSTICK}"
   ARCADE_AVAIL[Region]="${MRA_REGION}"
   ARCADE_AVAIL[Platform]="${MRA_PLATFORM}"
@@ -947,9 +1078,10 @@ arcade_avail_from_mra() {
 
 # A gamelist says "Capcom, Inc." and "Shooter, Vertical", and metasanitize
 # would turn each comma into a space beside the one already there. One space.
+# Into _R.
 _nocomma() {
   local v="${1//, / }"
-  printf '%s' "${v//,/ }"
+  _R="${v//,/ }"
 }
 
 # What an imported gamelist said about the running arcade game. The gamelist
@@ -986,8 +1118,10 @@ arcade_addfields_ordered() {
   META_PINNED_COUNT=0
 
   for want in ${order}; do
-    name="$(_arcade_label "${want}")" || continue
-    label="$(_arcade_display_label "${name}")"
+    _arcade_label "${want}" || continue
+    name="${_R}"
+    _arcade_display_label "${name}"
+    label="${_R}"
     before="${#META_FIELDS[@]}"
     meta_addfield "${label}" "${ARCADE_AVAIL[${name}]:-}"
     [ "${#META_FIELDS[@]}" -gt "${before}" ] || continue
@@ -1001,8 +1135,10 @@ arcade_addfields_ordered() {
   done
 
   for want in ${wide}; do
-    name="$(_arcade_label "${want}")" || continue
-    label="$(_arcade_display_label "${name}")"
+    _arcade_label "${want}" || continue
+    name="${_R}"
+    _arcade_display_label "${name}"
+    label="${_R}"
     meta_addfield "${label}" "${ARCADE_AVAIL[${name}]:-}"
   done
 }
@@ -1055,6 +1191,30 @@ SVM_C_TITLE=""; SVM_C_DESC=""; SVM_C_FIELDS=(); SVM_C_PINNED=0
 
 scummvm_core() { [ "${1,,}" = "scummvm" ]; }
 
+# ---------------------------------------------------------------------------
+# proc_hits - the processes worth a closer look, into PROC_HITS (their
+# cmdline files): one grep over every command line, for everything the daemon
+# looks for - update_all, MiSTer's own updater, this one's, Super Attract
+# Mode, Degauss, Zaparoo, ScummVM. It used to be a grep each, three to five a
+# pass, each walking all of /proc. Case is ignored, which only widens the
+# net: every caller still decides from the command line itself what it has.
+# The brackets keep grep's own command line, which holds the patterns, out.
+#
+# Within one pass of the daemon's loop - PROC_PASS, which the loop bumps -
+# the sweep is made once and shared. Outside one (the tests) every call looks.
+# ---------------------------------------------------------------------------
+PROC_PASS=""; PROC_SCANNED="-"; PROC_HITS=()
+proc_hits() {
+  [ -n "${PROC_PASS}" ] && [ "${PROC_SCANNED}" = "${PROC_PASS}" ] && return 0
+  PROC_HITS=()
+  mapfile -t PROC_HITS < <(grep -lsai \
+      -e '[u]pdate_all' -e '[t]mp/downloader[.]sh' -e '[s]cripts/update[.]sh' \
+      -e '[u]a_downloader' -e '[t]ty2oledplus_update' -e '[u]pdate_tty2oledplus' \
+      -e '[m]ister_sam_on[.]sh' -e '[d]egauss/degauss' -e '[m]enu_zaparoo' -e '[s]cummvm' \
+      "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null)
+  PROC_SCANNED="${PROC_PASS}"
+}
+
 scummvm_reset() {
   SVM_PID=""; SVM_START=0; SVM_INI=""; SVM_AUTO=""; SVM_ICONDIRS=()
   SVM_INI_SEEN=""; SVM_LAST=""; SVM_ICONPATH=""; SVM_SEC=()
@@ -1080,7 +1240,8 @@ scummvm_find() {
 
   [ -n "${SVM_PID}" ] && _svm_is "${SVM_PID}" && return 0
   scummvm_reset
-  for f in $(grep -lsai -e 'scummvm' "${proc}"/[0-9]*/cmdline 2>/dev/null); do
+  proc_hits
+  for f in "${PROC_HITS[@]}"; do
     pid="${f%/cmdline}"; pid="${pid##*/}"
     _svm_is "${pid}" && { SVM_PID="${pid}"; break; }
   done
@@ -1327,7 +1488,7 @@ scummvm_meta() {
   [ "${i_engine,,}" = "${META_TITLE,,}" ] && i_engine=""
   _svm_platform platform "${SVM_SEC[platform]:-}"
   _svm_language language "${SVM_SEC[language]:-}"
-  [ -n "${SCR_RATING}" ] && rating="$(_scr_rating "${SCR_RATING}")"
+  _scr_rating "${SCR_RATING}"; rating="${_R}"
   META_AVAIL=(
     [System]="${DISPLAY_CORENAME}"
     [Year]="${_year}"
@@ -1361,6 +1522,31 @@ scummvm_icondirs() {
 }
 
 # ---------------------------------------------------------------------------
+# meta_inputs - everything build_meta reads, as one string, into META_INPUTS:
+# the core, the state files' contents, and the times of those and of the
+# tables and folders it looks things up in (meta_stat). The same string, the
+# same result - so a pass that finds it unchanged, which is nearly every pass
+# while a game is played, need not build anything. A build is some forty
+# processes on a console game; this is one.
+#
+# Not for ScummVM: its layout depends on ScummVM's own files and open
+# descriptors, which it caches itself (SVM_BUILT).
+# ---------------------------------------------------------------------------
+META_INPUTS=""
+meta_inputs() {  # meta_inputs <corename>
+  local f="" v="" out="${1}"
+  meta_stat
+  META_STAT_FRESH="yes"
+  for f in "${MISTER_RBFNAME}" "${MISTER_STARTPATH}" "${MISTER_FULLPATH}" \
+           "${MISTER_CURRENTPATH}" "${MISTER_FILESELECT}" "${MISTER_GAMEID}"; do
+    v=""
+    [ -r "${f}" ] && IFS= read -r -d '' v <"${f}" 2>/dev/null
+    out="${out}"$'\x1f'"${v}"
+  done
+  META_INPUTS="${out}"$'\x1f'"${META_STATSIG}"
+}
+
+# ---------------------------------------------------------------------------
 # build_meta - top level. Produces META_KIND/META_TITLE/META_FIELDS/META_ICON
 # for the core named in $1 (normally the contents of /tmp/CORENAME).
 #
@@ -1390,6 +1576,11 @@ build_meta() {
     scummvm_meta
     return 0
   fi
+
+  # The times of everything below, once: taken already this pass if
+  # meta_inputs decided a build was due.
+  [ "${META_STAT_FRESH}" = "yes" ] || meta_stat
+  META_STAT_FRESH=""
 
   classify_core "${corename}"
 
@@ -1505,7 +1696,7 @@ build_meta() {
       # from the menu lands seconds later and is still caught.
       if [ -n "${romref}" ]; then
         local sel_id=""
-        sel_id="${romref}|$(stat -c %Y "${MISTER_CURRENTPATH}" 2>/dev/null || echo 0)"
+        sel_id="${romref}|${META_MTIME[${MISTER_CURRENTPATH}]:-0}"
 
         if [ "${corechange}" = "corechange" ]; then
           META_STALE_REF=""
@@ -1605,6 +1796,8 @@ build_meta() {
           _company=""
         fi
 
+        _scr_rating "${SCR_RATING}"
+        local _rating="${_R}"
         META_AVAIL=(
           [System]="${DISPLAY_CORENAME}"
           [Region]="${ROM_REGION}"
@@ -1614,7 +1807,7 @@ build_meta() {
           [Developer]="${IDX_DEVELOPER}"
           [Format]="${ROM_EXT^^}"
           [Players]="${SCR_PLAYERS}"
-          [Rating]="$(_scr_rating "${SCR_RATING}")"
+          [Rating]="${_rating}"
           [Released]="${SCR_RELEASED}"
           [Series]="${SCR_SERIES}"
         )

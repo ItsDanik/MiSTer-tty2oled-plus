@@ -136,7 +136,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `.../bandnote.h` | Frontends' 54-row picture + band; `CMDNOTE` fading in/out there. |
 | `.../linejunk.h` | Drops another program's bytes (Zaparoo's PN532 probe) ahead of a command line. |
 | `.../MiSTer_SSD1322_USB.ino` | Includes the headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | ~2620 checks, no hardware. |
+| `tests/` | ~2870 checks, no hardware. |
 | `tools/build-title-index.sh`, `dat2index.awk`, `index-emit.awk`, `mamexml2index.awk` | CRC32 title index from libretro-database (+ MAME XML for Neo Geo). W. |
 | `tools/png2gsc.py` | PNG -> 4bpp `.gsc`. W **and** M: Pillow, ImageMagick, or a stdlib PNG decoder. |
 | `tools/wheels2gsc.py`, `tools/gscpack.py` | Wheel PNGs -> 256x64 `.gsc` (`--nodupes`); pack into `.bin`+`.idx`. W. |
@@ -331,6 +331,16 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   `menu_frontend_possible` makes both waits poll every `UPDATE_ALL_POLL`s on
   MENU/degauss/zaparoo, since starting or quitting Degauss changes no state
   file.
+- **The band's clock** (`BAND_CLOCK`, `BAND_CLOCK_LEFT`/`_RIGHT`, 0.7.8b):
+  `band_want` is the notice, else the clock, else nothing - so it shows on a
+  frontend's picture only, only with no notice, never under the busy bar or
+  the outro (the same waits as the notice). Fades in and out as the notice
+  does; a new minute is drawn over the old in place (`band_tick`), never a
+  fade. Formatted with `gmtime_r` + `strftime` from `CMDSETTIME`'s local
+  epoch + `millis()`, once a second at most. Daemon: `sendclock` on change
+  (`CLOCK_SENT`, reset with `NOTE_SENT`), `sendtime` from `local_epoch`
+  (printf's `%(%z)T`, no process; half-hour zones used to send nothing),
+  `time_pass` hourly to firmware >= 0.7.8b.
 - **Super Attract Mode** (MiSTer SAM) changes only the header:
   `SAM_HEADER_TEXT` in place of "Now playing" (`sam_pass`, metadata path,
   every pass, before the pictures; `CMDHEAD` only on change, `HEAD_SENT="?"`
@@ -343,6 +353,16 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   `/proc` grep. The caption takes the first header font it fits beside the
   pips (`meta_drawHeader`: tenfatguys, tenthinguys, luBS08 - "Super Attract
   Mode" is 180/146/115px, the console's window 166 minus 5 a pip + 2).
+  **The countdown after it** (`SAM_TIMER`, `samtimer_pass`, 0.7.8b): SAM
+  writes `/tmp/SAM_Game.txt` at each launch, sleeps 1s, then counts
+  `gametimer` down a second at a time (`run_countdown_timer`), so the next
+  game is due at that file's mtime + 1 + gametimer. `CMDHTIMER` once a game
+  (the file's time against `SAM_STAMP`, `-nt`: no process between games);
+  the firmware counts. gametimer from `MiSTer_SAM.ini` (120 default), 21
+  with `m82=yes`, none with `samvideo=yes`. The caption leaves the timer its
+  width (`meta_drawHeader`), dropping to 5x7 beside eight pips; the timer is
+  centred on the caption's ascent. `meta_headTick` = pips' blink or the
+  timer's second turning, wherever `meta_pipTick` was (page fades included).
 - Console fields page every `METADATA_INTERVAL`s (`meta_pageDwellMs`; `0`
   never turns, so never reaches the description). Redraws only on movement.
 
@@ -369,6 +389,21 @@ run of `ARCADE_FIELDS`. Card labels are abbreviated (`Manufctr`, `Orient`) by
 
 **Nothing built for a card may contain a comma** - `metasanitize` turns it to
 a space (`Attack/Jump`, not `Attack, Jump`).
+
+## What a pass costs
+
+`refreshmeta` builds only when `meta_inputs` changes: the core, the state
+files' contents, and one `stat` of them and of `names.txt`,
+`coretypes.ini`, `scraped/`, `titleindex/` (`meta_stat` -> `META_MTIME`,
+which the stale-selection guard and the table loaders use too). A console
+game's build was ~46 processes, an arcade one's ~36 - every pass. The
+helpers write `_R` instead of printing into `$(...)`; `clean_romname` is
+bash alone (and `index-emit.awk`'s twin agrees on 3000 real names);
+`names.txt`/`coretypes.ini` are tables reloaded on mtime (`_table_stale`).
+`proc_hits`: **one** `/proc/*/cmdline` grep a pass (`PROC_PASS`, bumped by
+the loop) for update_all, update.sh, our updater, SAM, Degauss, Zaparoo,
+ScummVM - case-insensitive, each caller re-checks the argv itself. The
+notice path starts no process (`update_note_into`, `UC_MINUTES`).
 
 ## Console layout, row by row
 
@@ -530,6 +565,9 @@ send them). Additions, ESP32 only:
 | `CMDCOR,<core>,<effect>,band` | a frontend's picture: 54 rows, band blacked, the notice composed in. Older firmware reads past `,band` (`toInt()`) |
 | `CMDNOTE,<text>` | the frontends' band notice, rest of the line, 51 columns; empty removes. Quiet; kept until changed (0.7.1b) |
 | `CMDHEAD,<text>` | the layouts' header caption, rest of the line, 24 kept; empty is "Now playing". Quiet, not activity; kept across `CMDMETAOFF`; a layout up is redrawn as it is (a cut) once idle (0.7.7b) |
+| `CMDHTIMER,<s>` | the header's countdown after the caption, 5x7, from now, on the firmware's clock; empty/negative removes; capped 99:59. Quiet, not activity; kept like `CMDHEAD` (0.7.8b) |
+| `CMDCLOCK,<left>\|<right>` | the band's clock: two strftime formats, rest of the line, 40 kept; no `\|` is one piece, centred; empty is off. Quiet, not activity (0.7.8b) |
+| `CMDSETTIME,<local epoch>` | upstream's; also the band clock's time (0.7.8b), counted on by `millis()`. Not activity from 0.7.8b, so the daemon resends it hourly only to that |
 | `CMDFLIP,<s>` | side swap period; 0 disables |
 | `CMDDESC,<bytes>` | + that many raw bytes, printable ASCII, 2048 kept (`DESC_MAX`, same in daemon and importer - `test-scrape.py`), excess discarded. After `CMDMETA`, which clears it |
 | `CMDSCROLL,<h>,<v>` | marquee / description speeds, px/s, 1..200 / 1..100 |
@@ -791,6 +829,11 @@ flashable at `0x0` (gitignored). Arduino IDE: `WEMOS LOLIN32`; on an S3 set
   absolute.
 - Icons have no user folder (an 86x64 icon would be indistinguishable from a
   banner). No blank stub icons: the files are the list.
+- **`pics/banner` and `pics/icon` are lower case** (0.7.8b; `NEOGEO.gsc` and
+  `NeoGeo.gsc` had both shipped). `bannerin`/`findicon` try the name as given,
+  then `${core,,}` - a no-op on exFAT, the work on the test disk.
+  `test-index.sh` fails on an upper-case name there or any two tracked paths
+  differing only in case.
 - `test-wire.sh` fails if a banner is named after a wheel set that is not a
   core.
 
@@ -851,8 +894,8 @@ header is exactly three lines.
 | built-in boot logo | 256x54 | 6912 | `bootlogo.h` |
 
 ```bash
-./tools/png2gsc.py --banner --out pics/banner/NES.gsc nes.png
-./tools/png2gsc.py --out pics/icon/NES.gsc nes.png          # name = CORENAME
+./tools/png2gsc.py --banner --out pics/banner/nes.gsc nes.png
+./tools/png2gsc.py --out pics/icon/nes.gsc nes.png          # name = CORENAME, lower-cased
 ./tools/png2gsc.py --boot splash.png                         # then, on the MiSTer:
 /media/fat/tty2oledplus/tty2oled-bootimg.sh set|status|clear splash.gsc
 ```
@@ -1069,6 +1112,17 @@ row 57..63  build version        BOOT_VER_Y, 5x7 font
 - **The port disappears** (unplug, re-enumeration, flash). `serialready` runs
   every pass and, on return, re-handshakes and clears `oldcore`,
   `META_WIRE_LAST`, `DEFERRED_DONE`.
+- **`stop` kills the process group** the daemon leads (it is started with
+  `setsid`): its background checks are a subshell with python3/curl under
+  it, and killing children left the grandchild running for minutes. Without
+  setsid the group is the starter's (the updater!), so then `descendants`.
+- **`CMDHWINF`'s answer queues behind a dozen acks** at startup (the
+  USB-serial chip holds them while the port is closed): `checkversion`
+  reads and drops what is queued first, then looks until a deadline, not
+  for eight tokens. Tested with a pty display (`test-version.sh`).
+- **The main loop's waits** (`metawait`, `corewait`) sleep when inotifywait
+  fails instead of returning at once - a spin rebuilding, or on the upstream
+  path resending the picture.
 - **Pid files**: ours has its own name; `daemonpid` trusts a pid only if
   `/proc/<pid>/cmdline` names this install's `${DAEMONSCRIPT}`; `children`
   reads `/proc`. Only the init script and the ini may name a pid file
@@ -1098,6 +1152,25 @@ row 57..63  build version        BOOT_VER_Y, 5x7 font
 - **Check that a test fails without its fix** - a renamed variable left the
   staleness guard testing nothing while its test passed.
 - Read the daemon's own debug log before believing a feature fires.
+
+## Pending for a next release
+
+Upgrades weighed and wanted, not started:
+
+- **Bigger serial receive buffer**: `Serial.setRxBufferSize(16384)` before
+  `Serial.begin` on the ESP32 (nothing sets it; the default is 256). A whole
+  picture could then land while `loop()` animates, which is what most of the
+  `sleep ${WAITSECS}` (0.2s each, ~1s a core change) and the length-prefix
+  care are for. Measure which sleeps can go before dropping any.
+- **Faster link**: 115200 baud makes an 8KB picture ~0.7s; 921600 ~0.09s.
+  Needs a negotiated switch (a command at 115200, both sides change), and a
+  way back before SAM takes the port - it opens it with our ini's
+  `BAUDRATE`. Test on CP2102 and CH340 boards.
+- **No acknowledgements for the daemon**: every command is acked after
+  `cDelay` (15ms, stopping `loop()`), and the daemon reads only
+  `CMDHWINF`'s answer (`checkversion` now drops the queued rest). Skip the
+  delay (and the ack) for the daemon's commands as `CMDBUSYLINE` does, while
+  SAM, which reads them, keeps them.
 
 ## Not done yet
 

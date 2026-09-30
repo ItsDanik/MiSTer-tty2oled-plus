@@ -128,6 +128,16 @@ ok "no region"        "${ROM_REGION}" ""
 
 clean_romname "/games/x/Game (Japan, USA) (Beta).rom"
 ok "multi-region picks specific" "${ROM_REGION}" "Japan, USA"
+# Any list of regions is a region, not only the two the pattern once named.
+clean_romname "/games/MegaDrive/Sensible Soccer (Europe, Australia) (En,Fr,De).md"
+ok "any list of regions"  "${ROM_REGION}" "Europe, Australia"
+ok "and the languages are not one" "${ROM_TITLE}" "Sensible Soccer"
+clean_romname "/games/x/Game (Rev 1) (Japan, Europe) (Beta).rom"
+ok "the first group that is one" "${ROM_REGION}" "Japan, Europe"
+clean_romname "/games/x/Game (US, EU).rom"
+ok "short forms spelt out in a list" "${ROM_REGION}" "USA, Europe"
+clean_romname "/games/x/Game (USA, Beta).rom"
+ok "a list with anything else in it is not" "${ROM_REGION}" ""
 
 # ---------------------------------------------------------------------------
 section "classify_core"

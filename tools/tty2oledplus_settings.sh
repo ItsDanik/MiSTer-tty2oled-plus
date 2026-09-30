@@ -99,6 +99,10 @@ USE_NAMES_TXT|bool||Core names from names.txt|Name cores the way your MiSTer men
 COMPACT_YEAR_COMPANY|bool||Year and publisher on one row|"1989, Acclaim" on a single row instead of two.
 SAM_HEADER|bool||Say so during Super Attract Mode|While MiSTer SAM plays games by itself, the header above the game's details says so instead of "Now playing".
 SAM_HEADER_TEXT|text|24|What it says then|The header while Super Attract Mode runs.
+SAM_TIMER|bool||Time to SAM's next game|After that, how long until Super Attract Mode moves on to its next game, counting down.
+BAND_CLOCK|bool||Date and time under the menu|Under the picture of the menu, MisterZine, Degauss and Zaparoo, in small grey letters - while no update is waiting, which says so there instead.
+BAND_CLOCK_LEFT|text|24|Date and time: left side|A strftime format: %d day, %m month, %y year, %Y with the century, %a the day's name, %b the month's.
+BAND_CLOCK_RIGHT|text|24|Date and time: right side|The same for the right side: %H:%M is the time, %I:%M %p on a 12-hour clock.
 core_bootscreen_time|int|0 10000|Core boot screen (ms)|How long a console core's own artwork is held before the game's details replace it, when the core and the game are loaded together. 0 goes straight to the details.
 METADATA_INTERVAL|int|0 600|Seconds per page|How long each page of game details stays up, console and arcade. Arcade alternates the artwork with the info card's pages. A description page, console or arcade, stays until its text has scrolled through. 0 never turns a page.
 ROTATE|bool||Upside down|Turn the whole display 180 degrees, for a panel mounted the other way up.

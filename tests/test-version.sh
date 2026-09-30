@@ -123,16 +123,34 @@ dbug() { :; }
 eval "$(sed '/^# \*\* Main \*\*/,$d' "${ROOT}/tty2oled.sh" | sed '/^\. \/media\/fat/d; /^cd \/tmp/d')"
 
 # The firmware answers "HW<board>;<version>;" and acks everything else with
-# "ttyack;" - including the CMDHWINF that asks, and whatever the daemon wrote
-# before it. The reply is fed through the same FIFO the daemon writes to, so
-# the function has to pick its answer out of that traffic.
-ask_version() {
-  local reply="${1}"
-  rm -f "${TTYDEV}"; mkfifo "${TTYDEV}"
-  ( printf '%s' "${reply}" > "${TTYDEV}" ) &
-  local out=""
+# "ttyack;". A pseudo-terminal stands in for the display: a responder holds
+# the other end, queues <stale> acknowledgements before the daemon opens it -
+# what the USB-serial chip holds for the commands before this one - and gives
+# its reply only once CMDHWINF has arrived, as the firmware does.
+PTYDISPLAY="${TMP}/ptydisplay.py"
+cat > "${PTYDISPLAY}" <<'PY'
+import os, pty, sys, time, tty, select
+link, stale, reply = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+m, s = pty.openpty()
+tty.setraw(s)
+if os.path.lexists(link): os.unlink(link)
+os.symlink(os.ttyname(s), link)
+os.write(m, b"ttyack;" * stale)
+got, end = b"", time.time() + 10
+while time.time() < end and b"CMDHWINF\n" not in got:
+    r, _, _ = select.select([m], [], [], 0.1)
+    if r: got += os.read(m, 1024)
+if b"CMDHWINF\n" in got:
+    os.write(m, reply.encode())
+    time.sleep(3)
+PY
+ask_version() {  # ask_version <reply> [stale acks queued first]
+  local reply="${1}" stale="${2:-0}" pid out=""
+  rm -f "${TTYDEV}"
+  python3 "${PTYDISPLAY}" "${TTYDEV}" "${stale}" "${reply}" & pid=$!
+  for _ in $(seq 50); do [ -e "${TTYDEV}" ] && break; sleep 0.1; done
   out="$(TTY2OLED_VERSION="${VERSION}" checkversion 2>&1)"
-  wait 2>/dev/null
+  kill "${pid}" 2>/dev/null; wait "${pid}" 2>/dev/null
   printf '%s' "${out}"
 }
 
@@ -147,6 +165,12 @@ esac
 out="$(ask_version "ttyack;HWLOLIN32;9.9.9;")"
 contains "a different firmware is flagged" "${out}" "VERSIONS DIFFER"
 contains "...and says how to fix it"       "${out}" "--firmware --flash"
+
+# The acknowledgements of everything sent before it are still queued the
+# first time the port is read - a dozen at startup. They used to use up the
+# eight tokens the answer was looked for in.
+out="$(ask_version "ttyack;HWLOLIN32;${VERSION};" 12)"
+contains "found behind a dozen queued acknowledgements" "${out}" "firmware ${VERSION}"
 
 # A display that says nothing must not be reported as a mismatch.
 out="$(ask_version "ttyack;")"

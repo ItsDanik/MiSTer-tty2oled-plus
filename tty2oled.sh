@@ -185,16 +185,27 @@ findbanner() {
 
 # One folder of findbanner's: the whole name, then shorter and shorter
 # prefixes of it unless "exact". Sets BANNERFILE.
+#
+# The release's pictures are named in lower case (0.7.8b): two names that
+# differ only in case are one file on the MiSTer's exFAT, and were two in git.
+# So the lower-cased name is what is looked for. On exFAT that finds any
+# spelling - an older install's NES.gsc, your own Nes.gsc in pics/user - and
+# on a case-sensitive disk the name as given is tried first, so a picture of
+# yours spelt like the core still counts.
 bannerin() {
-  local d="${1}" core="${2}" mode="${3:-}" c
+  local d="${1}" core="${2}" mode="${3:-}" c low
   BANNERFILE=""
   [ -n "${d}" ] && [ -n "${core}" ] || return 1
+  low="${core,,}"
   if [ "${mode}" = "exact" ]; then
     [ -e "${d}/${core}.gsc" ] && { BANNERFILE="${d}/${core}.gsc"; return 0; }
+    [ -e "${d}/${low}.gsc" ] && { BANNERFILE="${d}/${low}.gsc"; return 0; }
     return 1
   fi
   for ((c = "${#core}"; c >= 1; c--)); do
     [ -e "${d}/${core:0:$c}.gsc" ] && { BANNERFILE="${d}/${core:0:$c}.gsc"; return 0; }
+    [ "${core}" != "${low}" ] && [ -e "${d}/${low:0:$c}.gsc" ] \
+      && { BANNERFILE="${d}/${low:0:$c}.gsc"; return 0; }
   done
   return 1
 }
@@ -396,8 +407,10 @@ findicon() {
     ICONFILE="${key}"
     return 0
   fi
-  [ -e "${iconfolder}/${key}.gsc" ] || return 1
-  ICONFILE="${iconfolder}/${key}.gsc"
+  # Lower case, as the release names them (see bannerin); as given first.
+  if [ -e "${iconfolder}/${key}.gsc" ]; then ICONFILE="${iconfolder}/${key}.gsc"
+  elif [ -e "${iconfolder}/${key,,}.gsc" ]; then ICONFILE="${iconfolder}/${key,,}.gsc"
+  else return 1; fi
   return 0
 }
 
@@ -513,9 +526,22 @@ senddesc() {
 # as a core change would: CMDMETAOFF alone leaves the layout on the panel. And
 # an icon that turns up after its game's layout went out - ScummVM's, converted
 # in the background - is sent on its own, as soon as it is there.
+#
+# Built only when something it is built from has changed (meta_inputs): the
+# pass that finds nothing new - most of them - costs a stat, not a build.
+META_INPUTS_LAST=""
 refreshmeta() {
   local corename="${1}"
   [ "${SHOW_METADATA}" = "yes" ] || return 0
+  if ! scummvm_core "${corename}"; then
+    meta_inputs "${corename}"
+    if [ "${META_INPUTS}" = "${META_INPUTS_LAST}" ]; then
+      META_STAT_FRESH=""
+      dbug "Nothing the metadata is built from has changed"
+      return 0
+    fi
+    META_INPUTS_LAST="${META_INPUTS}"
+  fi
   build_meta "${corename}"
   if [ "${META_SHOWCORE:-}" = "yes" ]; then
     dbug "The game has ended, back to the ${corename} picture"
@@ -682,11 +708,22 @@ sendflip() {
 # actually are. The firmware answers CMDHWINF with "HW<board>;<version>;" and
 # acknowledges every other command with "ttyack;", so read ';'-delimited
 # tokens - upstream's own idiom - until the board id turns up.
+#
+# Every command before this one was acknowledged too, and nothing reads those:
+# the USB-serial chip holds them while the port is closed, and the first open
+# gets the lot - ten or so at startup. So what is already queued is read and
+# dropped before asking, and the answer is looked for until a deadline rather
+# than for a number of tokens, which a long enough queue used to use up.
+CHECKVERSION_SECS=3
 checkversion() {  # checkversion [quiet] - quiet: say nothing if there is no answer
-  local tok="" fwver="" tries=0
+  local tok="" fwver="" tries=0 end
   exec 3<"${TTYDEV}" || { dbug "Cannot open ${TTYDEV} for reading"; return 0; }
+  while read -t 0.1 -d ';' tok <&3; do tries=$((tries + 1)); done
+  [ "${tries}" -gt 0 ] && dbug "Dropped ${tries} queued acknowledgements"
+  tries=0
   echo "CMDHWINF" >${TTYDEV}
-  while [ "${tries}" -lt 8 ]; do
+  end=$(( ${EPOCHSECONDS:-$(date +%s)} + CHECKVERSION_SECS ))
+  while [ "${EPOCHSECONDS:-$(date +%s)}" -lt "${end}" ]; do
     tries=$((tries + 1))
     read -t 2 -d ';' tok <&3 || break
     tok="${tok//[[:space:]]/}"
@@ -809,11 +846,59 @@ deferred_setup() {
   return 0
 }
 
+# The time, as the MiSTer's clock and time zone have it: seconds since 1970
+# with the zone's offset added, which the firmware counts on from and shows
+# as it stands (the band's clock). The offset is %z's hours and minutes: it
+# used to go through "date -d 'now +05:30 hour'", which GNU date refuses, so
+# India, Nepal, Newfoundland and South Australia were sent nothing at all.
+# printf's own strftime, so no process either. Again every TIME_RESEND_SECS
+# (time_pass), for drift and for daylight saving.
+TIME_RESEND_SECS=3600
+TIME_NEXT=0
+local_epoch() {  # into LOCAL_EPOCH
+  local now="${EPOCHSECONDS:-}" z="" off=0
+  [ -n "${now}" ] || printf -v now '%(%s)T' -1
+  printf -v z '%(%z)T' -1                    # +0530, -0330, +0000
+  if [[ "${z}" =~ ^([+-])([0-9][0-9])([0-9][0-9])$ ]]; then
+    off=$(( 10#${BASH_REMATCH[2]} * 3600 + 10#${BASH_REMATCH[3]} * 60 ))
+    [ "${BASH_REMATCH[1]}" = "-" ] && off=$(( -off ))
+  fi
+  LOCAL_EPOCH=$(( now + off ))
+}
+
 sendtime() {
-  timeoffset=$(date +%:::z)
-  localtime=$(date '-d now '${timeoffset}' hour' +%s)
-  echo "CMDSETTIME,${localtime}" >${TTYDEV}
+  local_epoch
+  dbug "Sending: CMDSETTIME,${LOCAL_EPOCH}"
+  echo "CMDSETTIME,${LOCAL_EPOCH}" >${TTYDEV}
   cmdwait
+  TIME_NEXT=$(( ${EPOCHSECONDS:-0} + TIME_RESEND_SECS ))
+}
+
+# The time again, once an hour. Only to firmware that does not take it for
+# someone at the MiSTer (0.7.8b): older firmware wakes a dimmed panel for it.
+time_pass() {
+  [ "${DEFERRED_DONE}" = "yes" ] || return 0
+  [ "${EPOCHSECONDS:-0}" -ge "${TIME_NEXT}" ] || return 0
+  fw_atleast 0.7.8 || { TIME_NEXT=$(( ${EPOCHSECONDS:-0} + TIME_RESEND_SECS )); return 0; }
+  sendtime
+}
+
+# The band's clock: its two formats, "<left>|<right>", or nothing for none.
+# Sent when it changes, like the notice; "?" is nothing told yet.
+CLOCK_SENT="?"
+sendclock() {
+  local want=""
+  if [ "${BAND_CLOCK:-yes}" = "yes" ]; then
+    want="${BAND_CLOCK_LEFT-%d/%m/%y}|${BAND_CLOCK_RIGHT-%H:%M}"
+    want="${want//[$'\001'-$'\037'$'\177']/}"
+    [ "${want}" = "|" ] && want=""
+  fi
+  [ "${want}" = "${CLOCK_SENT}" ] && return 0
+  fw_atleast 0.7.8 || return 0
+  dbug "Sending: CMDCLOCK,${want}"
+  echo "CMDCLOCK,${want}" >${TTYDEV}
+  cmdwait
+  CLOCK_SENT="${want}"
 }
 
 # Bring the serial port up: line settings, the buffer-clearing first
@@ -902,6 +987,8 @@ port_pass() {
   META_WIRE_LAST=""
   NOTE_SENT="?"
   HEAD_SENT="?"
+  CLOCK_SENT="?"
+  TIMER_SENT="?"; SAM_TIMER_REF=""
   UPDATEALL_SHOWN="no"
   UPDATEALL_BUSY="no"
 }
@@ -964,6 +1051,8 @@ serialready() {
   UPDATEALL_BUSY="no"
   NOTE_SENT="?"
   HEAD_SENT="?"
+  CLOCK_SENT="?"
+  TIMER_SENT="?"; SAM_TIMER_REF=""
   return 1
 }
 
@@ -997,6 +1086,43 @@ waitforcorename() {
   # no inotify-tools at all - and that is the spin a third time.
   [ "${rc}" -eq 0 ] || [ "${rc}" -eq 2 ] || sleep "${CORENAME_WAIT:-5}"
   return 1
+}
+
+# The main loop's two waits. inotifywait's 0 is an event and 2 its timeout,
+# and both have waited; anything else returned at once - a watched file gone
+# in between, the watch limit reached, no inotify-tools - and a loop whose
+# wait does not wait is a spin: the metadata path rebuilding the game's
+# details, the upstream path resending its picture, as fast as they can.
+#
+# metawait <seconds> <file...>: the metadata path's, on the state files.
+metawait() {
+  local t="${1}" rc=0
+  shift
+  if [ "${debug}" = "false" ]; then
+    inotifywait -qq -t "${t}" -e modify,create,moved_to "$@" 2>/dev/null
+  else
+    inotifywait -t "${t}" -e modify,create,moved_to "$@"
+  fi
+  rc=$?
+  [ "${rc}" -eq 0 ] || [ "${rc}" -eq 2 ] || sleep "${t}"
+  return 0
+}
+
+# corewait ["-t <seconds>"]: the upstream path's, on CORENAME alone, with or
+# without a timeout. Returns inotifywait's code - 2 is "timed out, look again"
+# - after a failure has waited too.
+corewait() {
+  local rc=0
+  # shellcheck disable=SC2086  # "-t N" or nothing
+  if [ "${debug}" = "false" ]; then
+    inotifywait -qq ${1:-} -e modify "${corenamefile}" 2>/dev/null
+  else
+    inotifywait ${1:-} -e modify "${corenamefile}"
+  fi
+  rc=$?
+  [ "${rc}" -eq 0 ] || [ "${rc}" -eq 2 ] || sleep "${UPDATE_ALL_POLL:-2}"
+  PROC_PASS=$(( ${PROC_PASS:-0} + 1 ))       # what follows is a new look
+  return "${rc}"
 }
 
 # ---------------------------------------------------------------------------
@@ -1093,6 +1219,8 @@ sleepmode_pass() {
   DEFERRED_DONE="no"
   NOTE_SENT="?"
   HEAD_SENT="?"
+  CLOCK_SENT="?"
+  TIMER_SENT="?"; SAM_TIMER_REF=""
   return 1
 }
 
@@ -1147,8 +1275,8 @@ menu_frontend() {
     b="${a0##*/}"
     [[ "${b,,}" == scummvm* ]] && { MENU_FRONTEND="${SCUMMVM_CORE}"; return 0; }
   fi
-  for f in $(grep -lsai -e '[d]egauss/degauss' -e '[m]enu_zaparoo' -e '[s]cummvm' \
-               "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
+  proc_hits
+  for f in "${PROC_HITS[@]}"; do
     a0=""; a1=""
     { IFS= read -r -d '' a0; IFS= read -r -d '' a1; } 2>/dev/null <"${f}"
     # ScummVM's binary by argv[0]'s name, as tty2oled-meta.sh finds it: not
@@ -1302,10 +1430,11 @@ version_newer() {
   [ -z "${a[3]}" ] && [ -n "${b[3]}" ]
 }
 
-update_check_minutes() {
+update_check_minutes() {  # into UC_MINUTES, and on stdout
   local m="${UPDATE_CHECK_MINUTES:-30}"
   case "${m}" in ''|*[!0-9]*) m=0 ;; esac
-  printf '%s' "$((10#${m}))"
+  UC_MINUTES="$((10#${m}))"
+  printf '%s' "${UC_MINUTES}"
 }
 
 # Is this check wanted? Its switch, and an interval to run it at.
@@ -1315,7 +1444,9 @@ update_check_on() {  # update_check_on <TTY2OLED|SYSTEM>
     TTY2OLED) on="${UPDATE_CHECK_TTY2OLED:-yes}" ;;
     SYSTEM)   on="${UPDATE_CHECK_SYSTEM:-yes}" ;;
   esac
-  [ "${on}" = "yes" ] && [ "$(update_check_minutes)" -gt 0 ]
+  [ "${on}" = "yes" ] || return 1
+  update_check_minutes >/dev/null             # every pass: no subshell
+  [ "${UC_MINUTES}" -gt 0 ]
 }
 
 # When the next check is due after one that ended: an interval, or
@@ -1388,8 +1519,8 @@ uc_pass() {  # uc_pass <now>
 sysupdate_process() {
   local f a0="" a1="" args=()
   SYSUPD=""; SYSUPD_PID=""
-  for f in $(grep -lsa -e '[u]pdate_all' -e '[t]mp/downloader[.]sh' -e '[S]cripts/update[.]sh' \
-               "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
+  proc_hits
+  for f in "${PROC_HITS[@]}"; do
     args=(); mapfile -d '' -t args <"${f}" 2>/dev/null
     a0="${args[0]:-}"; a1="${args[1]:-}"
     if [ "${a0}" = "/tmp/downloader.sh" ] || [ "${a1%/Scripts/update.sh}" != "${a1}" ]; then
@@ -1455,7 +1586,7 @@ sc_pass() {  # sc_pass <now>
 # Tell the firmware what the band says, if that changed and it can show it.
 sendnote() {
   local text="${1}"
-  text="$(printf '%s' "${text}" | tr -d '\000-\037\177')"
+  text="${text//[$'\001'-$'\037'$'\177']/}"   # every pass: no tr for it
   text="${text:0:${NOTE_COLS}}"
   [ "${text}" = "${NOTE_SENT}" ] && return 0
   fw_atleast 0.7.1 || return 0
@@ -1484,7 +1615,8 @@ sam_running() {
     sam_loop "${args[@]}" && return 0
     SAM_PID=""
   fi
-  for f in $(grep -lsa -e '[M]iSTer_SAM_on[.]sh' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
+  proc_hits
+  for f in "${PROC_HITS[@]}"; do
     args=(); mapfile -d '' -t args <"${f}" 2>/dev/null
     if sam_loop "${args[@]}"; then f="${f%/cmdline}"; SAM_PID="${f##*/}"; return 0; fi
   done
@@ -1502,6 +1634,81 @@ sam_pass() {
     want="${SAM_HEADER_TEXT:-Super Attract Mode}"
   fi
   sendhead "${want}"
+  samtimer_pass
+}
+
+# The time to SAM's next game, after its caption (CMDHTIMER, 0.7.8b).
+#
+# SAM writes the game it launches to /tmp/SAM_Game.txt, tells MiSTer to load
+# it, waits a second, and then counts its gametimer down a second at a time
+# (run_countdown_timer in MiSTer_SAM_on.sh) - so the next game is due the
+# file's time, plus one, plus gametimer. That is sent once a game; the
+# firmware counts it down itself. gametimer is MiSTer_SAM.ini's (120 by
+# default), 21 in M82 mode, whatever the ini says; with SAM Video on there is
+# none to give, since a video plays for as long as it is.
+#
+# Looked at every pass while SAM runs, by a test of the file's time against
+# a copy of it (SAM_STAMP) - no process - and read only when a game is new.
+SAM_INI="${SAM_INI:-/media/fat/Scripts/MiSTer_SAM.ini}"
+SAM_GAMEFILE="${SAM_GAMEFILE:-/tmp/SAM_Game.txt}"
+SAM_STAMP="${SAM_STAMP:-/tmp/.tty2oledplus-samgame}"
+TIMER_SENT="?"       # the seconds last sent, "" none, "?" nothing told yet
+SAM_TIMER_REF=""     # "yes" once the current game's timer is worked out
+
+# gametimer, as SAM will use it, into SAM_GAMETIMER; empty when it has none.
+sam_gametimer() {
+  local line="" k="" v="" timer="120" m82="no" video="no"
+  SAM_GAMETIMER=""
+  if [ -r "${SAM_INI}" ]; then
+    while IFS= read -r line || [ -n "${line}" ]; do
+      line="${line%$'\r'}"
+      line="${line#"${line%%[![:space:]]*}"}"
+      [[ "${line}" == *=* ]] || continue
+      k="${line%%=*}"; v="${line#*=}"
+      v="${v%%#*}"; v="${v//[\"\' ]/}"
+      case "${k}" in
+        gametimer) timer="${v}" ;;
+        m82)       m82="${v,,}" ;;
+        samvideo)  video="${v,,}" ;;
+      esac
+    done <"${SAM_INI}"
+  fi
+  [ "${video}" = "yes" ] && return 1
+  [ "${m82}" = "yes" ] && timer=21
+  case "${timer}" in ''|*[!0-9]*) return 1 ;; esac
+  SAM_GAMETIMER="$(( 10#${timer} ))"
+}
+
+sendtimer() {  # sendtimer <seconds, or empty for none>
+  [ "${1}" = "${TIMER_SENT}" ] && return 0
+  fw_atleast 0.7.8 || return 0
+  dbug "Sending: CMDHTIMER,${1}"
+  echo "CMDHTIMER,${1}" >${TTYDEV}
+  cmdwait
+  TIMER_SENT="${1}"
+}
+
+samtimer_pass() {
+  local mt="" left=""
+  if [ "${SAM_ON}" != "yes" ] || [ "${SAM_TIMER:-yes}" != "yes" ]; then
+    SAM_TIMER_REF=""
+    sendtimer ""
+    return 0
+  fi
+  [ -r "${SAM_GAMEFILE}" ] || return 0
+  # Already worked out for this game: only the file's time moving says there
+  # is a new one.
+  [ -n "${SAM_TIMER_REF}" ] && ! [ "${SAM_GAMEFILE}" -nt "${SAM_STAMP}" ] && return 0
+  touch -r "${SAM_GAMEFILE}" "${SAM_STAMP}" 2>/dev/null
+  SAM_TIMER_REF="yes"
+  mt="$(stat -c %Y "${SAM_GAMEFILE}" 2>/dev/null)"
+  if [[ "${mt}" =~ ^[0-9]+$ ]] && sam_gametimer; then
+    left=$(( mt + 1 + SAM_GAMETIMER - ${EPOCHSECONDS:-$(date +%s)} ))
+    [ "${left}" -gt $(( SAM_GAMETIMER + 1 )) ] && left=$(( SAM_GAMETIMER + 1 ))
+    # A file from before this SAM session's first game: nothing to count.
+    [ "${left}" -gt 0 ] || left=""
+  fi
+  sendtimer "${left}"
 }
 
 sendhead() {
@@ -1516,23 +1723,29 @@ sendhead() {
 }
 
 # The notice for what is waiting: one, the other, both, or none.
-update_note() {
+update_note() { update_note_into; printf '%s' "${NOTE_WANT}"; }
+update_note_into() {  # into NOTE_WANT: every pass, so no subshell
   local t="no" y="no"
+  NOTE_WANT=""
   update_check_on TTY2OLED && update_flagged && t="yes"
   update_check_on SYSTEM && [ -n "${SC_FLAGGED}" ] && y="yes"
   case "${t}${y}" in
-    yesyes) printf '%s' "${UPDATE_NOTE_BOTH_TEXT:-TTY2OLED+ & System Update Available}" ;;
-    yesno)  printf '%s' "${UPDATE_NOTE_TEXT:-TTY2OLED+ Update Available}" ;;
-    noyes)  printf '%s' "${UPDATE_NOTE_SYSTEM_TEXT:-System Update Available}" ;;
+    yesyes) NOTE_WANT="${UPDATE_NOTE_BOTH_TEXT:-TTY2OLED+ & System Update Available}" ;;
+    yesno)  NOTE_WANT="${UPDATE_NOTE_TEXT:-TTY2OLED+ Update Available}" ;;
+    noyes)  NOTE_WANT="${UPDATE_NOTE_SYSTEM_TEXT:-System Update Available}" ;;
   esac
 }
 
-# Once a pass, whatever else the pass does: never blocks.
+# Once a pass, whatever else the pass does: never blocks. The band's clock
+# and the time it counts from go with it - the notice's neighbours.
 updatenote_pass() {
   local now="${EPOCHSECONDS:-$(date +%s)}"
   uc_pass "${now}"
   sc_pass "${now}"
-  sendnote "$(update_note)"
+  update_note_into
+  sendnote "${NOTE_WANT}"
+  sendclock
+  time_pass
 }
 
 # ---------------------------------------------------------------------------
@@ -1559,9 +1772,13 @@ updateall_running() {
 # for a moment with --list-dbs to see what is installed, which is a query and
 # not an update, so that one does not count.
 downloader_running() {
-  local f=""
-  for f in $(grep -lsa -e '[u]a_downloader' "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
-    grep -qsa -e '--list-dbs' "${f}" || return 0
+  local f="" args=()
+  proc_hits
+  for f in "${PROC_HITS[@]}"; do
+    args=(); mapfile -d '' -t args <"${f}" 2>/dev/null
+    case " ${args[*]} " in *ua_downloader*) ;; *) continue ;; esac
+    case " ${args[*]} " in *--list-dbs*) continue ;; esac
+    return 0
   done
   return 1
 }
@@ -1573,7 +1790,7 @@ sendbusy() {  # sendbusy <0|1> [label] [effect]
   # A label takes the panel: the firmware blacks the picture and writes the
   # message above the bar. Without one the picture stays and only the bar runs.
   # The comma is the separator, so it cannot survive in the text.
-  if [ -n "${2:-}" ]; then arg="${1},$(printf '%s' "${2}" | tr -d ',')"; fi
+  if [ -n "${2:-}" ]; then arg="${1},${2//,/}"; fi
   # An effect makes the message arrive like a picture instead of appearing.
   # Only for a screen that *replaces* what you were looking at - the updater
   # taking over from a core's artwork. The downloader's bar passes none: by
@@ -1643,19 +1860,24 @@ selfupdate_running() {
   # updater that started it, in its last second - its finish screen is up,
   # and "Updating" going back over it would say the opposite.
   local p
-  for p in $(selfupdate_pids); do
+  selfupdate_pids >/dev/null
+  for p in ${SELFUPD_PIDS}; do
     case " ${SELFUPDATE_OURS:-} " in *" ${p} "*) continue ;; esac
     return 0
   done
   return 1
 }
 
-selfupdate_pids() {
-  local f p
-  for f in $(grep -lsa -e '[t]ty2oledplus_update' -e '[u]pdate_tty2oledplus' \
-               "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null); do
-    p="${f%/cmdline}"; printf '%s ' "${p##*/}"
+selfupdate_pids() {  # into SELFUPD_PIDS, and on stdout
+  local f p args=()
+  SELFUPD_PIDS=""
+  proc_hits
+  for f in "${PROC_HITS[@]}"; do
+    args=(); mapfile -d '' -t args <"${f}" 2>/dev/null
+    case "${args[*]}" in *tty2oledplus_update*|*update_tty2oledplus*) ;; *) continue ;; esac
+    p="${f%/cmdline}"; SELFUPD_PIDS="${SELFUPD_PIDS}${p##*/} "
   done
+  printf '%s' "${SELFUPD_PIDS}"
 }
 
 # The updater's own screen: no banner to show - it may be replaced mid-run -
@@ -2267,6 +2489,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
     # daemon. Skipping the pass is how the loop waits for it to come back, and
     # how the pass after it becomes a full redraw.
     serialready || continue
+    PROC_PASS=$(( ${PROC_PASS:-0} + 1 ))          # one /proc sweep a pass (proc_hits)
     if [ -r ${corenamefile} ]; then							# proceed if file exists and is readable (-r)
       # Sleep mode: the display belongs to something else - see sleepmode_pass.
       # Nothing below this may write to the port while it is held.
@@ -2316,11 +2539,8 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
           # back to its launcher: a pass costs ~190ms of CPU on the DE10, and
           # ScummVM runs on the same two cores. The ini's folder is watched, so
           # a game starting is seen at once; the way back takes 5 to 10s.
-          if [ "${debug}" = "false" ]; then
-            inotifywait -qq -t "${mpoll}" -e modify,create,moved_to ${metawatch}
-          else
-            inotifywait -t "${mpoll}" -e modify,create,moved_to ${metawatch}
-          fi
+          # shellcheck disable=SC2086  # a list; metawatchlist leaves out names with spaces
+          metawait "${mpoll}" ${metawatch}
         else
           # Upstream path, unchanged.
           #if [ "$newcore" != "$oldcore" ]; then
@@ -2339,11 +2559,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
               || update_check_on TTY2OLED || update_check_on SYSTEM; } \
               && upwait="-t ${UPDATE_ALL_POLL:-2}"
             while true; do
-              if [ "${debug}" = "false" ]; then
-                inotifywait -qq ${upwait} -e modify "${corenamefile}"  # wait here for next change of corename, -qq for quietness
-              else
-                inotifywait ${upwait} -e modify "${corenamefile}"      # but not -qq when debugging
-              fi
+              corewait "${upwait}"                  # wait here for the next change of corename
               [ "$?" -eq 2 ] || break
               fw_pass
               updatenote_pass

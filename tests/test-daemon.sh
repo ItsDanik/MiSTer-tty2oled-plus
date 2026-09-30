@@ -80,6 +80,9 @@ dbug() { :; }
 PORT_ID_FILE="${TMP}/display-port"; rm -f "${PORT_ID_FILE}"
 # shellcheck source=../tools/tty2oled-port.sh
 . "${ROOT}/tools/tty2oled-port.sh"
+# ...and the metadata library, which it sources too (proc_hits lives there).
+# shellcheck source=../tty2oled-meta.sh
+. "${ROOT}/tty2oled-meta.sh"
 eval "$(sed '/^# \*\* Main \*\*/,$d' "${ROOT}/tty2oled.sh" \
         | sed '/^\. \/media\/fat/d; /^cd \/tmp/d')"
 
@@ -177,6 +180,8 @@ cat > "${DAEMONSCRIPT}" <<'FAKE'
 #!/bin/bash
 sleep 300 &                 # stands in for the daemon's inotifywait
 echo "${!}" > "${FAKE_CHILD_PIDFILE}"
+# ...and for a background check: a subshell with a program under it.
+( sleep 300 & echo "${!}" > "${FAKE_CHILD_PIDFILE}.grand"; wait ) &
 wait
 FAKE
 chmod +x "${DAEMONSCRIPT}"
@@ -416,6 +421,9 @@ CPID="$(cat "${FAKE_CHILD_PIDFILE}" 2>/dev/null)"
 ok "it really is running" "$([ -d "/proc/${DPID}" ] && echo yes)" "yes"
 ok "and so is its child" "$([ -d "/proc/${CPID}" ] && echo yes)" "yes"
 ok "children finds the child" "$(children "${DPID}" | grep -cx "${CPID}")" "1"
+GPID="$(cat "${FAKE_CHILD_PIDFILE}.grand" 2>/dev/null)"
+ok "descendants finds the grandchild" "$(descendants "${DPID}" | grep -cx "${GPID}")" "1"
+ok "the daemon leads its own process group" "$(leads_group "${DPID}" && echo yes)" "yes"
 
 # stat is "pid (comm) state ppid pgrp session tty_nr ...".
 statf() { sed -n "s/.*) \(.*\)/\1/p" "/proc/$1/stat" | cut -d' ' -f"$2"; }
@@ -432,6 +440,8 @@ stop >/dev/null
 sleep 0.5
 ok "stop kills the daemon" "$([ -d "/proc/${DPID}" ] && echo alive || echo gone)" "gone"
 ok "stop kills the blocked child too" "$([ -d "/proc/${CPID}" ] && echo alive || echo gone)" "gone"
+ok "and a background check's program, a grandchild" \
+   "$([ -d "/proc/${GPID}" ] && echo alive || echo gone)" "gone"
 ok "and removes the pid file" "$([ -e "${PIDFILE}" ] && echo kept || echo gone)" "gone"
 
 # ---------------------------------------------------------------------------
@@ -1744,6 +1754,24 @@ unset -f inotifywait
 ok "with no inotifywait it still holds the display" "${RC}" "0"
 ok "and still brakes the loop rather than spinning" "$(( T1 - T0 >= 8 ))" "1"
 rm -f "${SLEEPFILE}"
+
+# The main loop's own waits, the same way. They ignored the code: a failing
+# inotifywait - a state file gone between the list and the watch, the watch
+# limit, none installed - rebuilt the game every few milliseconds, and on
+# the upstream path resent the picture.
+section "the main loop's waits wait, even when inotifywait cannot"
+inotifywait() { return 1; }
+T0="$(tenths)"; metawait 1 "${TMP}/nothing"; T1="$(tenths)"
+ok "the metadata wait still waits its poll" "$(( T1 - T0 >= 8 ))" "1"
+UPDATE_ALL_POLL=1
+T0="$(tenths)"; corewait "-t 1"; RC="${?}"; T1="$(tenths)"
+ok "the upstream wait still waits" "$(( T1 - T0 >= 8 ))" "1"
+ok "and says it failed, which ends the wait" "${RC}" "1"
+inotifywait() { return 2; }
+corewait "-t 1"; ok "a timeout is told apart" "${?}" "2"
+T0="$(tenths)"; metawait 1 "${TMP}/nothing"; T1="$(tenths)"
+ok "a timeout has waited already, and is not waited again" "$(( T1 - T0 < 5 ))" "1"
+unset -f inotifywait
 
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n\n' "${PASS}" "${FAIL}"
 [ "${FAIL}" -eq 0 ]

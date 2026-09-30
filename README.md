@@ -106,6 +106,25 @@ each stops being looked for once found. Each can be switched off.
 ![The menu's picture with "TTY2OLED+ & System Update Available" under
 it](docs/img/menu-update.png)
 
+With nothing waiting, the same place shows the **date and time** - the date
+at the left, the time at the right, in the MiSTer's own time zone. Both
+formats are settings (`BAND_CLOCK_LEFT`, `BAND_CLOCK_RIGHT`, any `strftime`
+format), and it can be switched off. An update notice takes its place while
+one waits, and the busy bar while an update runs.
+
+![The menu's picture with the date at the left and the time at the right
+under it](docs/img/menu-clock.png)
+
+**While MiSTer SAM plays** games by itself, the header above a game's details
+reads "Super Attract Mode" instead of "Now playing", with the time left until
+SAM moves on to its next game after it, counting down.
+
+![A console game during Super Attract Mode: "Super Attract Mode 0:42" in the
+header](docs/img/console-sam.png)
+
+![The arcade card during Super Attract Mode, "1:42" to the next
+game](docs/img/arcade-sam.png)
+
 **While an update runs** the panel says so instead of leaving stale artwork up,
 whether it is `update_all`, MiSTer's own updater (`update.sh` - what
 Zaparoo's Update runs) or tty2oled+ updating itself. Under the message, in
@@ -511,10 +530,12 @@ the first time the game is played.
 The twenty console cores without one still get the split layout and everything
 in it — just a black panel where the icon would be. To draw your own, work at
 **86x64** in sixteen shades of grey, and name the file after the core, as
-MiSTer names it: `MegaDrive.gsc`, `GBA.gsc`, `NES.gsc`.
+MiSTer names it, in lower case: `megadrive.gsc`, `gba.gsc`, `nes.gsc` (the
+card ignores case, so `MegaDrive.gsc` works too - the release's own are all
+lower case).
 
 ```sh
-./tools/png2gsc.py --out MegaDrive.gsc megadrive.png
+./tools/png2gsc.py --out megadrive.gsc megadrive.png
 # then copy it into /media/fat/tty2oledplus/pics/icon/
 ```
 
@@ -523,7 +544,7 @@ after the MAME set, for an arcade game), and goes in
 `/media/fat/tty2oledplus/pics/user/`:
 
 ```sh
-./tools/png2gsc.py --banner --out MegaDrive.gsc art.png
+./tools/png2gsc.py --banner --out megadrive.gsc art.png
 ```
 
 Either is picked up on the next core change: no flashing and no uploading.

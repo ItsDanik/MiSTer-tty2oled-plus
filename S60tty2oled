@@ -63,14 +63,33 @@ daemonpid() {
 # line by position, which on a machine running two installs could name either
 # of them - or, once the pipeline missed, nothing at all.
 children() {
-  local d="" ppid=""
+  local d="" st="" f=()
   for d in /proc/[0-9]*; do
-    # stat is "pid (comm) state ppid ..."; comm can contain spaces and
-    # brackets, so match to the last ")" and read the two fields after it.
-    ppid="$(sed -n 's/.*) [^ ] \([0-9]*\) .*/\1/p' "${d}/stat" 2>/dev/null)"
-    [ "${ppid}" = "${1}" ] && printf '%s\n' "${d#/proc/}"
+    IFS= read -r st <"${d}/stat" 2>/dev/null || continue
+    read -r -a f <<<"${st##*) }"          # state ppid pgrp ...
+    [ "${f[1]:-}" = "${1}" ] && printf '%s\n' "${d#/proc/}"
   done
   return 0
+}
+
+# Everything under $1: its children, theirs, and so on. The daemon's update
+# checks and ScummVM's icon job are a subshell each with python3 or curl
+# under it, and killing the subshell left those running for minutes.
+descendants() {
+  local c=""
+  for c in $(children "${1}"); do
+    printf '%s\n' "${c}"
+    descendants "${c}"
+  done
+}
+
+# The process group $1 leads, if it leads one: started with setsid, the
+# daemon does, and everything it ever starts is in it.
+leads_group() {
+  local st="" f=()
+  IFS= read -r st <"/proc/${1}/stat" 2>/dev/null || return 1
+  read -r -a f <<<"${st##*) }"
+  [ "${f[2]:-}" = "${1}" ]
 }
 
 # Upstream tty2oled, installed in its own folder. tty2oled+ replaces it rather
@@ -286,12 +305,20 @@ stop() {
       return 0
     fi
 
-    # Children first. The daemon spends nearly all of its time blocked in
-    # inotifywait, and killing the parent leaves that child running.
-    for child in $(children "${DAEMON_PID}"); do
-      kill "${child}" 2>/dev/null
-    done
-    kill "${DAEMON_PID}" 2>/dev/null
+    # Everything it started, not only the daemon. It spends nearly all of its
+    # time blocked in inotifywait, which outlives a kill of its parent, and
+    # its background checks run python3 or curl under a subshell. Started
+    # with setsid it leads a process group of its own and the group goes
+    # at once; without setsid the group is whoever started it - the updater,
+    # say - so then it is the tree, found through /proc, deepest first.
+    if leads_group "${DAEMON_PID}"; then
+      kill -- "-${DAEMON_PID}" 2>/dev/null
+    else
+      for child in $(descendants "${DAEMON_PID}" | sort -rn); do
+        kill "${child}" 2>/dev/null
+      done
+      kill "${DAEMON_PID}" 2>/dev/null
+    fi
     rm -f "${PIDFILE_FOUND}"
 }
 

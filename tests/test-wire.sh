@@ -228,6 +228,26 @@ PRIORITIZE_USER_BANNERS="yes"
 rm -f "${bannerfolder}/NESabc.gsc"
 rm -f "${userbannerfolder}/NES.gsc"
 
+# The release names its pictures in lower case (0.7.8b); CORENAME is not.
+# The test disk is case-sensitive, as the MiSTer's exFAT is not, so this is
+# the lookup doing the work.
+mv "${bannerfolder}/NES.gsc" "${bannerfolder}/nes.gsc"
+findbanner "NES"
+ok "a lower-case banner answers for an upper-case core" "${BANNERFILE}" "${bannerfolder}/nes.gsc"
+findbanner "NESabc"
+ok "trimmed as well" "${BANNERFILE}" "${bannerfolder}/nes.gsc"
+findbanner "NES" exact
+ok "and looked up whole" "${BANNERFILE}" "${bannerfolder}/nes.gsc"
+printf '#\n#\n#\n11\n' > "${userbannerfolder}/NES.gsc"
+findbanner "NES"
+ok "a banner of yours spelt like the core is still yours" "${BANNERFILE}" "${userbannerfolder}/NES.gsc"
+rm -f "${userbannerfolder}/NES.gsc"
+mv "${bannerfolder}/nes.gsc" "${bannerfolder}/NES.gsc"
+printf '#\n#\n#\n00\n' > "${iconfolder}/gba.gsc"
+findicon "GBA"
+ok "a lower-case icon answers for its core" "${ICONFILE}" "${iconfolder}/gba.gsc"
+rm -f "${iconfolder}/gba.gsc"
+
 findbanner "NoSuchCore"
 ok "no banner at all returns empty" "${BANNERFILE}" ""
 
@@ -1115,6 +1135,81 @@ line="$(captured | tr -d '\r')"
 ok "control characters out, cut to the band's 51 columns" "${line}" \
    "CMDNOTE,New,one|$(printf 'x%.0s' {1..43})"
 FW_VERSION=""; NOTE_SENT="?"
+
+# ---------------------------------------------------------------------------
+section "CMDCLOCK and CMDSETTIME: the band's date and time"
+# ---------------------------------------------------------------------------
+CLOCK_SENT="?"; unset BAND_CLOCK BAND_CLOCK_LEFT BAND_CLOCK_RIGHT
+reset_capture; FW_VERSION="0.7.7b"; sendclock
+ok "firmware before 0.7.8b is sent nothing - it would draw it as text" "$(captured)" ""
+reset_capture; FW_VERSION="0.7.8b"; sendclock
+ok "the default: date left, time right" "$(captured | tr -d '\r')" "CMDCLOCK,%d/%m/%y|%H:%M"
+reset_capture; sendclock
+ok "once" "$(captured)" ""
+reset_capture; BAND_CLOCK_LEFT="%a %d %b"; BAND_CLOCK_RIGHT=""; sendclock
+ok "the ini's formats; an empty one is an empty side" "$(captured | tr -d '\r')" "CMDCLOCK,%a %d %b|"
+reset_capture; BAND_CLOCK="no"; sendclock
+ok "off is nothing after the comma" "$(captured | tr -d '\r')" "CMDCLOCK,"
+unset BAND_CLOCK BAND_CLOCK_LEFT BAND_CLOCK_RIGHT
+
+# The zone's offset in hours and minutes. "date -d 'now +05:30 hour'" is not
+# a date GNU date knows, and half-hour zones were sent CMDSETTIME with none.
+for tz in UTC0 Asia/Kolkata America/St_Johns Asia/Kathmandu Europe/Athens; do
+  want="$(TZ="${tz}" bash -c 'z=$(date +%z); s=${z:0:1}; h=$((10#${z:1:2})); m=$((10#${z:3:2})); o=$(( h*3600 + m*60 )); [ "$s" = - ] && o=$(( -o )); echo $(( $(date +%s) + o ))')"
+  got="$(TZ="${tz}" bash -c "$(declare -f local_epoch); local_epoch; echo \${LOCAL_EPOCH}")"
+  ok "local time in ${tz}" "$(( got - want <= 1 && want - got <= 1 ))" "1"
+done
+reset_capture; sendtime
+ok "CMDSETTIME carries a number" "$(captured | tr -d '\r' | grep -cE '^CMDSETTIME,[0-9]+$')" "1"
+ok "and the next is due in an hour" "$(( TIME_NEXT - EPOCHSECONDS >= 3599 ))" "1"
+reset_capture; DEFERRED_DONE="yes"; time_pass
+ok "not before then" "$(captured)" ""
+TIME_NEXT=0; FW_VERSION="0.7.7b"; time_pass
+ok "nor ever to firmware that would wake the panel for it" "$(captured)" ""
+TIME_NEXT=0; FW_VERSION="0.7.8b"; time_pass
+ok "then again" "$(captured | tr -d '\r' | grep -c '^CMDSETTIME,')" "1"
+FW_VERSION=""; CLOCK_SENT="?"; DEFERRED_DONE="no"
+
+# ---------------------------------------------------------------------------
+section "CMDHTIMER: the time to Super Attract Mode's next game"
+# ---------------------------------------------------------------------------
+SAM_INI="${TMP}/MiSTer_SAM.ini"; SAM_GAMEFILE="${TMP}/SAM_Game.txt"; SAM_STAMP="${TMP}/samstamp"
+printf 'gametimer="90"\nm82="no"\nsamvideo="No"\n' > "${SAM_INI}"
+TIMER_SENT="?"; SAM_TIMER_REF=""; FW_VERSION="0.7.8b"
+reset_capture; SAM_ON="no"; samtimer_pass
+ok "no SAM: a display that may have one is told there is none" "$(captured | tr -d '\r')" "CMDHTIMER,"
+reset_capture; samtimer_pass
+ok "once" "$(captured)" ""
+echo "Sonic (MegaDrive)" > "${SAM_GAMEFILE}"; touch -d "@$(( EPOCHSECONDS - 30 ))" "${SAM_GAMEFILE}"
+# A second may turn between setting the file's time and the pass reading the
+# clock: either count is right.
+near() { local g="${1#CMDHTIMER,}"; [ -n "${g}" ] && [ "${g}" -le "${2}" ] && [ "${g}" -ge $(( ${2} - 1 )) ] && echo yes; }
+reset_capture; SAM_ON="yes"; samtimer_pass
+ok "SAM: its game's launch, a second, and gametimer, less what has gone" \
+   "$(near "$(captured | tr -d '\r')" 61)" "yes"
+reset_capture; samtimer_pass
+ok "once a game - the firmware counts it down" "$(captured)" ""
+touch -d "@${EPOCHSECONDS}" "${SAM_GAMEFILE}"
+reset_capture; samtimer_pass
+ok "a new game: from the top" "$(near "$(captured | tr -d '\r')" 91)" "yes"
+printf 'gametimer=90\nm82=yes\n' > "${SAM_INI}"; touch -d "@$(( EPOCHSECONDS + 1 ))" "${SAM_GAMEFILE}"
+reset_capture; samtimer_pass
+ok "M82 mode is 21 seconds, whatever the ini says" "$(near "$(captured | tr -d '\r')" 22)" "yes"
+printf 'gametimer=90\nsamvideo=Yes\n' > "${SAM_INI}"; touch -d "@$(( EPOCHSECONDS + 2 ))" "${SAM_GAMEFILE}"
+reset_capture; samtimer_pass
+ok "SAM Video has no timer to give" "$(captured | tr -d '\r')" "CMDHTIMER,"
+printf 'gametimer=90\n' > "${SAM_INI}"; touch -d "@$(( EPOCHSECONDS - 600 ))" "${SAM_GAMEFILE}"
+TIMER_SENT="?"; SAM_TIMER_REF=""
+reset_capture; samtimer_pass
+ok "a game file from before this session counts nothing" "$(captured | tr -d '\r')" "CMDHTIMER,"
+reset_capture; SAM_ON="no"; samtimer_pass
+ok "already none: nothing more to say" "$(captured)" ""
+touch -d "@${EPOCHSECONDS}" "${SAM_GAMEFILE}"; SAM_ON="yes"; samtimer_pass; reset_capture
+SAM_ON="no"; samtimer_pass
+ok "with the caption" "$(captured | tr -d '\r')" "CMDHTIMER,"
+reset_capture; SAM_ON="yes"; SAM_TIMER="no"; samtimer_pass
+ok "SAM_TIMER=no sends none" "$(captured)" ""
+unset SAM_TIMER; SAM_ON="no"; FW_VERSION=""; TIMER_SENT="?"
 
 # ---------------------------------------------------------------------------
 section "scraped metadata: more fields, and the description after the line"

@@ -305,6 +305,29 @@ static void scene_menu(const char *name, const char *note) {
   save(name);
 }
 
+// The same with no notice waiting: the date and time in the band instead.
+static void scene_menuClock(const char *name, const char *fmt, long when) {
+  boot_compose(logoBin);
+  noteText[0] = '\0';
+  band_clockParse((std::string("CMDCLOCK,") + fmt).c_str());
+  band_setTime(when);
+  band_render();
+  save(name);
+  band_clockParse("CMDCLOCK,");
+}
+
+// Super Attract Mode playing: its caption in the header, and the time to its
+// next game after it.
+static void scene_sam(const char *name, const char *cmd, const char *icon, long secs,
+                      bool card = false) {
+  meta_parseHead("CMDHEAD,Super Attract Mode");
+  meta_parseTimer(("CMDHTIMER," + std::to_string(secs)).c_str());
+  if (card) scene_card(name, cmd, 0);
+  else      scene_console(name, cmd, icon);
+  meta_parseTimer("CMDHTIMER,");
+  meta_parseHead("CMDHEAD,");
+}
+
 int main(int argc, char **argv) {
   if (argc > 1) outDir  = argv[1];
   if (argc > 2) repoRoot = argv[2];
@@ -324,13 +347,13 @@ int main(int argc, char **argv) {
   scene_console("console-nes",
                 "CMDMETA,2,0,1,The Legend of Zelda"
                 "|System=Nintendo NES|Year=1987|Company=Nintendo|Region=USA",
-                "pics/icon/NES.gsc");
+                "pics/icon/nes.gsc");
 
   // The same layout on the other side - what FLIP_MINUTES swaps to.
   scene_console("console-flipped",
                 "CMDMETA,2,0,1,Sonic The Hedgehog"
                 "|System=Mega Drive|Year=1992|Company=Sega|Genre=Action",
-                "pics/icon/MegaDrive.gsc", true);
+                "pics/icon/megadrive.gsc", true);
 
   // Five fields into four rows: the last two take turns under the pinned pair,
   // and the pips by the header count the pages. Caught mid-marquee, since the
@@ -338,7 +361,7 @@ int main(int argc, char **argv) {
   scene_console("console-paging",
                 "CMDMETA,2,0,1,Castlevania Aria of Sorrow"
                 "|System=Game Boy Advance|Year=2003|Company=Konami|Region=USA|Format=gba",
-                "pics/icon/GBA.gsc");
+                "pics/icon/gba.gsc");
 
   // A ScummVM game's first page: the CMDMETA the daemon sent for Fate of
   // Atlantis on the MiSTer, and the icon it converted from ScummVM's icon pack
@@ -353,7 +376,7 @@ int main(int argc, char **argv) {
   scene_description("console-description",
                     "CMDMETA,2,0,1,Sonic The Hedgehog"
                     "|System=Mega Drive|Year=1991|Players=1|Rating=8/10",
-                    "pics/icon/MegaDrive.gsc",
+                    "pics/icon/megadrive.gsc",
                     "Sonic the Hedgehog is a platform game in which the player "
                     "controls Sonic as he races through six zones to stop Doctor "
                     "Robotnik, who has imprisoned the animals of South Island in "
@@ -381,13 +404,24 @@ int main(int argc, char **argv) {
   // The wheel logo the card alternates with, and a computer core's banner -
   // which is the whole of what a computer core shows.
   scene_wheel("arcade-art", "nbajam");
-  scene_picture("computer-art", "pics/banner/C64.gsc");
+  scene_picture("computer-art", "pics/banner/c64.gsc");
 
   // Power-on: the built-in logo, the version, and the comet mid-run.
   scene_boot("boot", nullptr, 150);
 
   // The menu, when updates are waiting: the notice in the band under it.
   scene_menu("menu-update", "TTY2OLED+ & System Update Available");
+
+  // ...and when none is: the date and time, as the ini has them by default.
+  scene_menuClock("menu-clock", "%d/%m/%y|%H:%M", 1790789640L);
+
+  // Super Attract Mode: its caption and countdown, console (three pages, so
+  // pips) and card.
+  scene_sam("console-sam",
+            "CMDMETA,2,0,1,Sonic The Hedgehog"
+            "|System=Mega Drive|Year=1991|Company=Sega|Genre=Action|Region=USA|Players=1",
+            "pics/icon/megadrive.gsc", 42);
+  scene_sam("arcade-sam", nbajam, nullptr, 102, true);
 
   // update_all: the message owns the panel, the bar says it is working.
   scene_busy("busy", "Updating System ...", "_Arcade/cores/Arcade-NamcoS2_SG_20260927.rbf", 150);
