@@ -1644,8 +1644,10 @@ sam_pass() {
 # (run_countdown_timer in MiSTer_SAM_on.sh) - so the next game is due the
 # file's time, plus one, plus gametimer. That is sent once a game; the
 # firmware counts it down itself. gametimer is MiSTer_SAM.ini's (120 by
-# default), 21 in M82 mode, whatever the ini says; with SAM Video on there is
-# none to give, since a video plays for as long as it is.
+# default), 21 in M82 mode, whatever the ini says. SAM Video does not change
+# it: its games are timed the same way, and a video in between is played
+# over menu.rbf - the menu's picture, no header to show a count in - and
+# writes no SAM_Game.txt, so the game after it starts a count of its own.
 #
 # Looked at every pass while SAM runs, by a test of the file's time against
 # a copy of it (SAM_STAMP) - no process - and read only when a game is new.
@@ -1655,9 +1657,10 @@ SAM_STAMP="${SAM_STAMP:-/tmp/.tty2oledplus-samgame}"
 TIMER_SENT="?"       # the seconds last sent, "" none, "?" nothing told yet
 SAM_TIMER_REF=""     # "yes" once the current game's timer is worked out
 
-# gametimer, as SAM will use it, into SAM_GAMETIMER; empty when it has none.
+# gametimer, as SAM will use it, into SAM_GAMETIMER; fails on a value that is
+# not a number.
 sam_gametimer() {
-  local line="" k="" v="" timer="120" m82="no" video="no"
+  local line="" k="" v="" timer="120" m82="no"
   SAM_GAMETIMER=""
   if [ -r "${SAM_INI}" ]; then
     while IFS= read -r line || [ -n "${line}" ]; do
@@ -1669,11 +1672,9 @@ sam_gametimer() {
       case "${k}" in
         gametimer) timer="${v}" ;;
         m82)       m82="${v,,}" ;;
-        samvideo)  video="${v,,}" ;;
       esac
     done <"${SAM_INI}"
   fi
-  [ "${video}" = "yes" ] && return 1
   [ "${m82}" = "yes" ] && timer=21
   case "${timer}" in ''|*[!0-9]*) return 1 ;; esac
   SAM_GAMETIMER="$(( 10#${timer} ))"

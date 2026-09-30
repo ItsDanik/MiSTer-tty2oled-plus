@@ -1195,9 +1195,12 @@ ok "a new game: from the top" "$(near "$(captured | tr -d '\r')" 91)" "yes"
 printf 'gametimer=90\nm82=yes\n' > "${SAM_INI}"; touch -d "@$(( EPOCHSECONDS + 1 ))" "${SAM_GAMEFILE}"
 reset_capture; samtimer_pass
 ok "M82 mode is 21 seconds, whatever the ini says" "$(near "$(captured | tr -d '\r')" 22)" "yes"
-printf 'gametimer=90\nsamvideo=Yes\n' > "${SAM_INI}"; touch -d "@$(( EPOCHSECONDS + 2 ))" "${SAM_GAMEFILE}"
+# SAM Video times its games the same way (0.7.8b left them without a count);
+# its videos play over menu.rbf, with no header to count in.
+printf 'gametimer="180"\nsamvideo="Yes"\n' > "${SAM_INI}"; touch -d "@$(( EPOCHSECONDS + 2 ))" "${SAM_GAMEFILE}"
+# (Its time is ahead of the clock here, so the count is gametimer + 1.)
 reset_capture; samtimer_pass
-ok "SAM Video has no timer to give" "$(captured | tr -d '\r')" "CMDHTIMER,"
+ok "SAM Video's games count down too" "$(captured | tr -d '\r')" "CMDHTIMER,181"
 printf 'gametimer=90\n' > "${SAM_INI}"; touch -d "@$(( EPOCHSECONDS - 600 ))" "${SAM_GAMEFILE}"
 TIMER_SENT="?"; SAM_TIMER_REF=""
 reset_capture; samtimer_pass

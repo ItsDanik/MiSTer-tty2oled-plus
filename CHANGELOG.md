@@ -4,6 +4,14 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.7.9b — 2026-09-30
+
+- **SAM's countdown now shows with SAM Video on.** 0.7.8b left the timer
+  out whenever `samvideo` was on in MiSTer_SAM.ini, thinking videos made the
+  time unknowable. SAM times its games the same way either way, and a video
+  plays over the menu, where there is no header to count in - so the
+  countdown now shows for every game SAM plays.
+
 ## 0.7.8b — 2026-09-30
 
 - **The date and time under the menu.** When no update is waiting, the

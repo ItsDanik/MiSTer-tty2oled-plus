@@ -359,7 +359,9 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   game is due at that file's mtime + 1 + gametimer. `CMDHTIMER` once a game
   (the file's time against `SAM_STAMP`, `-nt`: no process between games);
   the firmware counts. gametimer from `MiSTer_SAM.ini` (120 default), 21
-  with `m82=yes`, none with `samvideo=yes`. The caption leaves the timer its
+  with `m82=yes`. `samvideo=yes` changes nothing (0.7.8b wrongly sent no
+  timer): its games use gametimer, and a video plays over `menu.rbf` with
+  no header up and no `SAM_Game.txt` written. The caption leaves the timer its
   width (`meta_drawHeader`), dropping to 5x7 beside eight pips; the timer is
   centred on the caption's ascent. `meta_headTick` = pips' blink or the
   timer's second turning, wherever `meta_pipTick` was (page fades included).
