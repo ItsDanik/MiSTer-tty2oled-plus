@@ -4,6 +4,25 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.8.4b — 2026-10-03
+
+- **A news ticker under the menu.** The row under the picture of the menu,
+  MisterZine, Degauss and Zaparoo now takes turns: the date and time for 30
+  seconds, then the headlines of an RSS feed scrolling through for a minute,
+  then the date and time again. The date and time fade out and back in; the
+  headline on the panel when the minute is up is let finish before they
+  return, and they always get their whole 30 seconds. Each run of headlines
+  carries on where the last one stopped.
+- The feed is MisterZine's list of new and updated cores and arcade games
+  unless you name another (`RSS_URL` - RSS or Atom); it is read at boot and
+  every hour after. Both times, the speed, how many headlines are kept and
+  how often the feed is read are settings, under **What the display shows**
+  in the settings editor, where it can also be turned off (`RSS_FEED`).
+  `RSS_CLOCK_SECS="0"` runs the headlines alone.
+- While an update is waiting, the row says so as before and no headlines
+  run. Nothing changes over a core's picture or a game's details.
+- Needs this version's firmware; an older one is sent nothing new.
+
 ## 0.8.3b — 2026-10-03
 
 - **New core banners arrive with an Update.** The banners now travel with

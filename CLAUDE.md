@@ -133,7 +133,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `.../pagefade.h` | A page turn fades only the rows that change. |
 | `.../fadetransition.h` | `TRANSITION=-2` fade; `30`-`39` sliding fades. |
 | `.../bootoutro.h`, `busybar.h` | Boot screen as menu picture + power-on outro; the sweep as a busy bar. |
-| `.../bandnote.h` | Frontends' 54-row picture + band; `CMDNOTE` fading in/out there. |
+| `.../bandnote.h` | Frontends' 54-row picture + band; `CMDNOTE` fading in/out there; the clock and the feed's ticker taking turns. |
 | `.../mediaband.h` | `CMDMEDIA`: a film's transport band under the console layout, and its chapter row. |
 | `.../linejunk.h` | Drops another program's bytes (Zaparoo's PN532 probe) ahead of a command line. |
 | `.../MiSTer_SSD1322_USB.ino` | Includes the headers; LEDC shim for ESP32 core 3.x. |
@@ -154,6 +154,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `tools/tty2oledplus_{settings,scrape,update,uninstall}.sh`, `_scrape.py` | The launcher's entries, in the install folder. M. |
 | `tools/tty2oledplus_syscheck.py` | Would update_all update something installed? The daemon runs it in the background. M. |
 | `tools/tty2oledplus_scummvm.py` | ScummVM's icon packs -> `cache/scummvm/games.idx` + per-game 86x64 icons. Daemon, background. M. |
+| `tools/tty2oledplus_rss.py` | An RSS/Atom feed -> `/tmp/.tty2oledplus-rss.txt` (`# <url>`, then a headline a line, folded to ASCII). Daemon, background. M. |
 | `tools/tty2oledplus_dvd.py` | A DVD's IFOs -> `cache/dvd/<key>.nav` (sector -> title/chapter/time); Wikipedia -> `scraped/DVD.txt`. Daemon, background. M. |
 | `tools/scummvm-entries.sh` | ScummVM's ini -> a `<folder>.scummvm` (game id) in each game folder, for ES-DE/RetroPie/RetroArch. Developer tool, not shipped (yet); fed over `ssh ... 'bash -s'`. M. |
 | `tools/tty2oledplus_install.sh` | The starter users drop in Scripts. M. |
@@ -343,6 +344,27 @@ panel is already the update_all screen. `meta_beginTransitionText` +
   (`CLOCK_SENT`, reset with `NOTE_SENT`), `sendtime` from `local_epoch`
   (printf's `%(%z)T`, no process; half-hour zones used to send nothing),
   `time_pass` hourly to firmware >= 0.7.8b.
+- **The feed's ticker** (`RSS_FEED`, `RSS_URL`, 0.8.4b): the band takes
+  turns - the clock for `RSS_CLOCK_SECS`, fading out, then the headlines
+  scrolling in from the right edge for `RSS_SCROLL_SECS`. **The firmware runs
+  the turns** (`band_rssTick`, `rssPhase` clock/leave/scroll); the daemon only
+  delivers headlines. Time up sets `rssClosing`: no headline is admitted any
+  more (`rssAdmit` counts those let in from `rssFirst`), the ones on the panel
+  run out, and only then `band_rssRest` starts the clock's time - which counts
+  from when the clock is **fully up**, so an overrun is never taken from it.
+  The next run opens with the headline after the last shown. `band_want`
+  returns nothing while `band_rssHolds`, which is how the clock's own fade
+  does the fading. A notice outranks it (no ticker while one waits; one
+  arriving mid-run clears the band at once); every frontend picture starts
+  with the clock's turn. `RSS_CLOCK_SECS=0` is the ticker alone. 5x7 is
+  fixed-width: only the characters on the panel are drawn. A late tick makes
+  up `RSS_CATCHUP` px at most. Daemon (`rss_pass`, in `updatenote_pass`):
+  background job `rss` at start and every `RSS_MINUTES`, retried like an
+  update check; not started for firmware < 0.8.4b; `rss_load` reads the
+  cache with `mapfile` (no process) and only if its first line names this
+  feed, so a restarted daemon has headlines at once; `sendrss` on a change
+  of headlines (`RSS_REV`) or timings, `RSS_SENT="?"` wherever `CLOCK_SENT`
+  is. A failed fetch keeps the old headlines.
 - **Super Attract Mode** (MiSTer SAM) changes only the header:
   `SAM_HEADER_TEXT` in place of "Now playing" (`sam_pass`, metadata path,
   every pass, before the pictures; `CMDHEAD` only on change, `HEAD_SENT="?"`
@@ -582,6 +604,7 @@ send them). Additions, ESP32 only:
 | `CMDHEAD,<text>` | the layouts' header caption, rest of the line, 24 kept; empty is "Now playing". Quiet, not activity; kept across `CMDMETAOFF`; a layout up is redrawn as it is (a cut) once idle (0.7.7b) |
 | `CMDHTIMER,<s>` | the header's countdown after the caption, 5x7, from now, on the firmware's clock; empty/negative removes; capped 99:59. Quiet, not activity; kept like `CMDHEAD` (0.7.8b) |
 | `CMDCLOCK,<left>\|<right>` | the band's clock: two strftime formats, rest of the line, 40 kept; no `\|` is one piece, centred; empty is off. Quiet, not activity (0.7.8b) |
+| `CMDRSS,<clock s>,<scroll s>,<px/s>,<bytes>` | + that many raw bytes: the band's feed, headlines separated by newlines, 2048 bytes / 48 headlines kept (`RSS_MAX`, `RSS_ITEMS_MAX`, same in daemon and tool - `test-rss.py`, `test-wire.sh`), excess discarded; 0 bytes is no feed. Clock 0..3600 (0: ticker alone), scroll 1..3600, speed 5..200. Quiet, not activity; read on every board (0.8.4b) |
 | `CMDSETTIME,<local epoch>` | upstream's; also the band clock's time (0.7.8b), counted on by `millis()`. Not activity from 0.7.8b, so the daemon resends it hourly only to that |
 | `CMDFLIP,<s>` | side swap period; 0 disables |
 | `CMDMEDIA,<state>,<s in>,<s long>,<chapter>,<chapters>` | the transport band under the console layout: state 1 play (arrow flashing), 2 pause, 3 stop, 4 menu ("Disc menu", no bar), 5 still; the firmware counts the seconds on while playing; length 0 = state in words; empty / 0 = none. Quiet; activity only on a change of state; kept across `CMDMETA`, forgotten by `CMDMETAOFF` (0.8.2b) |
@@ -629,7 +652,7 @@ on MiSTer's `ini_settings.sh`.
   equal to its default is **removed**. `ini_put` changes one line or appends
   under its own header; never rewrites the file. The ini is **parsed, not
   sourced** (runs as root; tested with a value that would touch a file).
-- Covers every user setting (52, eight categories). `test-settings.sh` checks
+- Covers every user setting (59, eight categories). `test-settings.sh` checks
   both ways: every offered key exists in the ini *and* is read by `tty2oled.sh`
   or `tty2oled-meta.sh`; every user key is offered or on the exclusion list
   (`BAUDRATE`, `TTYPARAM`, `NAMES_TXT`, `TITLE_INDEX`, `TITLE_INDEX_DIR`),
@@ -825,9 +848,9 @@ own `fold()`/`clip_desc()`.
 
 ## Tests
 
-`./tests/run-all.sh` - eighteen suites (metadata, wire, index, version,
+`./tests/run-all.sh` - nineteen suites (metadata, wire, index, version,
 daemon, deploy, settings, ScummVM, DVD, png2gsc, scrape, syscheck,
-history2gamelist, DVD tool, installer, flash, firmware parser, firmware layout). CI runs all with inotify-tools and
+history2gamelist, DVD tool, feed, installer, flash, firmware parser, firmware layout). CI runs all with inotify-tools and
 ImageMagick. No shellcheck in `run-all.sh`.
 
 - Installer: builds a real release from the working copy, serves it via

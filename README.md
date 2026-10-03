@@ -142,6 +142,16 @@ one waits, and the busy bar while an update runs.
 ![The menu's picture with the date at the left and the time at the right
 under it](docs/img/menu-clock.png)
 
+And it takes turns with a **news ticker**: after 30 seconds the date and time
+fade out and the headlines of an RSS feed scroll through that row for a
+minute - by default [MisterZine's list](https://misterzine.fyi/releases/) of
+new and updated cores and arcade games - then the date and time fade back in.
+The headline on the panel when the minute is up is let finish first, and the
+next run carries on with the one after it. The feed (`RSS_URL`, RSS or Atom),
+both times (`RSS_CLOCK_SECS`, `RSS_SCROLL_SECS`), the speed and how often the
+feed is read are settings; `RSS_FEED="no"` switches it off. While an update
+is waiting the row says so instead, and no headlines run.
+
 **While MiSTer SAM plays** games by itself, the header above a game's details
 reads "Super Attract Mode" instead of "Now playing", with the time left until
 SAM moves on to its next game after it, counting down.

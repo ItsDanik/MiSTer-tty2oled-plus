@@ -1200,6 +1200,7 @@ port_pass() {
   NOTE_SENT="?"
   HEAD_SENT="?"
   CLOCK_SENT="?"
+  RSS_SENT="?"
   TIMER_SENT="?"; SAM_TIMER_REF=""
   UPDATEALL_SHOWN="no"
   UPDATEALL_BUSY="no"
@@ -1264,6 +1265,7 @@ serialready() {
   NOTE_SENT="?"
   HEAD_SENT="?"
   CLOCK_SENT="?"
+  RSS_SENT="?"
   TIMER_SENT="?"; SAM_TIMER_REF=""
   return 1
 }
@@ -1432,6 +1434,7 @@ sleepmode_pass() {
   NOTE_SENT="?"
   HEAD_SENT="?"
   CLOCK_SENT="?"
+  RSS_SENT="?"
   TIMER_SENT="?"; SAM_TIMER_REF=""
   return 1
 }
@@ -2005,8 +2008,132 @@ update_note_into() {  # into NOTE_WANT: every pass, so no subshell
   esac
 }
 
-# Once a pass, whatever else the pass does: never blocks. The band's clock
-# and the time it counts from go with it - the notice's neighbours.
+# ---------------------------------------------------------------------------
+# The feed in the band
+# ---------------------------------------------------------------------------
+# An RSS feed's headlines, run through the band under a frontend's picture in
+# turns with the date and time (firmware 0.8.4b; bandnote.h has the turns).
+# tty2oledplus_rss.py fetches it in the background - at start, and every
+# RSS_MINUTES after - and leaves the headlines in RSS_CACHE, a line each under
+# a first line naming the feed. They go out as CMDRSS,<clock s>,<scroll s>,
+# <px/s>,<bytes> and then the bytes, like a description, and only when they or
+# the timings change. A fetch that fails keeps the headlines there were, and
+# is tried again as a failed update check is. A notice outranks the feed, and
+# the firmware sees to that: nothing here knows whether an update is waiting.
+RSS_TOOL="${RSS_TOOL:-${TTY2OLED_PATH:-/media/fat/tty2oledplus}/tty2oledplus_rss.py}"
+RSS_CACHE="${RSS_CACHE:-/tmp/.tty2oledplus-rss.txt}"
+BG_GIVEUP_rss=90    # the fetch's own limit is 20s a step
+RSS_BYTES_MAX=2048  # the firmware's RSS_MAX, and the tool's
+RSS_NEXT=""         # when the next fetch may start; empty is now
+RSS_FAILS=0
+RSS_TEXT=""         # the headlines, a newline between them
+RSS_FOR=""          # the feed they are from
+RSS_REV=0           # bumped whenever they change
+RSS_SENT="?"        # what the firmware was last told; "?" is nothing yet
+
+rss_on() { [ "${RSS_FEED:-yes}" = "yes" ] && [ -n "${RSS_URL:-}" ]; }
+
+# A whole number setting into _R: within its bounds, else the default.
+rss_num() {  # rss_num <value> <default> <min> <max>
+  _R="${1}"
+  case "${_R}" in ''|*[!0-9]*) _R="${2}" ;; esac
+  _R="$((10#${_R}))"
+  [ "${_R}" -lt "${3}" ] && _R="${3}"
+  [ "${_R}" -gt "${4}" ] && _R="${4}"
+  return 0
+}
+
+# RSS_CACHE into RSS_TEXT, if it is this feed's. No process: it runs at start
+# and after every fetch, but the loop is the loop.
+rss_load() {
+  local LC_ALL=C lines=() line text="" first=""
+  [ -r "${RSS_CACHE}" ] || return 1
+  mapfile -t lines <"${RSS_CACHE}"
+  [ "${lines[0]:-}" = "# ${RSS_URL:-}" ] || return 1
+  for line in "${lines[@]:1}"; do
+    line="${line//[^ -~]/ }"
+    [ -n "${line// /}" ] || continue
+    [ $(( ${#text} + ${#line} + 1 )) -gt "${RSS_BYTES_MAX}" ] && break
+    text+="${first}${line}"
+    first=$'\n'
+  done
+  RSS_FOR="${RSS_URL:-}"
+  [ "${text}" = "${RSS_TEXT}" ] && return 0
+  RSS_TEXT="${text}"
+  RSS_REV=$(( RSS_REV + 1 ))
+}
+
+# Tell the firmware the feed and its turns, if either changed and it has a
+# ticker to run them through.
+sendrss() {
+  local c s v want text=""
+  rss_num "${RSS_CLOCK_SECS:-30}" 30 0 3600;  c="${_R}"
+  rss_num "${RSS_SCROLL_SECS:-60}" 60 1 3600; s="${_R}"
+  rss_num "${RSS_SPEED:-40}" 40 5 200;        v="${_R}"
+  if rss_on && [ "${RSS_FOR}" = "${RSS_URL:-}" ]; then
+    text="${RSS_TEXT}"; want="${c},${s},${v},${RSS_REV}"
+  else
+    want="off"
+  fi
+  [ -n "${text}" ] || want="off"
+  [ "${want}" = "${RSS_SENT}" ] && return 0
+  fw_atleast 0.8.4 || return 0
+  dbug "Sending: CMDRSS,${c},${s},${v},${#text}"
+  echo "CMDRSS,${c},${s},${v},${#text}" >${TTYDEV}
+  if [ -n "${text}" ]; then
+    sleep ${WAITSECS}
+    printf '%s' "${text}" >${TTYDEV}
+    sleep ${WAITSECS}
+  else
+    cmdwait
+  fi
+  RSS_SENT="${want}"
+}
+
+# The feed: collect a finished fetch, start one that is due, send what is new.
+rss_pass() {  # rss_pass <now>
+  local now="${1}" retry n
+  if bg_collect rss "${now}"; then
+    if [ "${BG_RC}" = "0" ]; then
+      RSS_FAILS=0
+      rss_num "${RSS_MINUTES:-60}" 60 5 1440
+      RSS_NEXT=$(( now + _R * 60 ))
+      rss_load
+      dbug "The feed: ${BG_LINE}"
+    else
+      RSS_FAILS=$(( RSS_FAILS + 1 ))
+      retry="${UC_RETRY_FIRST}"; n="${RSS_FAILS}"
+      while [ "${n}" -gt 1 ] && [ "${retry}" -lt "${UC_RETRY_SECS}" ]; do
+        retry=$(( retry * 2 )); n=$(( n - 1 ))
+      done
+      [ "${retry}" -gt "${UC_RETRY_SECS}" ] && retry="${UC_RETRY_SECS}"
+      RSS_NEXT=$(( now + retry ))
+      dbug "The feed could not be read (${BG_LINE:-stopped}); again in ${retry}s"
+    fi
+  fi
+  if rss_on; then
+    if [ "${RSS_FOR}" != "${RSS_URL}" ] && ! bg_running rss; then
+      # Another feed than the one held, or the daemon's first look: what the
+      # last run left in /tmp, if it is this feed's, until the fetch is back.
+      [ -n "${RSS_FOR}" ] && RSS_NEXT=""
+      RSS_FOR="${RSS_URL}"; RSS_TEXT=""; RSS_REV=$(( RSS_REV + 1 ))
+      rss_load
+    fi
+    if ! bg_running rss && due "${RSS_NEXT}" "${now}"; then
+      # Not for a display that cannot show it - asked again in a minute, since
+      # the firmware's version may not be known yet (fw_pass).
+      fw_atleast 0.8.4 || { RSS_NEXT=$(( now + 60 )); sendrss; return 0; }
+      rss_num "${RSS_ITEMS:-20}" 20 1 48
+      dbug "Reading the feed at ${RSS_URL}"
+      bg_start rss "${now}" nice -n 19 python3 "${RSS_TOOL}" --url "${RSS_URL}" \
+        --out "${RSS_CACHE}" --max "${_R}"
+    fi
+  fi
+  sendrss
+}
+
+# Once a pass, whatever else the pass does: never blocks. The band's clock,
+# the time it counts from and the feed go with it - the notice's neighbours.
 updatenote_pass() {
   local now="${EPOCHSECONDS:-$(date +%s)}"
   uc_pass "${now}"
@@ -2015,6 +2142,7 @@ updatenote_pass() {
   sendnote "${NOTE_WANT}"
   sendclock
   time_pass
+  rss_pass "${now}"
 }
 
 # ---------------------------------------------------------------------------

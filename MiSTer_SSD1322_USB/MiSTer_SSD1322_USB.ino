@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.8.3b"
+#define BuildVersion "0.8.4b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -345,6 +345,7 @@ void oled_readnsetcontrast(void);
 void oled_showperror(void);
 void oled_showcenterredtext(String text, int font);
 void oled_setfont(int font);
+void oled_readrss(void);
 void oled_readnsetrotation(void);
 void oled_clswithtransition();
 void oled_showpic(void);
@@ -687,13 +688,14 @@ void loop(void) {
   // Not the notice: it can arrive at any time, from a timer, and nobody is
   // any more at the MiSTer for it. Nor the header's caption, which changes
   // when Super Attract Mode starts or stops - nobody is at it then either.
-  // Nor the clock, its time or the header's timer: the daemon keeps them
-  // right on its own schedule, the time once an hour. Nor a disc's place,
+  // Nor the clock, its time, the feed's headlines or the header's timer: the
+  // daemon keeps them right on its own schedule, the time once an hour. Nor a disc's place,
   // which decides for itself (meta_parseMedia): a pause is someone there, the
   // film's seconds going by are not.
   if (updateDisplay && !newCommand.startsWith("CMDNOTE,")
       && !newCommand.startsWith("CMDHEAD,") && !newCommand.startsWith("CMDHTIMER,")
       && !newCommand.startsWith("CMDCLOCK,") && !newCommand.startsWith("CMDSETTIME,")
+      && !newCommand.startsWith("CMDRSS,")
       && !newCommand.startsWith("CMDMEDIA,") && newCommand != "CMDMEDIA")
     meta_activity();
 #endif
@@ -942,6 +944,10 @@ void loop(void) {
 
     else if (newCommand.startsWith("CMDCLOCK,")) {                          // The frontends' clock, in the band
       band_clockParse(newCommand.c_str());
+    }
+
+    else if (newCommand.startsWith("CMDRSS,")) {                            // The frontends' feed, in the band
+      oled_readrss();
     }
 
     else if (newCommand=="CMDSHMETA") {                                     // Force the metadata view now
@@ -2920,6 +2926,37 @@ void oled_readmeta(void) {
                 metaKind, metaInterval, metaFieldCount, metaTitle);
 #endif
 #endif  // HAS_METADISPLAY
+}
+
+
+// CMDRSS,<clock s>,<scroll s>,<px/s>,<bytes> followed by exactly that many
+// raw bytes: the feed's headlines for the frontends' band (bandnote.h), read
+// as a description is. Whatever is past RSS_MAX is read and thrown away, and
+// a transfer cut short keeps no feed rather than half a headline. Read on
+// every board - one with no band to show it in still has to take the bytes
+// off the port.
+void oled_readrss(void) {
+  long want = band_rssParse(newCommand.c_str());
+  if (want < 0) return;
+  static char buf[512];
+  size_t keep = 0;
+#ifdef HAS_METADISPLAY
+  static char feed[RSS_MAX];
+  keep = (size_t)want > RSS_MAX ? RSS_MAX : (size_t)want;
+  size_t got = serial_readTicking((uint8_t *)feed, keep);
+#else
+  size_t got = 0;
+#endif
+  size_t rest = (size_t)want - keep;
+  while (got == keep && rest > 0) {
+    size_t chunk = rest > sizeof(buf) ? sizeof(buf) : rest;
+    size_t r = serial_readTicking((uint8_t *)buf, chunk);
+    if (r < chunk) { got = keep + 1; break; }
+    rest -= r;
+  }
+#ifdef HAS_METADISPLAY
+  band_rssSet(feed, got == keep ? keep : 0);
+#endif
 }
 
 

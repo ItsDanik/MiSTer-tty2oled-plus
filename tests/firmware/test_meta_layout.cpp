@@ -4405,6 +4405,218 @@ int main() {
         bandReset();
     }
 
+    section("band: a feed's headlines take turns with the clock");
+    {
+        const long T = 1790789640L;        // 2026-09-30 17:34:00, local
+        const char *H[3] = { "Alpha headline one", "Bravo headline two", "Charlie headline three" };
+        const std::string FEED = std::string(H[0]) + "\n" + H[1] + "\n" + H[2];
+        // Which headline a draw opens, by its first letter: a headline coming
+        // in at the right edge is drawn as however much of it is on the panel.
+        auto opens = [&](const FakeU8g2::Draw &d) {
+            for (int i = 0; i < 3; i++)
+                if (!d.text.empty() && d.x >= 0 && std::string(H[i]).rfind(d.text, 0) == 0) return i;
+            return -1;
+        };
+        auto headlineDraws = [&]() {
+            int n = 0;
+            for (const auto &d : u8g2.draws)
+                for (int i = 0; i < 3; i++)
+                    if (!d.text.empty() && std::string(H[i]).find(d.text) != std::string::npos) { n++; break; }
+            return n;
+        };
+        auto feedOn = [&](const char *line) {
+            const long n = band_rssParse((std::string(line) + std::to_string(FEED.size())).c_str());
+            band_rssSet(FEED.c_str(), (size_t)n);
+            return n;
+        };
+        auto rssReset = [&]() {
+            bandReset();
+            rssCount = 0; rssPhase = RSS_CLOCK; rssFirst = 0; rssAdmit = 0; rssClosing = false;
+            memset(logoBin, 0x11, sizeof(logoBin));
+            actPicType = GSC;
+            band_clockParse("CMDCLOCK,%d/%m/%y|%H:%M");
+            band_setTime(T);
+        };
+
+        rssReset();
+        okInt ("CMDRSS says how many bytes follow", (int)feedOn("CMDRSS,30,60,40,"), (int)FEED.size());
+        okInt ("a headline a line", rssCount, 3);
+        okInt ("the clock's turn, in ms", (int)rssClockMs, 30000);
+        okInt ("the ticker's", (int)rssScrollMs, 60000);
+        okInt ("40 pixels a second is one every 25ms", (int)rssStepMs, 25);
+        band_showPicture(0);
+        okBool("a frontend's picture opens with the clock", u8g2.find("30/09/26") != nullptr && noteLevel == BNOTE_GREY, true);
+
+        // The clock has its 30 seconds.
+        u8g2.resetProbe();
+        for (int i = 0; i < 29900 / 25; i++) bandTick(25);
+        okInt ("for 30 seconds nothing scrolls", headlineDraws(), 0);
+        okBool("and the clock is up", rssPhase == RSS_CLOCK && noteLevel == BNOTE_GREY, true);
+        u8g2.resetProbe();
+        for (int i = 0; i < 200 && rssPhase != RSS_SCROLL; i++) bandTick(25);
+        okInt ("then the ticker's turn", rssPhase, RSS_SCROLL);
+        ok    ("with the clock faded out first", noteGreys("30/09/26"), "7 6 5 4 3 2 1 ");
+        okInt ("and no headline before it is gone", headlineDraws(), 0);
+
+        // The ticker: in from the right edge, a pixel a step.
+        const unsigned long t0 = g_fakeMillis;
+        u8g2.resetProbe(); oled.resetProbe();
+        bandTick(25);
+        okBool("the first headline comes in at the right edge",
+               u8g2.draws.size() == 1 && opens(u8g2.draws[0]) == 0 && u8g2.draws[0].x == DispWidth - 1, true);
+        if (!u8g2.draws.empty()) {
+            okInt ("on the notice's row", u8g2.draws[0].y, BNOTE_Y);
+            okInt ("in its grey", u8g2.draws[0].fg, BNOTE_GREY);
+        }
+        okBool("sent to the panel", oled.displayCalls > 0, true);
+        bool smooth = true;
+        for (int i = 2; i <= 200; i++) {
+            u8g2.resetProbe();
+            bandTick(25);
+            if (u8g2.draws.empty() || opens(u8g2.draws[0]) != 0 || u8g2.draws[0].x != DispWidth - i) smooth = false;
+        }
+        okBool("and moves left a pixel every step", smooth, true);
+        okBool("the next follows it, a gap behind", rssAdmit >= 2, true);
+        bool dot = false;
+        for (const auto &r : oled.rects)
+            if (r.w == RSS_DOT && r.h == RSS_DOT && r.y >= BOOT_BAND_Y && r.y + r.h <= BOOT_PANEL_H) dot = true;
+        okBool("with a dot between the two, inside the band", dot, true);
+
+        // A late tick makes up a few pixels, never a jump.
+        u8g2.resetProbe();
+        const int xBefore = rssX;
+        bandTick(2000);
+        okInt ("a stalled loop moves it RSS_CATCHUP pixels at most", xBefore - rssX, RSS_CATCHUP);
+
+        // Time up: nothing new comes in, and what is on the panel runs out.
+        bool clockSeen = false, grew = false, lateDraw = false;
+        int lastIn = -1, admitAtClose = -1;
+        unsigned long tEnd = 0;
+        for (int i = 0; i < 200000 && !tEnd; i++) {
+            u8g2.resetProbe(); oled.resetProbe();
+            const bool wasClosing = rssClosing;
+            const int admitBefore = rssAdmit;
+            bandTick(25);
+            if (u8g2.find("30/09/26") && rssPhase == RSS_SCROLL) clockSeen = true;
+            if (rssClosing && !wasClosing) { admitAtClose = rssAdmit; lastIn = (rssFirst + rssAdmit - 1) % rssCount; }
+            if (wasClosing && rssAdmit > admitBefore) grew = true;
+            if (wasClosing && headlineDraws() > 0) lateDraw = true;
+            if (rssPhase != RSS_SCROLL) tEnd = g_fakeMillis;
+        }
+        okBool("no clock while it runs", clockSeen, false);
+        okBool("after 60 seconds a headline is still on the panel", admitAtClose > 0, true);
+        okBool("and is let finish", lateDraw && tEnd - t0 > 60000, true);
+        okBool("but none new comes in", grew, false);
+        okBool("it ends within the time the longest takes to cross",
+               tEnd - t0 <= 60000 + (unsigned long)(DispWidth + 22 * 5 + 2 * RSS_GAP + 22 * 5) * 25 + 2100, true);
+        okInt ("with the band empty", headlineDraws(), 0);
+        okBool("...and sent so", oled.displayCalls > 0, true);
+        okInt ("the next turn starts after the last one shown", rssFirst, (lastIn + 1) % 3);
+
+        // The clock again, faded in, for its whole time. Its first step is
+        // drawn in the tick the ticker ended in.
+        for (int i = 0; i < 200 && noteLevel < BNOTE_GREY; i++) bandTick(25);
+        ok    ("the clock fades back in", noteGreys("30/09/26"), "1 2 3 4 5 6 7 8 ");
+        const unsigned long tUp = g_fakeMillis;
+        for (int i = 0; i < 4000 && rssPhase == RSS_CLOCK; i++) bandTick(25);
+        okBool("and stays its whole 30 seconds from when it is up, whatever the ticker overran",
+               g_fakeMillis - tUp >= 30000 && g_fakeMillis - tUp <= 30100, true);
+        const int resume = rssFirst;
+        for (int i = 0; i < 200 && rssPhase != RSS_SCROLL; i++) bandTick(25);
+        u8g2.resetProbe();
+        bandTick(25);
+        okBool("the second run opens with the next headline",
+               u8g2.draws.size() == 1 && opens(u8g2.draws[0]) == resume, true);
+
+        // An update waiting takes the band at once, and keeps it.
+        for (int i = 0; i < 80; i++) bandTick(25);
+        u8g2.resetProbe(); oled.resetProbe();
+        band_noteParse((std::string("CMDNOTE,") + NOTE).c_str());
+        bandTick(25);
+        okBool("a notice: the ticker is taken off", headlineDraws() == 0 && rssPhase == RSS_CLOCK && oled.displayCalls > 0, true);
+        for (int i = 0; i < 100000 / 25; i++) bandTick(25);
+        ok    ("and the notice fades in", noteGreys(NOTE), "1 2 3 4 5 6 7 8 ");
+        okInt ("no headlines while it waits, however long", headlineDraws(), 0);
+        band_noteParse("CMDNOTE,");
+        u8g2.resetProbe();
+        for (int i = 0; i < 200 && !(noteLevel == BNOTE_GREY && u8g2.find("30/09/26")); i++) bandTick(25);
+        okBool("dealt with: the clock is back", u8g2.find("30/09/26") != nullptr && rssPhase == RSS_CLOCK, true);
+        for (int i = 0; i < 29000 / 25; i++) bandTick(25);
+        okInt ("for its whole time", rssPhase, RSS_CLOCK);
+        for (int i = 0; i < 4000 / 25; i++) bandTick(25);
+        okInt ("then the headlines again", rssPhase, RSS_SCROLL);
+
+        // Only on a frontend's picture; a new one starts with the clock.
+        band_noteCommand("CMDCOR,SNES,5");
+        u8g2.resetProbe(); oled.resetProbe();
+        for (int i = 0; i < 400; i++) bandTick(25);
+        okBool("a core's picture has no ticker", u8g2.draws.empty() && oled.displayCalls == 0, true);
+        band_showPicture(0);
+        okBool("back at the menu: the clock's turn, from the start", rssPhase == RSS_CLOCK && noteLevel == BNOTE_GREY, true);
+        busyActive = true;
+        u8g2.resetProbe();
+        for (int i = 0; i < 40000 / 25; i++) bandTick(25);
+        okInt ("nor under the busy bar", headlineDraws(), 0);
+        busyActive = false;
+
+        // New headlines mid-run: off the band, and from the top next turn.
+        band_showPicture(0);
+        for (int i = 0; i < 4000 && rssPhase != RSS_SCROLL; i++) bandTick(25);
+        for (int i = 0; i < 400; i++) bandTick(25);
+        feedOn("CMDRSS,30,60,40,");
+        u8g2.resetProbe();
+        for (int i = 0; i < 4; i++) bandTick(25);
+        okBool("a new feed mid-run takes the old one off", headlineDraws() == 0 && rssPhase == RSS_CLOCK && rssFirst == 0, true);
+
+        // No bytes: no feed, and the clock is left alone.
+        okInt ("CMDRSS with no bytes", (int)band_rssParse("CMDRSS,30,60,40,0"), 0);
+        band_rssSet("", 0);
+        band_showPicture(0);
+        u8g2.resetProbe();
+        for (int i = 0; i < 100000 / 25; i++) bandTick(25);
+        okBool("is no feed: the clock stays", rssCount == 0 && noteLevel == BNOTE_GREY
+               && noteGreys("30/09/26").find("7") == std::string::npos, true);
+
+        // The clock's turn at 0: the ticker alone.
+        feedOn("CMDRSS,0,5,40,");
+        u8g2.resetProbe();
+        band_showPicture(0);
+        okBool("0 seconds of clock: none composed into the picture", u8g2.find("30/09/26") == nullptr && noteLevel == 0, true);
+        for (int i = 0; i < 3; i++) bandTick(25);
+        okInt ("the headlines at once", rssPhase, RSS_SCROLL);
+        u8g2.resetProbe();
+        for (int i = 0; i < 60000 / 25; i++) bandTick(25);
+        okBool("and never the clock between runs", u8g2.find("30/09/26") == nullptr && headlineDraws() > 0, true);
+
+        // What CMDRSS takes.
+        okInt ("not CMDRSS's shape", (int)band_rssParse("CMDRSS,30,60"), -1);
+        okInt ("a negative count", (int)band_rssParse("CMDRSS,30,60,40,-5"), -1);
+        band_rssParse("CMDRSS,99999,0,1000,1");
+        okBool("times and speed kept in bounds", rssClockMs == 3600000UL && rssScrollMs == 1000UL && rssStepMs == 5, true);
+        band_rssParse("CMDRSS,-3,60,1,1");
+        okBool("...at both ends", rssClockMs == 0 && rssStepMs == 200, true);
+        const char raw[] = "one\n\ntw\x01o\r\nthree";
+        band_rssSet(raw, sizeof(raw) - 1);
+        okInt ("empty lines are no headline", rssCount, 3);
+        ok    ("anything unprintable is a space", std::string(rssBuf + rssOff[1], rssLen[1]), "tw o ");
+        ok    ("the last line needs no newline", std::string(rssBuf + rssOff[2], rssLen[2]), "three");
+        std::string many;
+        for (int i = 0; i < RSS_ITEMS_MAX + 20; i++) many += "h" + std::to_string(i) + "\n";
+        band_rssSet(many.c_str(), many.size());
+        okInt ("no more than RSS_ITEMS_MAX", rssCount, RSS_ITEMS_MAX);
+        std::string big(RSS_MAX + 500, 'x');
+        band_rssSet(big.c_str(), big.size());
+        okBool("no more than RSS_MAX bytes", rssCount == 1 && rssLen[0] == RSS_MAX, true);
+        okBool("quiet: CMDRSS", boot_quietCommand("CMDRSS,30,60,40,0"), true);
+        bootHolding = true; boot_noteCommand("CMDRSS,30,60,40,0");
+        okBool("so the boot screen holds under it", bootHolding, true);
+        bootHolding = false;
+        band_rssSet("", 0);
+        band_rssParse("CMDRSS,30,60,40,0");
+        clockSet = false; clockFmt[0] = '\0';
+        bandReset();
+    }
+
     printf("\n\033[1mResults:\033[0m %d passed, %d failed\n\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }

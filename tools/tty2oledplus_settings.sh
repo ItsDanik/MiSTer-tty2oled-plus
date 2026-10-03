@@ -105,6 +105,13 @@ SAM_TIMER|bool||Time to SAM's next game|After that, how long until Super Attract
 BAND_CLOCK|bool||Date and time under the menu|Under the picture of the menu, MisterZine, Degauss and Zaparoo, in small grey letters - while no update is waiting, which says so there instead.
 BAND_CLOCK_LEFT|text|24|Date and time: left side|A strftime format: %d day, %m month, %y year, %Y with the century, %a the day's name, %b the month's.
 BAND_CLOCK_RIGHT|text|24|Date and time: right side|The same for the right side: %H:%M is the time, %I:%M %p on a 12-hour clock.
+RSS_FEED|bool||News ticker under the menu|The headlines of an RSS feed scroll through the same row, taking turns with the date and time - while no update is waiting.
+RSS_URL|text|200|News ticker: the feed|The address of an RSS or Atom feed. The default is MisterZine's list of new and updated cores and arcade games.
+RSS_CLOCK_SECS|int|0 3600|News ticker: seconds of date and time|How long the date and time stay up between two runs of headlines. 0 runs the headlines alone.
+RSS_SCROLL_SECS|int|1 3600|News ticker: seconds of headlines|How long the headlines scroll before the date and time come back. The headline on screen then is let finish first.
+RSS_SPEED|int|5 200|News ticker: speed (pixels/s)|How fast the headlines move. Bigger is faster.
+RSS_MINUTES|int|5 1440|News ticker: minutes between reads|How often the feed is read again for new headlines.
+RSS_ITEMS|int|1 48|News ticker: headlines kept|How many of the feed's headlines are shown, newest first.
 core_bootscreen_time|int|0 10000|Core boot screen (ms)|How long a console core's own artwork is held before the game's details replace it, when the core and the game are loaded together. 0 goes straight to the details.
 METADATA_INTERVAL|int|0 600|Seconds per page|How long each page of game details stays up, console and arcade. Arcade alternates the artwork with the info card's pages. A description page, console or arcade, stays until its text has scrolled through. 0 never turns a page.
 ROTATE|bool||Upside down|Turn the whole display 180 degrees, for a panel mounted the other way up.

@@ -52,6 +52,7 @@ run "tools: scraper"             "${HERE}/test-scrape.py"
 run "tools: system update check" "${HERE}/test-syscheck.py"
 run "tools: history2gamelist"    "${HERE}/test-history2gamelist.py"
 run "tools: DVD"                 "${HERE}/test-dvd.py"
+run "tools: feed"                "${HERE}/test-rss.py"
 run "release: installer"        "${HERE}/test-installer.sh"
 run "tools: flashing"            "${HERE}/test-flash.sh"
 

@@ -1171,6 +1171,120 @@ ok "then again" "$(captured | tr -d '\r' | grep -c '^CMDSETTIME,')" "1"
 FW_VERSION=""; CLOCK_SENT="?"; DEFERRED_DONE="no"
 
 # ---------------------------------------------------------------------------
+section "CMDRSS: a feed's headlines, in the band"
+# ---------------------------------------------------------------------------
+# The feed is a fake tty2oledplus_rss.py: it logs its arguments and writes
+# FAKE_RSS's lines under the "# <url>" line, or fails with FAKE_RSS_RC.
+RSS_TOOL="${TMP}/fake-rss.py"
+cat >"${RSS_TOOL}" <<'FAKE'
+import os, sys, time
+a = sys.argv[1:]
+time.sleep(float(os.environ.get("FAKE_RSS_SLEEP", "0")))
+with open(os.environ["FAKE_RSS_LOG"], "a") as f:
+    f.write("rss " + " ".join(a) + "\n")
+if os.environ.get("FAKE_RSS_RC", "0") != "0":
+    print("error: no network")
+    sys.exit(int(os.environ["FAKE_RSS_RC"]))
+with open(a[a.index("--out") + 1], "w") as f:
+    f.write("# " + a[a.index("--url") + 1] + "\n" + os.environ.get("FAKE_RSS", ""))
+print("ok")
+FAKE
+export FAKE_RSS_LOG="${TMP}/rss.log" FAKE_RSS=$'First headline\nSecond one\n' FAKE_RSS_RC=0 FAKE_RSS_SLEEP=0
+RSS_CACHE="${TMP}/rss-cache.txt"; UC_OUT="${TMP}/rss-check"
+rss_reset() {
+  [ -n "${BG_PID[rss]:-}" ] && { kill "${BG_PID[rss]}" 2>/dev/null; wait "${BG_PID[rss]}" 2>/dev/null; }
+  BG_PID[rss]=""
+  rm -f "${RSS_CACHE}" "${UC_OUT}".rss*; : >"${FAKE_RSS_LOG}"
+  RSS_NEXT=""; RSS_FAILS=0; RSS_TEXT=""; RSS_FOR=""; RSS_SENT="?"
+  RSS_FEED="yes"; RSS_URL="https://example.org/feed.xml"
+  unset RSS_CLOCK_SECS RSS_SCROLL_SECS RSS_SPEED RSS_MINUTES RSS_ITEMS
+  FAKE_RSS=$'First headline\nSecond one\n'; FAKE_RSS_RC=0
+}
+rss_settle() { local i; for i in $(seq 80); do [ -e "${UC_OUT}.rss.rc" ] && return; sleep 0.1; done; }
+rss_runs() { wc -l <"${FAKE_RSS_LOG}" | tr -d ' '; }
+rss_wire() { captured | tr '\n' '|'; }
+NOW="$(date +%s)"
+
+ok "the ini's defaults: MisterZine's feed, 30s of clock, 60s of headlines" \
+   "$(. "${ROOT}/tty2oled-system.ini" 2>/dev/null; echo "${RSS_FEED},${RSS_URL},${RSS_CLOCK_SECS},${RSS_SCROLL_SECS},${RSS_SPEED},${RSS_MINUTES},${RSS_ITEMS}")" \
+   "yes,https://misterzine.fyi/releases/feed.xml,30,60,40,60,20"
+
+rss_reset; reset_capture; FW_VERSION="0.8.3b"; rss_pass "${NOW}"
+ok "firmware before 0.8.4b: the feed is not even read" "$(rss_runs)" "0"
+ok "and nothing is sent - it would be drawn as text" "$(captured)" ""
+
+rss_reset; reset_capture; FW_VERSION="0.8.4b"; FAKE_RSS_SLEEP=2
+T0="${EPOCHREALTIME/[.,]/}"; rss_pass "${NOW}"; T1="${EPOCHREALTIME/[.,]/}"
+ok "the first pass starts reading the feed and does not wait for it" "$(( (T1 - T0) < 1000000 ))" "1"
+ok "and says there is none yet" "$(rss_wire)" "CMDRSS,30,60,40,0|"
+reset_capture; rss_pass "${NOW}"
+ok "once, while that one is still going" "$(rss_wire)" ""
+rss_settle; FAKE_RSS_SLEEP=0
+ok "one read" "$(rss_runs)" "1"
+ok "niced, with the feed, the cache and how many to keep" "$(cat "${FAKE_RSS_LOG}")" \
+   "rss --url https://example.org/feed.xml --out ${RSS_CACHE} --max 20"
+ok "...niced" "$(declare -f rss_pass | grep -c 'nice -n 19 python3 "${RSS_TOOL}"')" "1"
+reset_capture; rss_pass "$(( NOW + 1 ))"
+ok "the headlines, once it is back: the turns, the speed, the bytes - and then the bytes" \
+   "$(rss_wire)" "CMDRSS,30,60,40,25|First headline|Second one"
+ok "a newline between two, none after the last" "$(captured | tail -c 10)" "Second one"
+reset_capture; rss_pass "$(( NOW + 2 ))"; rss_pass "$(( NOW + 3599 ))"
+ok "not sent again, nor read again within the hour" "$(captured)$(rss_runs)" "1"
+rss_pass "$(( NOW + 3602 ))"; rss_settle; reset_capture; rss_pass "$(( NOW + 3603 ))"
+ok "read again after RSS_MINUTES" "$(rss_runs)" "2"
+ok "and the same headlines are not sent twice" "$(captured)" ""
+FAKE_RSS=$'A new one\nFirst headline\n'
+rss_pass "$(( NOW + 7300 ))"; rss_settle; reset_capture; rss_pass "$(( NOW + 7301 ))"
+ok "new ones are" "$(rss_wire)" "CMDRSS,30,60,40,24|A new one|First headline"
+
+reset_capture; RSS_CLOCK_SECS="45"; RSS_SCROLL_SECS="90"; RSS_SPEED="60"; rss_pass "$(( NOW + 7302 ))"
+ok "a change of the turns or the speed resends them" "$(rss_wire)" "CMDRSS,45,90,60,24|A new one|First headline"
+reset_capture; RSS_CLOCK_SECS="junk"; RSS_SCROLL_SECS="0"; RSS_SPEED="9999"; rss_pass "$(( NOW + 7303 ))"
+ok "nonsense is the default, and numbers stay in bounds" "$(rss_wire)" "CMDRSS,30,1,200,24|A new one|First headline"
+unset RSS_CLOCK_SECS RSS_SCROLL_SECS RSS_SPEED
+reset_capture; RSS_SENT="?"; rss_pass "$(( NOW + 7304 ))"
+ok "a display that was reset is told again" "$(rss_wire)" "CMDRSS,30,60,40,24|A new one|First headline"
+ok "every place the clock is told again tells the feed again" \
+   "$(grep -c '^  RSS_SENT="?"' "${ROOT}/tty2oled.sh")" "$(grep -c '^  CLOCK_SENT="?"' "${ROOT}/tty2oled.sh")"
+
+reset_capture; RSS_FEED="no"; rss_pass "$(( NOW + 7305 ))"
+ok "turned off: no bytes, which takes it off the band" "$(rss_wire)" "CMDRSS,30,60,40,0|"
+RSS_FEED="yes"; RSS_URL=""; RSS_SENT="?"; reset_capture; rss_pass "$(( NOW + 7306 ))"
+ok "no address is off too" "$(rss_wire)" "CMDRSS,30,60,40,0|"
+
+# A fetch that fails keeps what there was and is tried again soon.
+rss_reset; rss_pass "${NOW}"; rss_settle; rss_pass "$(( NOW + 1 ))"
+FAKE_RSS_RC=1; rss_pass "$(( NOW + 3700 ))"; rss_settle; reset_capture; rss_pass "$(( NOW + 3701 ))"
+ok "a failed read sends nothing: the headlines there were stay" "$(captured)${RSS_TEXT}" $'First headline\nSecond one'
+ok "and is tried again in UC_RETRY_FIRST seconds, not an hour" "$(( RSS_NEXT - NOW - 3701 ))" "${UC_RETRY_FIRST}"
+rss_pass "$(( RSS_NEXT ))"; rss_settle; rss_pass "$(( NOW + 3800 ))"
+ok "then twice that" "$(( RSS_NEXT - NOW - 3800 ))" "$(( UC_RETRY_FIRST * 2 ))"
+
+# A restarted daemon has the last run's headlines at once - if they are this feed's.
+rss_reset; FAKE_RSS_RC=1
+printf '# https://example.org/feed.xml\nKept from before\n' >"${RSS_CACHE}"
+reset_capture; rss_pass "${NOW}"
+ok "the headlines /tmp still holds go out before the fetch is back" "$(rss_wire)" "CMDRSS,30,60,40,16|Kept from before"
+rss_reset; FAKE_RSS_RC=1
+printf '# https://elsewhere.example/feed.xml\nSomeone else\n' >"${RSS_CACHE}"
+reset_capture; rss_pass "${NOW}"
+ok "another feed's are not" "$(rss_wire)" "CMDRSS,30,60,40,0|"
+
+# What is sent is what the firmware keeps: printable ASCII, RSS_BYTES_MAX.
+rss_reset; RSS_FOR="${RSS_URL}"
+{ printf '# %s\n' "${RSS_URL}"; printf 'caf\xc3\xa9 \001 x\n\n   \n'; for i in $(seq 60); do printf 'headline number %04d is forty-one bytes long\n' "${i}"; done; } >"${RSS_CACHE}"
+rss_load
+ok "anything not printable ASCII is a space, an empty line no headline" "${RSS_TEXT%%$'\n'*}" "caf     x"
+ok "whole headlines, as many as fit RSS_BYTES_MAX" "$(( ${#RSS_TEXT} <= RSS_BYTES_MAX && ${#RSS_TEXT} > RSS_BYTES_MAX - 50 ))" "1"
+LAST="${RSS_TEXT##*$'\n'}"
+ok "...the last one whole" "${LAST/00[0-9][0-9]/NNNN}" "headline number NNNN is forty-one bytes long"
+ok "and the next would not have fitted" "$(( ${#RSS_TEXT} + 1 + ${#LAST} > RSS_BYTES_MAX ))" "1"
+ok "the firmware keeps as many bytes" \
+   "$(sed -n 's/^#define RSS_MAX  *\([0-9]*\).*/\1/p' "${ROOT}/MiSTer_SSD1322_USB/bandnote.h")" "${RSS_BYTES_MAX}"
+ok "the notice and the clock go with it, once a pass" "$(declare -f updatenote_pass | grep -c 'rss_pass')" "1"
+rss_reset; RSS_FEED="no"; unset RSS_URL; FW_VERSION=""
+
+# ---------------------------------------------------------------------------
 section "CMDHTIMER: the time to Super Attract Mode's next game"
 # ---------------------------------------------------------------------------
 SAM_INI="${TMP}/MiSTer_SAM.ini"; SAM_GAMEFILE="${TMP}/SAM_Game.txt"; SAM_STAMP="${TMP}/samstamp"

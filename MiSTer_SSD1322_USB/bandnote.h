@@ -32,6 +32,16 @@
 // fading in on a frontend's picture, out for a notice - but a new minute is
 // drawn over the old in place: a fade every minute would be a flicker.
 //
+// And a feed can take turns with the clock (0.8.4b): CMDRSS gives the
+// headlines of an RSS feed, and the band then shows the date and time for
+// rssClockMs, fades it out, and runs the headlines through as a ticker - in
+// from the right edge, a dot between one and the next - for rssScrollMs. When
+// that time is up no new headline is let in, and the ones already on the
+// panel run out to the left edge; only then does the clock fade back in, for
+// its whole time again. The next turn carries on with the headline after the
+// last one shown. A notice outranks both: while one is waiting there is no
+// ticker, and one arriving mid-ticker takes the band at once.
+//
 // The band is shared. At power-on the boot screen's outro runs there (the
 // sweep finishing, the version fading), and a busy screen's bar runs there;
 // the notice waits for both, and for any picture transition, rather than
@@ -71,6 +81,17 @@
 #define BCLOCK_FMT_MAX 40                             // CMDCLOCK's text, both formats
 #define BCLOCK_SEP     '\t'                           // between them, once formatted
 
+// The feed's ticker. 5x7 is a fixed-width font, so a headline's width is its
+// length, and only the characters on the panel are drawn.
+#define RSS_MAX        2048                           // CMDRSS's bytes kept, all headlines
+#define RSS_ITEMS_MAX  48                             // ...and how many headlines
+#define RSS_GAP        20                             // pixels between two, the dot in the middle
+#define RSS_DOT        2                              // the dot's side
+#define RSS_CATCHUP    3                              // pixels a late tick may make up
+#define RSS_CLOCK      0                              // the turns: the clock is up...
+#define RSS_LEAVE      1                              // ...fading out for the ticker...
+#define RSS_SCROLL     2                              // ...and the ticker running
+
 #ifdef HAS_METADISPLAY
 
 char          noteText[BNOTE_COLS + 1]  = "";   // what CMDNOTE last said
@@ -86,6 +107,27 @@ unsigned long clockSetAt = 0;                 // ...and millis() when it came
 bool          clockSet   = false;
 char          clockText[BNOTE_COLS + 1] = ""; // formatted, BCLOCK_SEP between halves
 long          clockTextAt = -1;               // the second it was formatted for
+
+char          rssBuf[RSS_MAX + 1] = "";       // the headlines, a NUL after each
+uint16_t      rssOff[RSS_ITEMS_MAX];          // where each starts...
+uint16_t      rssLen[RSS_ITEMS_MAX];          // ...and its length
+int           rssCount    = 0;                // 0: no feed
+unsigned long rssClockMs  = 30000;            // the clock's turn; 0 is the ticker alone
+unsigned long rssScrollMs = 60000;            // the ticker's, before it runs out
+unsigned long rssStepMs   = 25;               // ms a pixel
+int           rssPhase    = RSS_CLOCK;
+unsigned long rssAt       = 0;                // when this turn's time began
+unsigned long rssLast     = 0;                // when the ticker last moved
+int           rssFirst    = 0;                // the leftmost headline on the panel, or the next in
+int           rssX        = 0;                // its left edge
+int           rssAdmit    = 0;                // headlines let in, counting from rssFirst
+bool          rssClosing  = false;            // time is up: no more are let in
+bool          rssLead     = true;             // rssFirst opened this turn: no dot before it
+
+// Is the band the ticker's rather than the clock's? Not while a notice waits.
+static bool band_rssHolds(void) {
+  return rssCount > 0 && !noteText[0] && (rssPhase != RSS_CLOCK || rssClockMs == 0);
+}
 
 // The clock as it reads now, into clockText - formatted once a second at
 // most. False when there is no clock: none asked for, or no time yet.
@@ -116,10 +158,12 @@ static bool band_clockNow(void) {
   return true;
 }
 
-// The band's line now: the notice, else the clock, else nothing. Into out,
+// The band's line now: the notice, else the clock, else nothing - and
+// nothing while the feed's ticker has its turn. Into out,
 // BNOTE_COLS + 1 long; true when it is the clock.
 static bool band_want(char *out) {
   if (noteText[0]) { strcpy(out, noteText); return false; }
+  if (band_rssHolds()) { out[0] = '\0'; return false; }
   if (band_clockNow()) { strcpy(out, clockText); return true; }
   out[0] = '\0';
   return false;
@@ -152,6 +196,102 @@ static void band_drawNote(int level) {
   u8g2.setForegroundColor(SSD1322_WHITE);
 }
 
+// The clock's turn starts over: with every frontend picture, and whenever the
+// ticker is taken off the band.
+static void band_rssRest(void) {
+  rssPhase = RSS_CLOCK;
+  rssAt    = millis();
+}
+
+// The ticker as it stands: the band black, and every headline that has been
+// let in drawn from rssX on, lets in those reaching the right edge unless the
+// time is up.
+static void band_rssDraw(void) {
+  oled.fillRect(0, BOOT_BAND_Y, DispWidth, BOOT_BAND_H, SSD1322_BLACK);
+  oled_setfont(BNOTE_FONT);
+  u8g2.setForegroundColor((uint16_t)BNOTE_GREY);
+  const int cw = (int)u8g2.getUTF8Width("M");
+  int x = rssX, i = rssFirst;
+  for (int k = 0; x < DispWidth; k++) {
+    if (k >= rssAdmit) {
+      if (rssClosing) break;
+      rssAdmit++;
+    }
+    const int dx = x - RSS_GAP / 2 - RSS_DOT / 2;
+    if (!(k == 0 && rssLead) && dx >= 0 && dx + RSS_DOT <= DispWidth)
+      oled.fillRect(dx, BNOTE_TOP + (BNOTE_ASC - RSS_DOT) / 2, RSS_DOT, RSS_DOT, (uint16_t)BNOTE_GREY);
+    // Only what is on the panel: from the character the left edge cuts.
+    const int len = (int)rssLen[i];
+    int c0 = (x < 0 && cw > 0) ? (-x) / cw : 0;
+    if (c0 < len) {
+      char part[BNOTE_COLS + 3];
+      const int cx = x + c0 * cw;
+      int n = cw > 0 ? (DispWidth - cx) / cw + 1 : len;
+      if (n > len - c0) n = len - c0;
+      if (n > (int)sizeof(part) - 1) n = (int)sizeof(part) - 1;
+      memcpy(part, rssBuf + rssOff[i] + c0, (size_t)n);
+      part[n] = '\0';
+      u8g2.setCursor(cx, BNOTE_Y);
+      u8g2.print(part);
+    }
+    x += len * cw + RSS_GAP;
+    i = (i + 1) % rssCount;
+  }
+  u8g2.setForegroundColor(SSD1322_WHITE);
+}
+
+// The feed's turns, from band_tick with the band free. True while the ticker
+// has the band and band_tick has nothing to do there.
+static bool band_rssTick(void) {
+  const unsigned long now = millis();
+  if (!rssCount || noteText[0]) {             // no feed, or a notice takes the band
+    if (rssPhase == RSS_SCROLL) {
+      oled.fillRect(0, BOOT_BAND_Y, DispWidth, BOOT_BAND_H, SSD1322_BLACK);
+      oled.display();
+    }
+    band_rssRest();
+    return false;
+  }
+  if (rssPhase == RSS_CLOCK) {
+    // Its time counts from when it is up, not from when it started coming.
+    if (rssClockMs && band_clockNow() && noteLevel < BNOTE_GREY) { rssAt = now; return false; }
+    if (now - rssAt >= rssClockMs) rssPhase = RSS_LEAVE;   // band_want: nothing, so it fades out
+    return false;
+  }
+  if (rssPhase == RSS_LEAVE) {
+    if (noteLevel > 0) return false;          // still going out
+    noteDrawn[0] = '\0';
+    rssPhase   = RSS_SCROLL;
+    rssAt      = now;
+    rssLast    = now;
+    rssX       = DispWidth;
+    rssAdmit   = 0;
+    rssClosing = false;
+    rssLead    = true;
+    return true;
+  }
+  if (now - rssLast < rssStepMs) return true;
+  unsigned long px = (now - rssLast) / rssStepMs;
+  if (px > RSS_CATCHUP) { px = RSS_CATCHUP; rssLast = now; }
+  else                  rssLast += px * rssStepMs;
+  rssX -= (int)px;
+  oled_setfont(BNOTE_FONT);
+  const int cw = (int)u8g2.getUTF8Width("M");
+  while (rssAdmit > 0 && rssX + (int)rssLen[rssFirst] * cw <= 0) {   // off the left edge
+    rssX += (int)rssLen[rssFirst] * cw + RSS_GAP;
+    rssFirst = (rssFirst + 1) % rssCount;
+    rssAdmit--;
+    rssLead = false;
+  }
+  band_rssDraw();
+  oled.display();
+  // Time up: those on the panel run out, and the clock's turn starts then -
+  // its whole time, however long the last headline took.
+  if (now - rssAt >= rssScrollMs) rssClosing = true;
+  if (rssClosing && rssAdmit == 0) { band_rssRest(); return false; }
+  return true;
+}
+
 // A frontend's whole frame: the picture in logoBin, and the notice as it
 // stands now at full grey. Also the Fade's render hook, so a notice that
 // arrives while the old picture is fading out still makes the fade-in.
@@ -176,6 +316,7 @@ static void band_crop(void) {
 void band_showPicture(int effect) {
   band_crop();
   bandShown = true;
+  band_rssRest();
   meta_beginTransitionText(effect);        // the old picture, while it is there
   band_render();
   tfRenderHook = band_render;              // taken by a Fade, dropped by a wipe
@@ -188,6 +329,7 @@ void band_showPicture(int effect) {
 void band_heldUnder(void) {
   band_crop();
   bandShown = true;
+  band_rssRest();
   noteDrawn[0] = '\0';
   noteLevel = 0;
 }
@@ -225,6 +367,49 @@ void band_clockParse(const char *cmd) {
   clockTextAt = -1;
 }
 
+// CMDRSS,<clock s>,<scroll s>,<px/s>,<bytes> - the feed's turns and speed,
+// and how many bytes of headlines follow the line; -1 when it is not that.
+// The read is the sketch's, like a description's.
+long band_rssParse(const char *cmd) {
+  long c = 0, s = 0, v = 0, n = -1;
+  if (sscanf(cmd, "CMDRSS,%ld,%ld,%ld,%ld", &c, &s, &v, &n) < 4 || n < 0) return -1;
+  if (c < 0) c = 0;
+  if (c > 3600) c = 3600;
+  if (s < 1) s = 1;
+  if (s > 3600) s = 3600;
+  if (v < 5) v = 5;
+  if (v > 200) v = 200;
+  rssClockMs  = (unsigned long)c * 1000UL;
+  rssScrollMs = (unsigned long)s * 1000UL;
+  rssStepMs   = 1000UL / (unsigned long)v;
+  return n;
+}
+
+// The bytes that followed: headlines, a newline between them. Printable ASCII
+// is kept, anything else is a space; none at all is no feed. A ticker that is
+// running is taken off - band_tick clears it - and starts again from the top
+// at its next turn.
+void band_rssSet(const char *text, size_t n) {
+  if (n > RSS_MAX) n = RSS_MAX;
+  rssCount = 0;
+  rssFirst = 0;
+  size_t o = 0, start = 0;
+  for (size_t i = 0; i <= n; i++) {
+    const char ch = i < n ? text[i] : '\n';
+    if (ch != '\n') { rssBuf[o++] = (ch >= ' ' && ch <= '~') ? ch : ' '; continue; }
+    if (o > start && rssCount < RSS_ITEMS_MAX) {
+      rssOff[rssCount] = (uint16_t)start;
+      rssLen[rssCount] = (uint16_t)(o - start);
+      rssCount++;
+      rssBuf[o++] = '\0';
+      start = o;
+    } else {
+      o = start;                               // an empty line, or one too many
+    }
+  }
+  if (rssPhase == RSS_SCROLL) { rssAdmit = 0; rssClosing = true; }
+}
+
 // CMDSETTIME,<local seconds since 1970>: what the clock counts on from.
 void band_setTime(long epoch) {
   clockEpoch  = epoch;
@@ -244,6 +429,7 @@ void band_noteCommand(const char *cmd) {
 void band_tick(void) {
   if (!bandShown) return;
   if (tfState != TF_IDLE || boActive || busyActive || pf_active()) return;
+  if (band_rssTick()) return;                 // the feed's ticker has the band
   char want[BNOTE_COLS + 1];
   const bool wantClock = band_want(want);
   bool changed = strcmp(noteDrawn, want) != 0;
@@ -276,6 +462,11 @@ void band_parsePicture(const char *cmd)    { (void)cmd; }
 void band_noteParse(const char *cmd)       { (void)cmd; }
 void band_clockParse(const char *cmd)      { (void)cmd; }
 void band_setTime(long epoch)              { (void)epoch; }
+long band_rssParse(const char *cmd) {
+  long c, s, v, n = -1;
+  return (sscanf(cmd, "CMDRSS,%ld,%ld,%ld,%ld", &c, &s, &v, &n) < 4 || n < 0) ? -1 : n;
+}
+void band_rssSet(const char *text, size_t n) { (void)text; (void)n; }
 void band_noteCommand(const char *cmd)     { (void)cmd; }
 void band_tick(void)                       { }
 
