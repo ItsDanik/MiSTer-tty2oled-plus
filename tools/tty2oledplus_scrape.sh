@@ -86,8 +86,47 @@ was there.$(pick_note)" \
   done
 }
 
+# The same on the framebuffer: the checklist, then the importer on a screen
+# of its own with its summary under what it printed.
+scrape_fb() {
+  local i items state
+  load_systems
+  if [ "${#KEYS[@]}" -eq 0 ]; then
+    ui_msg "Scrape metadata" "The importer offered no systems to import - ${SCRAPER} did not run.
+
+Update tty2oled+ to put it back."
+    return 0
+  fi
+  if [ -r "${SELECTION}" ]; then CHECKED="$(cat "${SELECTION}")"
+  else CHECKED="${KEYS[*]}"; fi
+  while true; do
+    items=()
+    for i in "${!KEYS[@]}"; do
+      state=off; is_checked "${KEYS[$i]}" && state=on
+      items+=("${KEYS[$i]}" "${LABELS[$i]}" "${state}")
+    done
+    ui_check "Scrape metadata" "Which systems to import? Each needs a gamelist.xml in its own games folder - games/NES/gamelist.xml, games/mame/gamelist.xml - as Skraper, ES-DE and Batocera write it. What it says replaces what was there." \
+      "Import the ticked systems" "${items[@]}" || return 0
+    CHECKED="${UI_OUT}"
+    [ -n "${CHECKED// /}" ] && break
+    ui_msg "Scrape metadata" "Tick at least one system - or Cancel to go back."
+  done
+  mkdir -p "$(dirname "${SELECTION}")" && printf '%s\n' "${CHECKED}" > "${SELECTION}"
+
+  rm -f "${SUMMARY}"
+  # The importer's own output, then what it summed up - one screen to read.
+  T2OP_SCRAPE_SUMMARY="${SUMMARY}" ui_run "Scrape metadata" bash -c '
+    "$@" --summary "${T2OP_SCRAPE_SUMMARY}"; rc=$?
+    if [ -s "${T2OP_SCRAPE_SUMMARY}" ]; then printf "\n==> Summary\n"; cat "${T2OP_SCRAPE_SUMMARY}"; fi
+    printf "\n==> The display uses what was imported from the next game you load.\n"
+    exit "${rc}"' scrape "${PY}" "${SCRAPER}" --install "${INSTALL}" \
+      --systems "$(printf '%s' "${CHECKED}" | tr -s ' ' ',')"
+  rm -f "${SUMMARY}"
+  return 0
+}
+
 main() {
-  if [ ! -t 0 ] || [ ! -t 1 ]; then
+  if [ "${T2OP_UI:-}" != "fb" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
     printf '\n==> Scrape metadata\n'
     printf '    This needs a terminal to draw its menus in. Over SSH, run the\n'
     printf '    importer itself:  %s --systems NES,SNES\n' "${SCRAPER}"
@@ -96,6 +135,8 @@ main() {
   PY="$(command -v python3 || command -v python)" || die "There is no python on this MiSTer."
   [ -r "${SCRAPER}" ] || die "${SCRAPER} is missing.
     Run tty2oledplus from the Scripts menu and choose Update to put it back."
+
+  if ui_begin; then scrape_fb; ui_end; return 0; fi
 
   setup_dialog
 

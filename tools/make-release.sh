@@ -9,6 +9,8 @@
 #
 # --index DIR and --pics DIR take the title index and the artwork pack from
 # somewhere other than titleindex/ and pics/; the tests use small ones.
+# --config FILE is the settings utility's ARM binary, when it is not where
+# tools/build-config.sh leaves it.
 #
 # CI runs this on a tag push; it runs the same way here, so a release can be
 # looked at before anything is published.
@@ -20,7 +22,8 @@
 #
 #   VERSION                     the version, one line
 #   SHA256SUMS                  checksums of every other asset
-#   tty2oledplus.tar.gz         scripts, tools, defaults, icons, title index
+#   tty2oledplus.tar.gz         scripts, tools, the settings utility, defaults,
+#                               icons, title index
 #   tty2oledplus-pics.tar.gz    the artwork pack, separate: it is 12MB and
 #                               rarely changes, so updates skip it
 #   tty2oledplus-<board>.bin    merged firmware, one per board built
@@ -40,6 +43,7 @@ TAG=""
 NOTES=""
 INDEX="titleindex"
 PICS="pics"
+CONFIG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --out)      OUT="$2"; shift 2 ;;
@@ -48,6 +52,7 @@ while [ $# -gt 0 ]; do
     --notes)    NOTES="$2"; shift 2 ;;
     --index)    INDEX="$2"; shift 2 ;;
     --pics)     PICS="$2"; shift 2 ;;
+    --config)   CONFIG="$2"; shift 2 ;;
     -h|--help)  sed -n '2,/^set -euo/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
@@ -96,6 +101,15 @@ P="${STAGE}/tty2oledplus"
 mkdir -p "${P}/titleindex" "${P}/pics/icon" "${P}/pics/banner"
 for f in ${MANIFEST_FILES} ${MANIFEST_DEFAULTS}; do cp -p "${f}" "${P}/"; done
 for f in ${MANIFEST_TOOLS} ${MANIFEST_APPS} ${MANIFEST_MENU}; do cp -p "${f}" "${P}/$(basename "${f}")"; done
+# The settings utility, cross-built for the MiSTer. Byte 18 of an ELF is its
+# machine, 40 for ARM: the host's own build here would install and never run.
+CONFIG="${CONFIG:-${MANIFEST_BIN}}"
+[ -s "${CONFIG}" ] || die "no ${CONFIG} - build it with ./tools/build-config.sh, or pass --config"
+[ "$(od -An -c -N4 "${CONFIG}" | tr -d ' ')" = '177ELF' ] \
+  && [ "$(od -An -tu1 -j18 -N1 "${CONFIG}" | tr -d ' ')" = "40" ] \
+  || die "${CONFIG} is not an ARM binary - build it with ./tools/build-config.sh"
+cp -p "${CONFIG}" "${P}/$(basename "${MANIFEST_BIN}")"
+chmod 755 "${P}/$(basename "${MANIFEST_BIN}")"
 cp -p "${INDEX}"/*.idx "${P}/titleindex/"
 cp -p "${PICS}/icon"/*.gsc "${P}/pics/icon/"
 # The core banners ride here too (0.8.3b), as the icons do: every updater

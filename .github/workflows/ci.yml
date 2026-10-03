@@ -56,6 +56,30 @@ jobs:
           tty2oled.sh tty2oled-meta.sh tty2oled-read.sh S60tty2oled
           tools/*.sh tests/*.sh
 
+  # The settings utility that draws on the MiSTer's framebuffer: the one
+  # compiled thing in the scripts archive, cross-built because a MiSTer has no
+  # compiler.
+  config:
+    name: Settings utility
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the ARM compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+
+      - name: Build
+        run: ./tools/build-config.sh
+
+      - name: Keep the binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: config
+          path: tools/settings-ui/build/tty2oledplus_config
+          if-no-files-found: error
+
   firmware:
     name: Firmware (${{ matrix.board }})
     runs-on: ubuntu-24.04
@@ -93,7 +117,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, firmware]
+    needs: [test, firmware, config]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -106,6 +130,13 @@ jobs:
         with:
           pattern: fw-*
           path: fw
+
+      # Where make-release looks for it.
+      - name: Fetch the settings utility built above
+        uses: actions/download-artifact@v8
+        with:
+          name: config
+          path: tools/settings-ui/build
 
       # The index is generated and gitignored, so the release builds its own.
       - name: Cache the title index sources

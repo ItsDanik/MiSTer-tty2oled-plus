@@ -192,6 +192,33 @@ have_dialog() { [ "${T2OP_NO_DIALOG:-no}" != "yes" ] && command -v dialog >/dev/
 
 confirm_removal() {
   CONFIRM_KEEP="no"
+  # From the launcher's framebuffer menu: the same two questions, in its
+  # look. No is the button already highlighted, and Cancel changes nothing.
+  if [ "${T2OP_FB:-}" = "1" ] && [ -r "${INSTALL}/tty2oledplus_ui.sh" ]; then
+    # shellcheck disable=SC1090,SC1091
+    . "${INSTALL}/tty2oledplus_ui.sh"
+    if ui_fb; then
+      ui_yesno "Uninstall" "This removes tty2oled+ from ${FAT}:
+
+- the install folder, artwork and title index
+- the display's stored boot image
+- the startup entry and the Scripts menu entries
+
+The display's firmware is left alone.
+
+Are you sure?" "Cancel" "Remove" || return 1
+      ui_ask "Your own files" "Keep the files that are yours rather than ours?
+
+Your settings (tty2oled-user.ini, coretypes.ini), your own banners in pics/user, your boot.png, and what Scrape metadata found.
+
+Kept, they are saved to $(basename "${SAVEDIR}")." "Cancel|Remove all|Keep mine" 2 || return 1
+      case "${UI_OUT}" in
+        2) CONFIRM_KEEP="yes"; return 0 ;;
+        1) CONFIRM_KEEP="no";  return 0 ;;
+        *) return 1 ;;
+      esac
+    fi
+  fi
   if have_dialog; then
     # --defaultno so the highlighted button is the one that changes nothing.
     dialog --clear --title "Uninstall tty2oled+" --defaultno \
@@ -271,6 +298,12 @@ main() {
       --keep-bootimage) keep_bootimage="yes"; shift ;;
       --dry-run)        DRYRUN="yes"; shift ;;
       --yes|-y)         assume_yes="yes"; shift ;;
+      # Only the questions: "keep" or "delete" on stdout, or failure for
+      # Cancel. The launcher asks this way before putting the removal itself
+      # on a screen of its own.
+      --ask)            confirm_removal || return 1
+                        if [ "${CONFIRM_KEEP}" = "yes" ]; then echo keep; else echo delete; fi
+                        return 0 ;;
       -h|--help)        sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; return 0 ;;
       *)                die "unknown option: $1" ;;
     esac
@@ -352,7 +385,8 @@ main() {
   gone ${PIDFILE:+"${PIDFILE}"} /run/tty2oledplus*.pid \
        "${DAEMONLOG:-/tmp/tty2oled-daemon.log}" "${debugfile:-/tmp/tty2oled}" \
        /tmp/tty2oled_sleep "${UPDATE_FLAG:-/tmp/tty2oledplus_update}" \
-       /tmp/.tty2oledplus-check* /tmp/tty2oledplus.tty /tmp/tty2oledplus.port
+       /tmp/.tty2oledplus-check* /tmp/tty2oledplus.tty /tmp/tty2oledplus.port \
+       /tmp/.tty2oledplus_config
 
   say "Done."
   note "The firmware stays on the display - it is the display's own flash, and"

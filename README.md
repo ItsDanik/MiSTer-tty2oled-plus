@@ -425,7 +425,29 @@ Over SSH:
 there** — what the display shows, which details appear under a game, how bright
 the panel is and when it dims, how one picture replaces the last, what happens
 while updates run, and the connection and troubleshooting settings under
-*Advanced* — picked from menus, with what each one does written beside it.
+*Advanced* — with what each one does written beside it.
+
+From the Scripts menu everything tty2oled+ shows on the TV - its menu,
+Settings, Update, Scrape metadata, Boot screen and Uninstall - is drawn in one
+look and worked one way: what Update or Uninstall is doing scrolls by as it
+happens, under the same sweep bar the display shows while it is busy, and
+waits for OK when it has finished.
+
+Settings opens on the TV in the display's own look: cyan on
+black, in the fonts the panel uses, drawn at 320x240 so a 15kHz CRT shows all
+of it. Each setting has the control that suits it — a switch, a slider, a
+selector, a text field with an on-screen keyboard, a checklist you can put in
+order. Move with the d-pad, change a value with left and right, OK for the
+exact value or the full list, Cancel to go back; a keyboard's arrows, Enter
+and Escape do the same, and its letters type straight into a text field.
+
+**The display follows along while you change things.** Highlight a setting
+and the panel shows the screen it belongs to — a sample console game for the
+fields, an arcade card, a film, the menu for the clock and the news ticker,
+two pictures taking turns for a transition, the update screens — and every
+change is on the glass as you make it. Things that really take minutes are
+shown sooner: dimming after two seconds, the side swap every eight. The
+display goes back to what it was doing when you leave.
 
 Four things are deliberately not offered, because they are not choices: the
 baud rate and serial line settings (the firmware is fixed at 115200, so a
@@ -437,9 +459,10 @@ settings are on the panel before you leave the menu. Anything left at its
 default is not written at all, so a later release that changes a default is
 followed rather than overridden by a value you never chose.
 
-The editor needs a terminal to draw in: from the Scripts menu that means
-`fb_terminal=1` in `MiSTer.ini`, which is the default. Otherwise press F9 for
-the console, or run it over SSH:
+It needs a screen to draw on: from the Scripts menu that means
+`fb_terminal=1` in `MiSTer.ini`, which is the default. Over SSH there is no
+screen, and the same settings are offered as plain menus instead (no preview
+there); `--dialog` asks for those anywhere:
 
 ```sh
 /media/fat/Scripts/tty2oledplus.sh settings

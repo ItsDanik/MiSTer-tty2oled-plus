@@ -25,3 +25,7 @@ __pycache__/
 # A boot screen of your own, converted and stored on the display by
 # tty2oledplus_settings. Yours, not the repo's.
 pics/boot.png
+
+# The settings utility, built by tools/build-config.sh for the MiSTer and,
+# with --host, for the tests.
+tools/settings-ui/build/

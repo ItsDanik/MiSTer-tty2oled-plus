@@ -56,10 +56,14 @@ echo "#define x 1" > "${SRC}/pics/user/NES.gsc"
 head -c 300000 /dev/zero > "${SRC}/fw/fw-lolin32/MiSTer_SSD1322_USB.ino.merged.bin"
 head -c 300001 /dev/zero > "${SRC}/fw/fw-esp32s3/MiSTer_SSD1322_USB.ino.merged.bin"
 
+# Stand-in settings utility: an ELF header that says ARM, which is all a
+# release looks at - the real one is cross-built (tools/build-config.sh).
+printf '\177ELF\001\001\001\000\000\000\000\000\000\000\000\000\002\000\050\000' > "${SRC}/config"
+
 release() {  # release <out dir> [more options]
   local out="$1"; shift
   "${ROOT}/tools/make-release.sh" --out "${out}" --index "${SRC}/index" \
-    --pics "${SRC}/pics" --firmware "${SRC}/fw" "$@" > "${TMP}/release.out" 2>&1
+    --pics "${SRC}/pics" --firmware "${SRC}/fw" --config "${SRC}/config" "$@" > "${TMP}/release.out" 2>&1
 }
 
 release "${TMP}/dist" --notes "${TMP}/notes.md"; RC="${?}"
@@ -114,6 +118,14 @@ mv "${SRC}/pics/arcade/wheels.bin" "${TMP}/wheels.bin.away"
 release "${TMP}/dist-nowheels"; RC="${?}"
 ok "a release without the wheel pack is refused" "${RC}:$(grep -c 'wheels.bin' "${TMP}/release.out")" "1:1"
 mv "${TMP}/wheels.bin.away" "${SRC}/pics/arcade/wheels.bin"
+
+# The settings utility is compiled, so it can be missing, or built for the
+# wrong machine - and either way Settings on the MiSTer would be a dead entry.
+release "${TMP}/dist-noconfig" --config "${TMP}/no-such-binary"; RC="${?}"
+ok "a release without the settings utility is refused" "${RC}:$(grep -c 'build-config.sh' "${TMP}/release.out")" "1:1"
+printf '\177ELF\002\001\001\000\000\000\000\000\000\000\000\000\002\000\076\000' > "${TMP}/config-x86"
+release "${TMP}/dist-x86config" --config "${TMP}/config-x86"; RC="${?}"
+ok "and so is one built for this machine instead of the MiSTer" "${RC}:$(grep -c 'not an ARM binary' "${TMP}/release.out")" "1:1"
 ok "the notes carry this version's changelog" \
    "$(head -n1 "${TMP}/notes.md" | grep -c .)" "1"
 ok "and how to install it" "$(grep -c '^curl .*releases/latest/download/tty2oledplus_update.sh | bash$' "${TMP}/notes.md")" "1"

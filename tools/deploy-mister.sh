@@ -88,6 +88,12 @@ for f in ${FILES} ${TOOLS} ${BOOTHOOK} ${MANIFEST_APPS} ${MANIFEST_MENU} ${MANIF
   [ -f "${f}" ] || die "${f} is missing from the working copy."
 done
 
+# The settings utility is compiled, and a working copy may not have built it.
+# It is not what a deploy is usually for, so its absence is said, not fatal:
+# Settings is dialog's menus without it.
+CONFIG_BIN=""
+[ -s "${MANIFEST_BIN}" ] && CONFIG_BIN="${MANIFEST_BIN}"
+
 BIN=""
 if [ "${WITH_FIRMWARE}" = "yes" ]; then
   BIN="$(ls -t MiSTer_SSD1322_USB/build-out-*/*.merged.bin 2>/dev/null | head -n1 || true)"
@@ -111,6 +117,8 @@ if [ "${DRY_RUN}" = "yes" ]; then
   for f in ${FILES} ${TOOLS} ${MANIFEST_APPS}; do echo "  copy     ${f}"; done
   for f in ${MANIFEST_MENU}; do echo "  copy     ${f} -> /media/fat/Scripts/"; done
   for f in ${MANIFEST_DEFAULTS}; do echo "  if absent ${f}"; done
+  if [ -n "${CONFIG_BIN}" ]; then echo "  copy     ${CONFIG_BIN}"
+  else echo "  skip     ${MANIFEST_BIN} (not built: ./tools/build-config.sh)"; fi
   [ -n "${BIN}" ]                 && echo "  copy     ${BIN}"
   [ "${WITH_INDEX}" = "yes" ]     && echo "  copy     titleindex/ ($(ls titleindex/*.idx | wc -l | tr -d ' ') cores)"
   [ "${WITH_ICONS}" = "yes" ]     && echo "  copy     pics/icon/ ($(ls pics/icon/*.gsc | wc -l | tr -d ' ') icons)"
@@ -150,6 +158,11 @@ say "Copying scripts to ${MISTER}:${REMOTE}"
 ssh "${MISTER}" "mkdir -p ${REMOTE}"
 # shellcheck disable=SC2086
 scp -q ${FILES} ${TOOLS} ${MANIFEST_APPS} "${MISTER}:${REMOTE}/"
+if [ -n "${CONFIG_BIN}" ]; then
+  scp -q "${CONFIG_BIN}" "${MISTER}:${REMOTE}/"
+else
+  echo "    ${MANIFEST_BIN} is not built (./tools/build-config.sh): Settings stays dialog's menus."
+fi
 
 # The launcher goes to BOTH places, which is not a belt-and-braces choice but
 # the only arrangement that survives a daemon restart.

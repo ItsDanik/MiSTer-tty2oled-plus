@@ -27,6 +27,7 @@ binary stale, and CI builds against **today's** libraries:
 
 ```bash
 arduino-cli lib upgrade                                 # what CI will install
+./tools/build-config.sh                                 # the settings utility, for the MiSTer
 ./tests/run-all.sh                                      # must be all green
 shellcheck -S error -s bash tty2oled.sh tty2oled-meta.sh tty2oled-read.sh \
   S60tty2oled tools/*.sh tests/*.sh                     # CI's line; run-all has none
@@ -158,6 +159,10 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `tools/make-release.sh` | Release assets into `dist/`. CI runs it on a tag. |
 | `tools/tty2oledplus.sh` | The launcher, the one Scripts entry: Settings / Update / Scrape metadata / Uninstall. M. |
 | `tools/tty2oledplus_{settings,scrape,update,uninstall}.sh`, `_scrape.py` | The launcher's entries, in the install folder. M. |
+| `tools/settings-ui/config.c`, `fonts.h`, `genfont.sh`/`.cpp` | `tty2oledplus_config`: Settings drawn on the framebuffer. `fonts.h` is generated from the firmware's u8g2 fonts. M (built W). |
+| `tools/build-config.sh` | Cross-builds it (ARMv7, static; Docker if no `arm-linux-gnueabihf-gcc`) into `tools/settings-ui/build/`, gitignored; `--host` for the tests. W. |
+| `tools/tty2oledplus_preview.sh` | Shows a setting on the display while the utility changes it. M. |
+| `tools/tty2oledplus_ui.sh` | The framebuffer screens for the scripts: `ui_begin`/`ui_end`, `ui_menu`, `ui_ask`, `ui_check`, `ui_run`. Sourced by the launcher, settings, scraper menu, uninstaller. M. |
 | `tools/tty2oledplus_syscheck.py` | Would update_all update something installed? The daemon runs it in the background. M. |
 | `tools/tty2oledplus_scummvm.py` | ScummVM's icon packs -> `cache/scummvm/games.idx` + per-game 86x64 icons. Daemon, background. M. |
 | `tools/tty2oledplus_rss.py` | An RSS/Atom feed -> `/tmp/.tty2oledplus-rss.txt` (`# <url>`, then a headline a line, folded to ASCII). Daemon, background. M. |
@@ -624,6 +629,10 @@ from every value. A short `CMDICON`/`CMDWRBOOT` is dropped, not half-applied.
 
 ## Launcher, updater, uninstaller, Scripts menu
 
+- **On the framebuffer where there is one** (`fb_menu`; below is the dialog
+  path, which SSH still gets): Settings, Update, Scrape metadata, Boot screen,
+  Uninstall, each on `tty2oledplus_config`'s screens - see "The settings
+  utility on the framebuffer".
 - **One Scripts entry**, `tty2oledplus.sh` (plus the starter
   `tty2oledplus_install`, which deletes itself after success). A
   `dialog --menu` of Settings, Update, Scrape metadata, Uninstall (last).
@@ -677,6 +686,107 @@ on MiSTer's `ini_settings.sh`.
   (`load_grey_pure`: all filters, depths 1-16, colour types 0/2/3/4/6,
   interlaced refused) is byte-identical to the others (`test-png2gsc.py`):
   alpha composited per channel before luma, Pillow's rounding.
+
+## The settings utility on the framebuffer
+
+From the Scripts menu, Settings is `tty2oledplus_config` (C, `/dev/fb0`), in
+the panel's look; over SSH, or `--dialog`, or when it exits 12 (cannot draw),
+it is the dialog editor above. **One table, one writer**: the script's
+`dump_table` hands the utility every section and setting (format at the top
+of `config.c`; an enum's and a list's spec resolved, `SELECTED_CONSOLE` as
+`@METADATA_FIELDS`), the utility hands back `KEY=VALUE` for what differs from
+what is saved, `take_changes` re-checks each by type (the daemon sources the
+ini as root) and `apply_pending` writes as it always did. Exit 0 save, 10
+leave, 12 cannot draw, 13 keys ran out (tests).
+
+- **Everything the launcher shows is this binary** (0.8.6b): besides the
+  editor it has `menu`, `ask` (buttons), `check` and `run` (a command's
+  output, the panel's sweep bar while it works, its exit code), which the
+  scripts call as they call dialog, through `tty2oledplus_ui.sh`. Every script
+  keeps its dialog/plain-text path beside the framebuffer one (`ui_begin ||`),
+  which is what SSH gets and what the older tests drive.
+- **`ui_begin`**: the binary there, `/dev/fb0`, `tty` a `/dev/tty[0-9]*` (the
+  Scripts menu's console), and `probe` says it can draw. `T2OP_UI=fb|dialog`
+  overrides (`fb` also waives the scripts' `-t 0` checks: tests feed keys on
+  a pipe). It exports `T2OP_FB=1`/`T2OP_FB_BIN`, so a script started by
+  another knows the screen is taken; only the one that took it `ui_end`s.
+- **`--keep`**: the console stays `KD_GRAPHICS` and the picture stays up
+  between two screens (no blanking in `fb_open` either: only the margins
+  round the canvas are cleared, once) - or the console's text flashes between
+  them. `release` ends it. A script falling back to dialog must `ui_drop`
+  first, or dialog draws unseen.
+- **It runs from a copy, `/tmp/.tty2oledplus_config`**: Update `cp`s a new
+  binary over the installed one and Uninstall removes it while it is the
+  screen, and a running program cannot be written over (ETXTBSY).
+- **Update and Uninstall are still `exec`'d**, now as the command of a `run`
+  screen without `--keep` - the last screen, which gives the console back
+  itself. Uninstall asks first: `tty2oledplus_uninstall.sh --ask` (the two
+  questions, `keep`/`delete` on stdout, failure for Cancel, back to the menu)
+  and then `--yes [--keep-settings]` under the run screen.
+- **`run` ends when the command exits, not when its pipe closes** - the
+  updater starts the daemon, which could hold the pipe for good (tested with
+  a background `sleep`). The command's stdin is `/dev/null`. `==> ` and
+  `*** ` lines are steps and errors; blank lines dropped; `\r` restarts a
+  line; CSI escapes skipped.
+- **Off a pipe the keys are read a byte at a time**, so one screen leaves the
+  next its keys - several processes share the launcher's stdin.
+- **Boot screen is the launcher's entry** (`settings --bootscreen` ->
+  `bootimg_fb`; storing is `--bootscreen-store` under a run screen). The
+  dialog editor still lists it.
+- **`ini_dump`**: both inis in one awk each, agreeing with `ini_get` (tested
+  for every key) - a key at a time the table was ~4s on the DE10; it is 0.8s.
+- **Canvas 320x240, levels 0..15**, everything inside 16px sides / 12px top
+  and bottom (tested for every screen and popup) for a 15kHz CRT; a larger
+  framebuffer gets a whole-number scale, centred; 16 or 32 bpp from the
+  device's own offsets. Palette = level x 17 on green and blue, no red.
+- **Fonts are the firmware's**: `genfont.sh` renders tenfatguys, luBS08, 6x12
+  and 5x7 with the real U8g2 into `fonts.h` (committed). The pen's advance is
+  `drawGlyph`'s return, not `getUTF8Width` (inked width: proportional glyphs
+  ran into each other).
+- **Keys come off the terminal**, which is how MiSTer delivers a pad to a
+  script (arrows, Enter, Escape). A lone Escape is Cancel: on a tty 40ms
+  with nothing after it; on a pipe (tests) anything but `[`/`O` after it.
+  `KDSETMODE KD_GRAPHICS` keeps fbcon off the screen; restored on exit and on
+  SIGINT/TERM/HUP.
+- **Widgets by type**: bool switch; int slider (left/right by the spec's
+  third number, the step, x5 after 8 repeats and x20 after 24, on the step's
+  grid; OK = digit editor); enum selector (OK = list, which previews each
+  row and puts the old one back on Cancel); text field (OK = on-screen
+  keyboard; a real keyboard types in and its Enter is Done; `"'\`$` refused);
+  list = ordered checklist (OK ticks, left/right reorders); prefix stepper,
+  three at most.
+- **Sub-sections**: `SUBSECTIONS` in the script, `KEY=caption` a line, is a
+  divider (`G` in the table) above that setting - a row on screen that the
+  highlight steps over (`sec_rows`/`sec_row_of`/`sec_scroll` count rows, the
+  selection counts settings). Beside the records, not among them: every loop
+  over `settings_in` expects five fields. A caption for a key not offered is
+  tested for. The dialog menus have none.
+- **Dependents follow by spec, not by name**: a list with `@KEY` is
+  intersected, a prefix of `KEY` keeps its length, when `KEY` changes.
+- **The preview** (`--preview CMD`, a pipe): `focus <key>` after the
+  highlight rests 300ms, `set <key> <value>` after a value rests 120ms.
+  `tty2oledplus_preview.sh` **sources the daemon up to `# ** Main **`** and
+  overrides only `build_meta` and `core_kind` with a sample, so `senddata`,
+  `sendbuiltmeta`, `sendicon`, `sendclock`, `sendrss`... are the daemon's and
+  the wire order is the daemon's (tested). `scene_of` maps a key to console /
+  arcade / dvd / menu / transition / busy; `apply` decides between a resend
+  of one command, `refresh_meta` (a game change) and a whole scene. Lines
+  already queued are taken together, so a held slider is one `CMDCON`.
+  Demonstrations: `CMDDIM,2,...` and a wake every cycle for the dim settings,
+  `CMDFLIP,8`, a dip for the contrast fade, the description page in 2s
+  (`DEMO_DESC`), the ticker after 3s - each put back when the focus leaves.
+- **It owns the port**, so `preview_begin` stops the daemon (remembering
+  whether it ran) and `preview_end` starts it: always after a save. No
+  preview with `--no-restart`, with `/tmp/tty2oled_sleep` there, or when
+  `--check` finds no display - the top-right status says which.
+- The binary rides in the scripts archive (`MANIFEST_BIN`); `make-release.sh`
+  refuses without it or with a non-ARM one; the deploy ships it if built. CI
+  builds it in its own job. Static glibc, 460KB.
+- **Checked on the real MiSTer over SSH**: the ARM binary on `/dev/fb0`
+  (320x240x32, read back as drawn), `KD_GRAPHICS` on `/dev/tty2` and back,
+  the preview against the display (firmware answered, the daemon's debug log
+  shows the commands), launcher -> Update with the real updater. The pad
+  was confirmed by the user at the MiSTer.
 
 ## Scrape metadata and the description page
 
@@ -854,8 +964,8 @@ own `fold()`/`clip_desc()`.
 
 ## Tests
 
-`./tests/run-all.sh` - nineteen suites (metadata, wire, index, version,
-daemon, deploy, settings, ScummVM, DVD, png2gsc, scrape, syscheck,
+`./tests/run-all.sh` - twenty suites (metadata, wire, index, version,
+daemon, deploy, settings, settings utility, ScummVM, DVD, png2gsc, scrape, syscheck,
 history2gamelist, DVD tool, feed, installer, flash, firmware parser, firmware layout). CI runs all with inotify-tools and
 ImageMagick. No shellcheck in `run-all.sh`.
 

@@ -33,13 +33,23 @@ MANIFEST_FILES="tty2oled.sh tty2oled-meta.sh tty2oled-system.ini
 # scraper's fold() and database helpers.
 # tty2oledplus_rss.py reads the feed whose headlines run under the menu's
 # picture, in the background too, with the scraper's fold() again.
+# tty2oledplus_preview.sh shows a setting on the display while the settings
+# utility changes it; it sources the daemon for the functions that send.
 # tty2oled-port.sh is sourced by the daemon, S60tty2oled and the tools that
 # talk to the display: which port it is on, and our own node to write through.
 MANIFEST_TOOLS="tools/tty2oled-diag.sh tools/flash-mister.sh tools/fw-segments.py
                 tools/tty2oled-capture.sh tools/tty2oled-bootimg.sh tools/tty2oled-boothook.sh
                 tools/png2gsc.py tools/tty2oledplus_scrape.py tools/tty2oledplus_syscheck.py
                 tools/tty2oledplus_scummvm.py tools/tty2oled-port.sh tools/tty2oledplus_dvd.py
-                tools/tty2oledplus_rss.py"
+                tools/tty2oledplus_rss.py tools/tty2oledplus_preview.sh
+                tools/tty2oledplus_ui.sh"
+
+# The one thing in an install that is compiled: the settings utility that
+# draws on the framebuffer, which tty2oledplus_settings.sh starts from the
+# Scripts menu. tools/build-config.sh builds it (gitignored, as the firmware
+# is). A release is not packed without it; a deploy from a working copy that
+# has not built it goes without, and Settings is then dialog's menus.
+MANIFEST_BIN="tools/settings-ui/build/tty2oledplus_config"
 
 # What the launcher opens: the updater, the settings editor, the
 # uninstaller and the scraper's menu. They live in the install folder, not in the Scripts menu -

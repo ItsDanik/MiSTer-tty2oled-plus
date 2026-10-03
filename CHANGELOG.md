@@ -4,6 +4,44 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.8.6b — 2026-10-03
+
+- **Everything in the Scripts menu's tty2oledplus is now drawn on the TV in
+  the display's own look**: cyan on black, sixteen levels, in the fonts the
+  panel itself uses. The menu, Settings, Update, Scrape metadata, Boot screen
+  and Uninstall are one program worked one way - d-pad to move, left and
+  right to change, OK and Cancel; a keyboard's arrows, Enter and Escape do the
+  same. It is drawn at 320x240 with nothing in the margins a 15kHz CRT hides,
+  and scaled up whole on a bigger screen.
+- **Settings shows each change on the display as you make it.** Highlight a
+  setting and the panel shows the screen it belongs to - a sample console
+  game for the fields, an arcade card, a film, the menu for the clock and the
+  news ticker, two pictures taking turns for a transition, the update
+  screens - and follows every change. What really takes minutes is shown
+  sooner: dimming after two seconds, the side swap every eight. The display
+  goes back to what it was doing when you leave.
+- **Each setting has the control that suits it**: a switch for on and off, a
+  slider for a number (OK for the exact value, a digit at a time), a selector
+  for a choice (OK for the whole list, which tries each one on the display
+  as you move), a text field with an on-screen keyboard - a real keyboard
+  types straight in - and, for the field lists, a checklist you can also put
+  in order with left and right. The longer sections are divided: Super
+  Attract Mode, date and time, news ticker and so on, each under its own
+  rule.
+- **Update and Uninstall show what they are doing** as it happens, a step a
+  line, under the sweep the display shows while it is busy, and wait for OK
+  when they have finished; Up and Down read back. Scrape metadata's systems
+  are a checklist (left for none, right for all), and its summary follows
+  the import on the same screen.
+- **Boot screen is in the menu itself**, beside Settings, rather than inside
+  it.
+- Over SSH there is no screen to draw on, and everything is as it was:
+  dialog's menus and plain text, offering the same settings. `settings
+  --dialog` asks for those anywhere.
+- The first update *to* this version still looks like the old one - an update
+  is always run by the version being replaced.
+- No change to the firmware beyond its version number.
+
 ## 0.8.5b — 2026-10-03
 
 - **tty2oled+ can be installed beside the original tty2oled.** Until now the

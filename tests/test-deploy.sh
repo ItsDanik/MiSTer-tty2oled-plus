@@ -169,8 +169,14 @@ REPO="${TMP}/repo"
 mkdir -p "${REPO}/tools"
 LIST="$("${ROOT}/tools/deploy-mister.sh" --dry-run 2>/dev/null | awk '$1 == "copy" {print $2}')"
 for f in ${LIST} tools/deploy-mister.sh tools/manifest.sh coretypes.ini tty2oled-user.ini; do
+  mkdir -p "$(dirname "${REPO}/${f}")"
   cp "${ROOT}/${f}" "${REPO}/${f}"
 done
+# The settings utility is compiled and may not be built in this working copy
+# (CI's test job has no ARM compiler); the deploy is tested with one there.
+. "${ROOT}/tools/manifest.sh"
+mkdir -p "$(dirname "${REPO}/${MANIFEST_BIN}")"
+[ -s "${REPO}/${MANIFEST_BIN}" ] || echo "stand-in" > "${REPO}/${MANIFEST_BIN}"
 
 FAKEBIN="${TMP}/bin"; mkdir -p "${FAKEBIN}"
 LOG="${TMP}/calls.log"
@@ -290,10 +296,12 @@ UNSENT=""
 # The launcher goes to both places, so it is checked separately below rather
 # than against the install-folder list.
 for f in ${LIST}; do
-  case "${f}" in */tty2oledplus.sh) continue ;; esac
+  case "${f}" in */tty2oledplus.sh|*/tty2oledplus_config) continue ;; esac
   case "${SENT}" in *" ${f}"*) ;; *) UNSENT="${UNSENT} ${f}" ;; esac
 done
 ok "every script and tool is sent" "${UNSENT}" ""
+ok "and the settings utility, into the install folder" \
+   "$(grep -c "^SCP.* ${MANIFEST_BIN} root@fake-mister:/media/fat/tty2oledplus/\$" "${LOG}")" "1"
 # Both places, and this pair of assertions used to say the opposite - that the
 # menu scripts go to Scripts and NOT into the install folder. That was wrong,
 # and the test pinned it: place_menu_scripts in S60tty2oled copies them from

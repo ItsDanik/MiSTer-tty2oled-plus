@@ -8,8 +8,19 @@
 # picked from menus instead of typed into an ini over SSH, and the daemon is
 # restarted so they take effect straight away.
 #
-#   --no-restart    save, but leave the daemon alone
+#   --no-restart    save, but leave the daemon alone (and the display: no
+#                   preview on it)
+#   --dialog        the dialog menus, even where the framebuffer could be used
+#   --bootscreen    only the boot screen tool, which the launcher lists itself
 #   --install DIR   somewhere other than /media/fat/tty2oledplus
+#
+# Two front ends, one table. From the Scripts menu it is tty2oledplus_config,
+# drawn on the framebuffer in the display's own look - a switch for a yes/no,
+# a slider for a number - with the display itself showing each change as it
+# is made (tty2oledplus_preview.sh). Over SSH, where there is no screen to
+# draw on, or with --dialog, it is dialog's menus. Both offer the settings
+# listed below and neither writes the ini: the utility hands back what was
+# changed and this saves it, as it saves what the menus changed.
 #
 # Why it edits only tty2oled-user.ini: that file is the user's and is never
 # overwritten by an update, while tty2oled-system.ini ships with the release
@@ -33,6 +44,12 @@ INIT="${T2OP_INIT:-${INSTALL}/S60tty2oled}"
 SYSTEM_INI="${INSTALL}/tty2oled-system.ini"
 USER_INI="${INSTALL}/tty2oled-user.ini"
 
+# The framebuffer screens (tty2oledplus_ui.sh). Without the file - an install
+# part way through an update - there are none, and everything is dialog.
+# shellcheck disable=SC1090,SC1091
+[ -r "${T2OP_UI_LIB:-${INSTALL}/tty2oledplus_ui.sh}" ] && . "${T2OP_UI_LIB:-${INSTALL}/tty2oledplus_ui.sh}"
+declare -F ui_begin >/dev/null || { ui_begin() { return 1; }; ui_fb() { return 1; }; ui_end() { :; }; ui_drop() { :; }; }
+
 DIALOG_HEIGHT="${T2OP_DIALOG_HEIGHT:-22}"
 
 say()  { printf '\n==> %s\n' "$1"; }
@@ -46,7 +63,9 @@ die()  { printf '\n*** %s\n' "$1" >&2; exit 1; }
 #
 #   bool   yes/no
 #   enum   SPEC is value=label pairs, separated by ';'
-#   int    SPEC is "min max", inclusive
+#   int    SPEC is "min max", inclusive, and optionally the step a slider
+#          moves by (the framebuffer utility's; any value in between can
+#          still be typed)
 #   text   free text; commas and quotes are stripped on the way in
 #   list   SPEC is the vocabulary, in the order the checklist offers it
 #   prefix SPEC is the key whose value it must be a leading run of
@@ -75,6 +94,48 @@ cat_label() {
     transition) printf 'Changing picture' ;;
     updates)    printf 'While updates run' ;;
     advanced)   printf 'Connection and troubleshooting' ;;
+  esac
+}
+
+# Sub-sections, for the framebuffer utility: KEY=caption, a divider with that
+# caption above the setting named, which is the first of its group. A section
+# with none is short enough to need none. The dialog menus have no dividers,
+# which is why this is beside the records rather than among them.
+SUBSECTIONS='SHOW_METADATA=Game details
+SAM_HEADER=Super Attract Mode
+BAND_CLOCK=Date and time
+RSS_FEED=News ticker
+core_bootscreen_time=Pages and timing
+ROTATE=Panel and artwork
+HSCROLL_SPEED=Scrolling
+CONTRAST=Brightness
+DIM_AFTER=Dimming
+FLIP_MINUTES=Burn-in
+TRANSITION=Effect
+TRANSITION_FADE_MS=Fade timings
+BOOTSCREEN_AS_MENU=Menu picture
+UPDATE_ALL_SCREEN=While update_all runs
+UPDATE_DONE_TEXT=When an update ends
+SELF_UPDATE_SCREEN=While tty2oled+ updates
+UPDATE_CHECK_TTY2OLED=Looking for updates
+UPDATE_NOTE_TEXT=The notice under the menu
+UPDATE_ALL_POLL=Timing
+TTYDEV=Connection
+debug=Troubleshooting
+GAME_ROOTS=Games
+SLEEPMODEDELAY=Sharing the display'
+
+# A line about each, for the framebuffer utility's main screen.
+cat_help() {
+  case "$1" in
+    display)    printf 'Game details on or off, the clock and news ticker under the menu, Super Attract Mode, paging and scroll speeds.' ;;
+    console)    printf 'Which details a console game shows beside its icon, their order, which of them stay put, and the description page.' ;;
+    arcade)     printf 'The fields on the arcade info card: the short ones that pair up, the full-width ones, and the row repeated on every page.' ;;
+    dvd)        printf 'A film on the DVD core: its details, its chapter and time, and whether to look it up.' ;;
+    panel)      printf 'How bright the panel is, how it fades, when it dims itself and how often the layout swaps sides.' ;;
+    transition) printf 'How one picture replaces the last: the effect and its timings.' ;;
+    updates)    printf 'What the display says while update_all or its own updater runs, and whether it looks for updates.' ;;
+    advanced)   printf 'The serial port, the debug log, and timings that rarely need touching.' ;;
   esac
 }
 
@@ -107,12 +168,12 @@ BAND_CLOCK_LEFT|text|24|Date and time: left side|A strftime format: %d day, %m m
 BAND_CLOCK_RIGHT|text|24|Date and time: right side|The same for the right side: %H:%M is the time, %I:%M %p on a 12-hour clock.
 RSS_FEED|bool||News ticker under the menu|The headlines of an RSS feed scroll through the same row, taking turns with the date and time - while no update is waiting.
 RSS_URL|text|200|News ticker: the feed|The address of an RSS or Atom feed. The default is MisterZine's list of new and updated cores and arcade games.
-RSS_CLOCK_SECS|int|0 3600|News ticker: seconds of date and time|How long the date and time stay up between two runs of headlines. 0 runs the headlines alone.
-RSS_SCROLL_SECS|int|1 3600|News ticker: seconds of headlines|How long the headlines scroll before the date and time come back. The headline on screen then is let finish first.
+RSS_CLOCK_SECS|int|0 3600 5|News ticker: seconds of date and time|How long the date and time stay up between two runs of headlines. 0 runs the headlines alone.
+RSS_SCROLL_SECS|int|1 3600 5|News ticker: seconds of headlines|How long the headlines scroll before the date and time come back. The headline on screen then is let finish first.
 RSS_SPEED|int|5 200|News ticker: speed (pixels/s)|How fast the headlines move. Bigger is faster.
-RSS_MINUTES|int|5 1440|News ticker: minutes between reads|How often the feed is read again for new headlines.
+RSS_MINUTES|int|5 1440 5|News ticker: minutes between reads|How often the feed is read again for new headlines.
 RSS_ITEMS|int|1 48|News ticker: headlines kept|How many of the feed's headlines are shown, newest first.
-core_bootscreen_time|int|0 10000|Core boot screen (ms)|How long a console core's own artwork is held before the game's details replace it, when the core and the game are loaded together. 0 goes straight to the details.
+core_bootscreen_time|int|0 10000 100|Core boot screen (ms)|How long a console core's own artwork is held before the game's details replace it, when the core and the game are loaded together. 0 goes straight to the details.
 METADATA_INTERVAL|int|0 600|Seconds per page|How long each page of game details stays up, console and arcade. Arcade alternates the artwork with the info card's pages. A description page, console or arcade, stays until its text has scrolled through. 0 never turns a page.
 ROTATE|bool||Upside down|Turn the whole display 180 degrees, for a panel mounted the other way up.
 PRIORITIZE_USER_BANNERS|bool||Prefer your own artwork|Look in pics/user before the shipped banners and arcade logos, so a picture you put there replaces the shipped one. Off searches the shipped artwork first.
@@ -140,18 +201,18 @@ EOS
     ;;
     panel) cat <<'EOS'
 CONTRAST|int|0 255|Brightness|How bright the panel is, 0 to 255.
-CONTRAST_FADE_MS|int|0 4000|Brightness fade (ms)|How long any change in brightness takes. 0 jumps.
-DIM_AFTER|int|0 3600|Dim after (seconds)|Seconds with nothing new on screen before the panel dims itself. 0 never dims.
+CONTRAST_FADE_MS|int|0 4000 50|Brightness fade (ms)|How long any change in brightness takes. 0 jumps.
+DIM_AFTER|int|0 3600 5|Dim after (seconds)|Seconds with nothing new on screen before the panel dims itself. 0 never dims.
 DIM_CONTRAST|int|0 255|Dimmed brightness|What it dims to, on the same scale as the brightness above.
-DIM_FADE_MS|int|0 10000|Dimming fade (ms)|How long going dim takes. Slow is the point: nobody should notice it happen.
+DIM_FADE_MS|int|0 10000 100|Dimming fade (ms)|How long going dim takes. Slow is the point: nobody should notice it happen.
 DIM_WAKE|int|-1 255|Waking brightness|What it comes back to. -1 means the brightness set above.
 FLIP_MINUTES|int|0 1440|Swap sides every (minutes)|How often the console layout swaps sides, so no part of the panel stays lit. 0 never swaps.
 EOS
     ;;
     transition) cat <<'EOS'
 TRANSITION|enum|TRANSITION_SPEC|Effect|How one picture replaces the last, on a core change and between the pages of the arcade card.
-TRANSITION_FADE_MS|int|0 4000|Fade time (ms)|With the Fade effect: how long each fade takes, out and in.
-TRANSITION_BLANK_MS|int|0 4000|Black between (ms)|With the Fade effect: how long the panel stays black in between.
+TRANSITION_FADE_MS|int|0 4000 50|Fade time (ms)|With the Fade effect: how long each fade takes, out and in.
+TRANSITION_BLANK_MS|int|0 4000 50|Black between (ms)|With the Fade effect: how long the panel stays black in between.
 BOOTSCREEN_AS_MENU|bool||Boot screen is the menu picture|The boot screen stays up as the MiSTer menu's picture. Off shows the artwork pack's menu picture instead.
 EOS
     ;;
@@ -166,7 +227,7 @@ SELF_UPDATE_SCREEN|bool||Say so while tty2oled+ updates|The same, for this displ
 SELF_UPDATE_TEXT|text||What that says|The message shown while an Update runs.
 UPDATE_CHECK_TTY2OLED|bool||Look for a new tty2oled+|Ask GitHub whether a newer tty2oled+ is out. When one is, the menu says so until Update has installed it.
 UPDATE_CHECK_SYSTEM|bool||Look for system updates|Work out whether update_all would update something you have - a new build of a core, a changed file, a new Linux. When it would, the menu says so until update_all has run.
-UPDATE_CHECK_MINUTES|int|0 1440|How often to look (minutes)|Both are looked for at boot and every this many minutes after. 0 never looks.
+UPDATE_CHECK_MINUTES|int|0 1440 5|How often to look (minutes)|Both are looked for at boot and every this many minutes after. 0 never looks.
 UPDATE_NOTE_TEXT|text|51|When tty2oled+ has one|Shown small and grey under the picture of the menu, MisterZine, Degauss and Zaparoo while a newer tty2oled+ is waiting.
 UPDATE_NOTE_SYSTEM_TEXT|text|51|When the system has one|The same, while update_all has something to update.
 UPDATE_NOTE_BOTH_TEXT|text|51|When both have|The same, when both are waiting.
@@ -470,7 +531,8 @@ edit_enum() {  # edit_enum <record>
 edit_int() {  # edit_int <record>
   local key label help spec min max cur new
   key="$(field "$1" 1)"; label="$(field "$1" 4)"; help="$(field "$1" 5)"
-  spec="$(field "$1" 3)"; min="${spec%% *}"; max="${spec##* }"
+  spec="$(field "$1" 3)"
+  read -r min max _ <<< "${spec}"
   cur="$(value_of "${key}")"
   while true; do
     run_dialog --clear --title "${label}" \
@@ -694,6 +756,57 @@ ${out}" 14 68
   done
 }
 
+# The same on the framebuffer, for the launcher's Boot screen.
+bootimg_store() {  # convert pics/boot.png and store it; talks as the tools do
+  local gsc="${INSTALL}/pics/boot.gsc" out rc
+  say "Converting ${BOOTPNG}"
+  out="$(bootimg_convert "${gsc}")" || { rm -f "${gsc}"; printf '\n*** %s\n' "${out}"; return 1; }
+  say "Storing it on the display"
+  # The transfer stops the daemon for the port and starts it again.
+  "${INSTALL}/tty2oled-bootimg.sh" set "${gsc}" 2>&1; rc=$?
+  rm -f "${gsc}"
+  [ "${rc}" -eq 0 ] || return "${rc}"
+  say "Stored"
+  note "Power the display off and on to see it. pics/boot.png is still"
+  note "there, so you can send it again after a reflash."
+}
+
+bootimg_fb() {
+  local out stored have
+  while true; do
+    stored="unknown"
+    out="$("${INSTALL}/tty2oled-bootimg.sh" status 2>/dev/null)"
+    case "${out}" in
+      *"custom"*) stored="an image of your own" ;;
+      *"legacy"*) stored="an older image, shown cropped" ;;
+      *"none"*|*"built-in"*) stored="the built-in tty2oled+ logo" ;;
+    esac
+    have="none yet - put a PNG at pics/boot.png"
+    [ -e "${BOOTPNG}" ] && have="pics/boot.png"
+    ui_menu "Boot screen" "" install \
+      install "Use my pics/boot.png" \
+        "Showing now: ${stored}. Your picture: ${have}. Converts it and stores it on the display - 256x54, 16 greys; anything else is scaled to fit and centred on black." \
+      clear "Back to the built-in logo" \
+        "Showing now: ${stored}. Forgets the stored image; your pics/boot.png is left where it is." \
+      || return 0
+    case "${UI_OUT}" in
+      install)
+        if [ ! -e "${BOOTPNG}" ]; then
+          ui_msg "Boot screen" "There is no ${BOOTPNG} to use.
+
+Put a PNG there - 256x54, drawn in up to 16 shades of grey - and pick this again. Anything else is scaled to fit and centred."
+          continue
+        fi
+        ui_run "Boot screen" bash "${INSTALL}/tty2oledplus_settings.sh" --install "${INSTALL}" --bootscreen-store ;;
+      clear)
+        ui_yesno "Boot screen" "Forget the image stored on the display and go back to the built-in tty2oled+ logo?
+
+Your pics/boot.png is left where it is." "No" "Yes" || continue
+        ui_run "Boot screen" "${INSTALL}/tty2oled-bootimg.sh" clear ;;
+    esac
+  done
+}
+
 main_menu() {
   local items=() c
   while true; do
@@ -795,15 +908,178 @@ next boot." 11 60
 }
 
 # ---------------------------------------------------------------------------
+# The framebuffer utility
+# ---------------------------------------------------------------------------
+# tty2oledplus_config draws and reads the pad; everything it knows comes from
+# here as a table, and everything the user changed comes back as KEY=VALUE.
+PREVIEW_TOOL="${T2OP_PREVIEW_TOOL:-${INSTALL}/tty2oledplus_preview.sh}"
+SLEEPFILE="${T2OP_SLEEPFILE:-/tmp/tty2oled_sleep}"
+DAEMONLOG="${T2OP_DAEMONLOG:-/tmp/tty2oled-daemon.log}"
+
+# Every assignment in an ini as "key<TAB>value", the last one winning - what
+# ini_get finds, for all keys in one process: asked a key at a time, the table
+# below was three processes a setting and four seconds on the DE10.
+ini_dump() {  # ini_dump <file>
+  [ -r "$1" ] || return 0
+  awk '
+    /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=/ {
+      k = $0; sub(/^[[:space:]]*/, "", k)
+      v = k; sub(/=.*/, "", k); sub(/^[^=]*=/, "", v)
+      if (v ~ /^".*"/)        { v = substr(v, 2); sub(/".*/, "", v) }
+      else if (v ~ /^\047.*\047/) { v = substr(v, 2); sub(/\047.*/, "", v) }
+      else                    { sub(/#.*/, "", v); sub(/[[:space:]]+$/, "", v) }
+      val[k] = v
+    }
+    END { for (k in val) printf "%s\t%s\n", k, val[k] }
+  ' "$1"
+}
+
+# The table tty2oledplus_config is given: the sections, the settings in them,
+# and for each its default, what is saved and what is changed but not saved.
+# Its format is at the top of tools/settings-ui/config.c. A spec that names a
+# variable here is sent as what the variable holds.
+declare -A T_TYPE=() T_SPEC=()
+dump_table() {
+  local c key type spec label help line v
+  local -A def=() usr=() sub=()
+  while IFS='=' read -r key v; do [ -n "${key}" ] && sub["${key}"]="${v}"; done <<< "${SUBSECTIONS}"
+  while IFS=$'\t' read -r key v; do def["${key}"]="${v}"; done < <(ini_dump "${SYSTEM_INI}")
+  while IFS=$'\t' read -r key v; do usr["${key}"]="${v}"; done < <(ini_dump "${USER_INI}")
+  T_TYPE=(); T_SPEC=()
+  for c in ${CATEGORIES}; do
+    printf 'C\t%s\t%s\t%s\n' "${c}" "$(cat_label "${c}")" "$(cat_help "${c}")"
+    while IFS='|' read -r key type spec label help; do
+      case "${type}" in
+        enum) spec="${!spec}" ;;
+        list) if [ "${spec}" = "SELECTED_CONSOLE" ]; then spec="@METADATA_FIELDS"; else spec="${!spec}"; fi ;;
+      esac
+      T_TYPE["${key}"]="${type}"; T_SPEC["${key}"]="${spec}"
+      [ -n "${sub[${key}]:-}" ] && printf 'G\t%s\n' "${sub[${key}]}"
+      printf 'S\t%s\t%s\t%s\t%s\t%s\n' "${key}" "${type}" "${spec}" "${label}" "${help}"
+      printf 'D\t%s\t%s\n' "${key}" "${def[${key}]:-}"
+      v="${usr[${key}]:-}"; [ -n "${v}" ] || v="${def[${key}]:-}"
+      printf 'V\t%s\t%s\n' "${key}" "${v//$'\t'/ }"
+      if [ -n "${PENDING[${key}]+set}" ]; then
+        line="${PENDING[${key}]}"
+        printf 'P\t%s\t%s\n' "${key}" "${line//$'\t'/ }"
+      fi
+    done < <(settings_in "${c}")
+  done
+}
+
+# What came back, into PENDING - and through the same rules the menus keep:
+# the daemon sources the ini as root, so a value is what its type allows or
+# it is not taken.
+take_changes() {  # take_changes <file>
+  local key value type spec min max pair ok w out
+  [ -r "$1" ] || return 0
+  while IFS= read -r line; do
+    key="${line%%=*}"; value="${line#*=}"
+    type="${T_TYPE[${key}]:-}"; spec="${T_SPEC[${key}]:-}"
+    case "${type}" in
+      bool) case "${value}" in yes|no) ;; *) continue ;; esac ;;
+      int)  read -r min max _ <<< "${spec}"
+            value="$(clamp_int "${value}" "${min}" "${max}")" || continue ;;
+      enum) ok="no"
+            local IFS=';'
+            for pair in ${spec}; do [ "${pair%%=*}" = "${value}" ] && ok="yes"; done
+            unset IFS
+            [ "${ok}" = "yes" ] || continue ;;
+      text) value="$(sanitize_text "${value}" "${spec:-32}")" ;;
+      list|prefix)
+            out=""
+            for w in ${value}; do
+              case "${w}" in *[!A-Za-z0-9_]*) continue ;; esac
+              out="${out}${out:+ }${w}"
+            done
+            value="${out}" ;;
+      *)    continue ;;
+    esac
+    PENDING["${key}"]="${value}"
+  done < "$1"
+  # What depends on another setting, as set_value keeps it.
+  if [ -n "${PENDING[METADATA_PINNED]+set}" ]; then
+    PENDING[METADATA_PINNED]="$(list_intersect "${PENDING[METADATA_PINNED]}" "$(value_of METADATA_FIELDS)")"
+  fi
+  if [ -n "${PENDING[ARCADE_PINNED]+set}" ]; then
+    PENDING[ARCADE_PINNED]="$(list_prefix "$(value_of ARCADE_FIELDS)" "$(printf '%s' "${PENDING[ARCADE_PINNED]}" | wc -w)")"
+  fi
+}
+
+# The display follows along while the utility is open, which takes its port:
+# one serial port, one writer. So the daemon is stopped for as long as the
+# utility runs and started again after - with what was saved, if anything
+# was. No preview with --no-restart (the daemon is to be left alone), while
+# another program holds the display (MiSTer SAM), or with no display there.
+PREVIEW_CMD=""; PREVIEW_STATUS=""; DAEMON_WAS="no"
+preview_begin() {
+  PREVIEW_CMD=""; PREVIEW_STATUS="NO PREVIEW"; DAEMON_WAS="no"
+  [ "${RESTART}" = "yes" ] || return 0
+  [ -r "${PREVIEW_TOOL}" ] || return 0
+  if [ -e "${SLEEPFILE}" ]; then PREVIEW_STATUS="DISPLAY IN USE"; return 0; fi
+  if ! bash "${PREVIEW_TOOL}" --install "${INSTALL}" --check >/dev/null 2>&1; then
+    PREVIEW_STATUS="NO DISPLAY"; return 0
+  fi
+  if [ -x "${INIT}" ]; then
+    "${INIT}" status >/dev/null 2>&1 && DAEMON_WAS="yes"
+    "${INIT}" stop >/dev/null 2>&1
+  fi
+  PREVIEW_CMD="exec bash '${PREVIEW_TOOL}' --install '${INSTALL}'"
+  PREVIEW_STATUS="OLED LIVE"
+}
+preview_end() {  # preview_end [saved]
+  [ -n "${PREVIEW_CMD}" ] || { [ "${1:-}" = "saved" ] && [ "${RESTART}" = "yes" ] && restart_daemon; return 0; }
+  PREVIEW_CMD=""
+  [ -x "${INIT}" ] || return 0
+  # Saved, it starts whether or not it was running: Save has always meant
+  # "and show me". Left without saving, it goes back to how it was found.
+  if [ "${DAEMON_WAS}" = "yes" ] || [ "${1:-}" = "saved" ]; then
+    "${INIT}" start </dev/null >>"${DAEMONLOG}" 2>&1
+  fi
+}
+
+# Runs the utility until it is left. 1 when it could not draw, for the menus
+# to take over - with whatever had been changed by then still pending.
+fb_ui() {
+  local table out rc
+  table="$(mktemp /tmp/tty2oledplus-table.XXXXXX)" || return 1
+  out="$(mktemp /tmp/tty2oledplus-out.XXXXXX)" || { rm -f "${table}"; return 1; }
+  while true; do
+    dump_table > "${table}"
+    : > "${out}"
+    preview_begin
+    ui_screen settings --table "${table}" --out "${out}" \
+      --status "${PREVIEW_STATUS}" ${PREVIEW_CMD:+--preview "${PREVIEW_CMD}"}
+    rc=$?
+    take_changes "${out}"
+    case "${rc}" in
+      0)  if apply_pending; then preview_end saved; else preview_end; rc=1; fi
+          rm -f "${table}" "${out}"
+          [ "${rc}" -eq 0 ] || die "Writing ${USER_INI} failed. Nothing was changed."
+          return 0 ;;
+      10|13) preview_end; rm -f "${table}" "${out}"; return 0 ;;
+      *)  preview_end; rm -f "${table}" "${out}"; return 1 ;;
+    esac
+  done
+}
+
+# ---------------------------------------------------------------------------
 main() {
   RESTART="yes"
+  UI="${T2OP_UI:-auto}"
+  ONLY=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --no-restart) RESTART="no"; shift ;;
+      --dialog)     UI="dialog"; T2OP_UI="dialog"; shift ;;
+      --bootscreen) ONLY="bootscreen"; shift ;;
+      --bootscreen-store) bootimg_store; exit $? ;;
       --install)    INSTALL="$2"; SYSTEM_INI="${INSTALL}/tty2oled-system.ini"
                     USER_INI="${INSTALL}/tty2oled-user.ini"
-                    INIT="${INSTALL}/S60tty2oled"; shift 2 ;;
-      -h|--help)    sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+                    INIT="${INSTALL}/S60tty2oled"
+                    UI_BIN_SRC="${T2OP_CONFIG_BIN:-${INSTALL}/tty2oledplus_config}"
+                    PREVIEW_TOOL="${INSTALL}/tty2oledplus_preview.sh"; shift 2 ;;
+      -h|--help)    sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
       *)            die "Unknown option '$1'." ;;
     esac
   done
@@ -819,7 +1095,7 @@ main() {
 
   # Not run from a terminal - the Scripts menu with fb_terminal=0 pipes our
   # output to the OSD - and dialog has nothing to draw on.
-  if [ ! -t 0 ] || [ ! -t 1 ]; then
+  if [ "${T2OP_UI:-}" != "fb" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
     say "${REPO_NAME} settings"
     note "This needs a terminal to draw its menus in."
     note "Press F9 on the MiSTer for the console and run it there, or use SSH:"
@@ -828,7 +1104,16 @@ main() {
     exit 2
   fi
 
+  # The framebuffer where there is one; where it cannot draw after all, the
+  # console is given back first, or the menus would be drawn unseen.
+  if ui_begin; then
+    if [ "${ONLY}" = "bootscreen" ]; then bootimg_fb; ui_end; exit 0; fi
+    if fb_ui; then ui_end; exit 0; fi
+    ui_drop
+  fi
+
   setup_dialog
+  if [ "${ONLY}" = "bootscreen" ]; then bootimg_menu; clear; reset_tty; exit 0; fi
   main_menu
   clear
   reset_tty
