@@ -205,6 +205,17 @@ static void scene_console(const char *name, const char *cmd, const char *icon,
   save(name);
 }
 
+// A film on the DVD core: the split layout with the disc's icon, and its
+// place under both columns - CMDMEDIA as the daemon sends it.
+static void scene_dvd(const char *name, const char *cmd, const char *media) {
+  meta_reset();
+  meta_parse(cmd);
+  meta_parseMedia(media);
+  metaHasIcon = gsc_load((repoRoot + "/pics/icon/dvd.gsc").c_str(), iconBin, ICON_BYTES);
+  meta_renderConsole();
+  save(name);
+}
+
 // The description page, scrolled a little way in: what a game Scrape metadata
 // found a description for shows after its fields.
 static void scene_description(const char *name, const char *cmd, const char *icon,
@@ -382,6 +393,16 @@ int main(int argc, char **argv) {
                     "Robotnik, who has imprisoned the animals of South Island in "
                     "robots. Collect rings, find the Chaos Emeralds and rescue "
                     "your friends.", 3);
+
+  // A DVD playing, paused, and in its menu: what the daemon sent for Queen's
+  // concert on the MiSTer, Wikipedia's details and the disc's own chapters.
+  const char *queen =
+      "CMDMETA,2,12,0,0,Queen on Fire - Live at the Bowl"
+      "|Year=2004|Studio=EMI/Parlophone|Director=Gavin Taylor|Artist=Queen"
+      "|Genre=Rock|Runtime=1h 43m";
+  scene_dvd("dvd-playing", queen, "CMDMEDIA,1,2326,6219,9,25");
+  scene_dvd("dvd-paused",  queen, "CMDMEDIA,2,2326,6219,9,25");
+  scene_dvd("dvd-menu",    queen, "CMDMEDIA,4,0,0,0,0");
 
   // Arcade card, as the shipped lists lay it out for a set an imported
   // gamelist describes: the grid's first page, the wide fields under a repeat

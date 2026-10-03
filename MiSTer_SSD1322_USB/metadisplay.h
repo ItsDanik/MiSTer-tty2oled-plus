@@ -49,6 +49,9 @@
   CMDSCROLL,<h>,<v>  marquee and description speeds, pixels per second
   CMDHEAD,<text>  the header's caption, the rest of the line; empty is
                   "Now playing". Kept until changed
+  CMDMEDIA,<state>,<seconds in>,<seconds long>,<chapter>,<chapters>
+                  a film's transport band under the console layout - see
+                  mediaband.h
   CMDWRBOOT       followed by 6912 raw bytes - boot image, persisted to flash
   CMDCLRBOOT      forget the stored boot image, revert to the built-in logo
   CMDMETAOFF      leave metadata mode, back to plain picture display
@@ -312,6 +315,12 @@ unsigned long metaTimerAt     = 0;      // millis() when it was given
 long          metaTimerShown  = -2;     // what the header last drew; -2 nothing,
                                         // -3/-4 NEXT lit/dark (meta_timerState)
 
+// The transport band under the console layout, a disc's place in its film
+// (CMDMEDIA, mediaband.h). Its state is here because the paging below has to
+// know the rows it takes: the chapter row above the fields, and the band.
+#define MEDIA_ROWS      2
+int           mediaState      = 0;      // MEDIA_*; 0: no band
+
 // Also set by a description arriving for a layout already on the panel: its
 // page adds a pip, so the same picture has to be drawn again.
 
@@ -430,11 +439,13 @@ void meta_activity(void);
 // ---------------------------------------------------------------------------
 #ifdef HAS_METADISPLAY
 void pf_cancel(void);                // pagefade.h, included further down
+void media_reset(void);              // mediaband.h, likewise
 #endif
 
 void meta_reset(void) {
 #ifdef HAS_METADISPLAY
   pf_cancel();                       // no page left to fade to
+  media_reset();                     // a disc's place is its layout's
 #endif
   metaKind = MKIND_OFF;
   metaTitle[0] = 0;
@@ -612,8 +623,15 @@ static int meta_iconX(void) { return metaFlipped ? 0 : ICON_X; }
 // about how many pages there are - they did once, over the marquee window,
 // and the result was a title that scrolled without ever overflowing.
 // ---------------------------------------------------------------------------
+static bool meta_mediaOn(void) { return mediaState != 0 && metaKind == MKIND_CONSOLE; }
+
+// The rows the fields have: all of them, or what the transport band leaves.
+static int meta_conRows(void) {
+  return CON_FIELD_ROWS - (meta_mediaOn() ? MEDIA_ROWS : 0);
+}
+
 static int meta_pinnedRows(void) {
-  int rows = CON_FIELD_ROWS;
+  int rows = meta_conRows();
   int p = metaPinned;
   if (p < 0) p = 0;
   // Never pin the whole panel: something has to be left to page with.
@@ -623,7 +641,7 @@ static int meta_pinnedRows(void) {
 }
 
 static int meta_pageSlots(void) {
-  int slots = CON_FIELD_ROWS - meta_pinnedRows();
+  int slots = meta_conRows() - meta_pinnedRows();
   return slots < 1 ? 1 : slots;
 }
 
@@ -795,6 +813,8 @@ static void meta_drawMarquee(const char *s, int x, int y, int win, long scroll) 
   if (off > wrapAt - win) meta_drawClipped(s, x, y, win, off - (int)wrapAt);
 }
 
+#include "mediaband.h"         // a disc's place, under the console layout
+
 // ---------------------------------------------------------------------------
 // The description's lines.
 //
@@ -909,6 +929,11 @@ static int meta_valueOffsetFor(int colW) {
   int widest = 0;
   for (int i = 0; i < metaFieldCount; i++) {
     int w = meta_textWidth(metaFields[i].label);
+    if (w > widest) widest = w;
+  }
+  // The band's chapter row is a field row too, and shares the column.
+  if (meta_mediaOn()) {
+    int w = meta_textWidth(MEDIA_LABEL);
     if (w > widest) widest = w;
   }
   int off = widest + 5;
@@ -1251,8 +1276,10 @@ static void meta_blitIcon(void) {
 
   const int rowBytes = DispWidth / 2;          // 128
   const int xByte    = meta_iconX() / 2;       // 85, or 0 when flipped
+  // Short of the transport band, which runs under both columns.
+  const int rows     = meta_mediaOn() ? MEDIA_ICON_ROWS : ICON_H;
 
-  for (int row = 0; row < ICON_H && row < DispHeight; row++) {
+  for (int row = 0; row < rows && row < DispHeight; row++) {
     memcpy(&fb[row * rowBytes + xByte], &iconBin[row * ICON_STRIDE], ICON_STRIDE);
   }
 }
@@ -1326,6 +1353,12 @@ static void meta_renderConsole(void) {
     const int valueOff = meta_valueOffset();
     int y = CON_FIELD_Y0;
 
+    // A disc's chapter, above everything: it is the band's, and it changes.
+    if (meta_mediaOn()) {
+      media_drawChapter(tx, y, tw, valueOff);
+      y += CON_FIELD_PITCH;
+    }
+
     // Pinned rows first, identical on every page...
     for (int i = 0; i < pinned; i++) {
       meta_drawField(i, tx, y, tw, valueOff);
@@ -1345,6 +1378,9 @@ static void meta_renderConsole(void) {
 
   // --- Icon ----------------------------------------------------------------
   meta_blitIcon();
+
+  // --- Transport band, under both columns -----------------------------------
+  if (meta_mediaOn()) media_drawBand(millis());
 }
 
 // ---------------------------------------------------------------------------
@@ -1363,12 +1399,15 @@ static void meta_renderConsole(void) {
 // is the whole field area, pinned rows too, since that page has none.
 static void meta_consolePagedRect(int *x, int *w, int *y0, int *y1,
                                   bool whole = false) {
-  const int firstPaged = whole ? 0 : meta_pinnedRows();   // row index of the first
+  // Row index of the first: past the pinned rows, and the transport band's
+  // chapter row above them, which stay.
+  const int firstPaged = whole ? 0 : meta_pinnedRows() + (meta_mediaOn() ? 1 : 0);
   *x  = meta_textX();
   *w  = meta_textW();
   // The top row of that field: its baseline less the glyph height above it.
   *y0 = CON_FIELD_Y0 + firstPaged * CON_FIELD_PITCH - CON_FIELD_ASCENT;
-  *y1 = DispHeight;
+  // Down to the band, which keeps counting through the fade.
+  *y1 = meta_mediaOn() ? MEDIA_BAND_TOP - 1 : DispHeight;
 }
 
 // Card: the rows below the pinned grid row, across the whole panel - or, for
@@ -1890,6 +1929,7 @@ bool meta_tick(void) {
       moved = true;
     }
     if (meta_headTick(now, card ? meta_cardPageCount() : meta_pageCount())) moved = true;
+    if (!card && meta_mediaTick(now)) moved = true;
     if (moved) {
       if (card) meta_renderCard(); else meta_renderConsole();
       pf_reshow();
@@ -1917,13 +1957,16 @@ bool meta_tick(void) {
   // A new caption for a layout already on the panel: drawn again as it is.
   // Not over the core's artwork or before the layout's own first draw, which
   // will have it anyway; nor the card while its artwork is the picture.
-  if (metaHeadRedraw) {
+  // A disc's place changing - played, paused, a chapter on - likewise.
+  if (metaHeadRedraw || mediaRedraw) {
+    const bool head = metaHeadRedraw;
     metaHeadRedraw = false;
+    mediaRedraw    = false;
     if (metaKind == MKIND_CONSOLE && !coreBootHolding && !metaNeedsDraw) {
       meta_showConsole();
       return true;
     }
-    if (metaKind == MKIND_ARCADE && metaShowingCard) {
+    if (head && metaKind == MKIND_ARCADE && metaShowingCard) {
       meta_renderCard();
       oled.display();
       return true;
@@ -2075,6 +2118,7 @@ bool meta_tick(void) {
     }
 
     if (meta_headTick(now, pages)) dirty = true;
+    if (meta_mediaTick(now)) dirty = true;           // a second gone, the arrow's flash
 
     if (dirty) meta_showConsole();
     return dirty;
@@ -2092,6 +2136,7 @@ void meta_showConsole(void)       { }
 void meta_transitionToConsole(int effect) { (void)effect; }
 void meta_parseHead(const char *cmd) { (void)cmd; }
 void meta_parseTimer(const char *cmd) { (void)cmd; }
+void meta_parseMedia(const char *cmd) { (void)cmd; }
 
 #endif  // HAS_METADISPLAY
 

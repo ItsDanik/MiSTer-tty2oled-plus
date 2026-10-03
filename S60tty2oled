@@ -320,6 +320,12 @@ stop() {
       kill "${DAEMON_PID}" 2>/dev/null
     fi
     rm -f "${PIDFILE_FOUND}"
+    # The DVD core's telemetry, if the daemon switched it on: a killed daemon
+    # never gets to switch it off. Only ours - the file says so inside.
+    dvd_hil="/media/fat/dvd_hil"
+    if [ -f "${dvd_hil}" ] && head -n 1 "${dvd_hil}" 2>/dev/null | grep -q '^armed by tty2oled+ '; then
+      rm -f "${dvd_hil}"
+    fi
 }
 
 # Status: says whether our daemon is running, and exits 0 only when it is.

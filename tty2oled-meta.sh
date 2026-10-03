@@ -191,7 +191,7 @@ meta_stat() {
              "${MISTER_STARTPATH}" "${MISTER_FULLPATH}" "${MISTER_CURRENTPATH}" \
              "${MISTER_FILESELECT}" "${MISTER_GAMEID}" "${NAMES_TXT}" \
              "${CORETYPE_MAP:-}" "${SCRAPE_DIR}" "${TITLE_INDEX_DIR}" \
-             "${TITLE_INDEX}" 2>/dev/null)
+             "${TITLE_INDEX}" "${SCRAPE_DIR}/DVD.txt" 2>/dev/null)
   return 0
 }
 
@@ -1522,6 +1522,255 @@ scummvm_icondirs() {
 }
 
 # ---------------------------------------------------------------------------
+# The DVD core: a film, where it is in it, and what it is
+# ---------------------------------------------------------------------------
+#
+# owenb321's MiSTer_DVD decodes and navigates in the FPGA, behind a Main of
+# its own (MiSTer_DVDcss) that feeds it sectors - from the drive, /dev/sr0,
+# or an ISO - and writes nothing about the film anywhere. Two things can be
+# seen from here, both measured on the real MiSTer:
+#
+#   Where Main is reading. Its descriptor on the disc moves as it reads
+#   (/proc/<pid>/fdinfo, "pos:"), and the disc's IFOs say which title,
+#   chapter and second each sector is. tty2oledplus_dvd.py turns them into
+#   one table, once per disc (cache/dvd/<key>.nav), which is searched here.
+#   Main reads through a RAM ring of 16384 sectors (dvd_readahead.cpp,
+#   RA_CAP) that it keeps full ahead of the core: the read is 32MB - half a
+#   minute and more of film - ahead of the picture, measured 16854 sectors
+#   with the ring full. So the place on screen is the daemon's own clock
+#   (DVD_E_MS), counted while the film plays and set from the read where the
+#   read says exactly: a seek, a chapter skip or a new title empties the ring
+#   and starts it again where the core now is.
+#
+#   Whether it plays. The core reports pause, still, menu and whether a disc
+#   is in through its telemetry (/tmp/dvd_telem.json, every 250ms), which its
+#   Main writes only while /media/fat/dvd_hil exists. The daemon creates that
+#   file while the DVD core is up (dvd_arm) and removes it after - only its
+#   own, which says so inside.
+#
+# What the film is: Wikipedia, asked once per disc by its label (or an ISO by
+# its name), into scraped/DVD.txt - lookup_scraped's format, keyed by the
+# disc's label, date and size (tty2oledplus_dvd.py's disc_key). The user may
+# edit it; a title they correct there is the title shown.
+: "${DVD_CACHE:=/media/fat/tty2oledplus/cache/dvd}"
+: "${DVD_TELEM:=/tmp/dvd_telem.json}"
+: "${DVD_ARM:=/media/fat/dvd_hil}"
+DVD_ARM_MARK="armed by tty2oled+ while the DVD core runs - removed when it stops"
+DVD_LEAD_FULL=16850       # sectors the read runs ahead with Main's ring full
+DVD_LEAD_MAX=17600        # ...and never more: the ring and the core's own
+# A read further on than this in one look (plus DVD_JUMP_RATE a millisecond)
+# is the core going somewhere, not the ring filling: measured fills are a
+# sector a millisecond, about.
+DVD_JUMP_SECTORS=2048
+DVD_JUMP_RATE=3
+DVD_BACK_SECTORS=300      # the ring keeps 256 behind for the core's re-reads
+
+dvd_core() { [ "${1^^}" = "DVD" ]; }
+
+declare -A DVD_STARTS=()
+DVD_GEN=0                 # one more each time a disc goes: a scan of the last one is stale
+
+# The disc went, or another came: what was known of it goes too.
+dvd_forget() {
+  DVD_FD=""; DVD_DEV=""
+  DVD_KEY=""; DVD_LABEL=""; DVD_NAVFILE=""; DVD_FALLBACK=""; DVD_SCANNED=""
+  DVD_S=(); DVD_E=(); DVD_TI=(); DVD_T0=(); DVD_T1=(); DVD_MENU=(); DVD_STARTS=()
+  DVD_MAIN_TITLE=0; DVD_MAIN_TOTAL=0; DVD_TITLES=0
+  DVD_R_PREV=""; DVD_AT_PREV=""; DVD_E_MS=0; DVD_TITLE=0
+  DVD_STATE=0; DVD_CHAPTER=0; DVD_CHAPTERS=0; DVD_TOTAL=0
+  DVD_BUILT=""
+  DVD_GEN=$(( DVD_GEN + 1 ))
+}
+
+dvd_reset() {
+  dvd_forget
+  DVD_PID=""; DVD_HAD_DISC="no"
+}
+dvd_reset
+
+# Is this pid a MiSTer Main, the DVD core's or any? It runs the core's .rbf,
+# named as its first argument.
+_dvd_is_main() {
+  local a0="" a1=""
+  { IFS= read -r -d '' a0; IFS= read -r -d '' a1; } 2>/dev/null <"${PROC_ROOT:-/proc}/${1}/cmdline"
+  [[ "${a0##*/}" == MiSTer* ]] && [[ "${a1,,}" == *.rbf ]]
+}
+
+# Find the disc Main is reading: DVD_PID, DVD_FD and DVD_DEV - the drive, or
+# the image. The pid is kept and checked with a read; the descriptor is
+# looked for with one listing, and checked after that with two tests.
+dvd_find() {
+  local proc="${PROC_ROOT:-/proc}" f="" pid="" line="" n="" target=""
+  if [ -n "${DVD_FD}" ]; then
+    [ -e "${proc}/${DVD_PID}/fd/${DVD_FD}" ] &&
+      [ "${proc}/${DVD_PID}/fd/${DVD_FD}" -ef "${DVD_DEV}" ] && return 0
+    # Closed: ejected, or another image mounted. The drive's name stays the
+    # same from disc to disc, so its scan cannot outlive the descriptor.
+    dvd_forget
+  fi
+  if [ -z "${DVD_PID}" ] || ! _dvd_is_main "${DVD_PID}"; then
+    DVD_PID=""
+    for f in "${proc}"/[0-9]*/comm; do
+      IFS= read -r n 2>/dev/null <"${f}" || continue
+      [[ "${n}" == MiSTer* ]] || continue
+      pid="${f%/comm}"; pid="${pid##*/}"
+      _dvd_is_main "${pid}" && { DVD_PID="${pid}"; break; }
+    done
+    [ -n "${DVD_PID}" ] || return 1
+  fi
+  # "lrwx------ 1 root root 64 Oct  3 02:41 9 -> /dev/sr0"
+  while IFS= read -r line; do
+    [[ "${line}" == *" -> "* ]] || continue
+    target="${line##* -> }"
+    n="${line% -> *}"; n="${n##* }"
+    case "${target,,}" in
+      /dev/sr[0-9]*|*.iso|*.img) DVD_FD="${n}"; DVD_DEV="${target}"; return 0 ;;
+    esac
+  done < <(ls -l "${proc}/${DVD_PID}/fd" 2>/dev/null)
+  return 1
+}
+
+# Load a disc's table: each column one line, read whole.
+dvd_navload() {
+  local file="${1}" k="" rest=""
+  DVD_S=(); DVD_E=(); DVD_TI=(); DVD_T0=(); DVD_T1=(); DVD_MENU=(); DVD_STARTS=()
+  DVD_MAIN_TITLE=0; DVD_MAIN_TOTAL=0; DVD_TITLES=0
+  [ -r "${file}" ] || return 1
+  while IFS=' ' read -r k rest; do
+    case "${k}" in
+      start)    read -r -a DVD_S  <<<"${rest}" ;;
+      end)      read -r -a DVD_E  <<<"${rest}" ;;
+      title)    read -r -a DVD_TI <<<"${rest}" ;;
+      t0)       read -r -a DVD_T0 <<<"${rest}" ;;
+      t1)       read -r -a DVD_T1 <<<"${rest}" ;;
+      menu)     read -r -a DVD_MENU <<<"${rest}" ;;
+      titles)   DVD_TITLES="${rest}" ;;
+      main)     read -r DVD_MAIN_TITLE DVD_MAIN_TOTAL _ <<<"${rest}" ;;
+      starts[0-9]*) DVD_STARTS[${k#starts}]="${rest}" ;;
+    esac
+  done <"${file}"
+  [ "${#DVD_S[@]}" -gt 0 ] && [ "${#DVD_S[@]}" -eq "${#DVD_T1[@]}" ]
+}
+
+# The segment holding a sector, into _R: its index, or -1. Binary search -
+# a film is a thousand and more of them, and this runs every second.
+dvd_seg() {
+  local s="${1}" lo=0 hi=$(( ${#DVD_S[@]} - 1 )) mid=0
+  _R=-1
+  while [ "${lo}" -le "${hi}" ]; do
+    mid=$(( (lo + hi) / 2 ))
+    if [ "${s}" -lt "${DVD_S[mid]}" ]; then hi=$(( mid - 1 ))
+    elif [ "${s}" -gt "${DVD_E[mid]}" ]; then lo=$(( mid + 1 ))
+    else _R="${mid}"; return 0; fi
+  done
+  return 1
+}
+
+# Milliseconds into its title at a sector of segment $1, into _R: the
+# segment's seconds, shared out over its sectors.
+dvd_ms_at() {
+  local i="${1}" s="${2}" span=0
+  span=$(( DVD_E[i] - DVD_S[i] + 1 ))
+  _R=$(( DVD_T0[i] * 1000 + (DVD_T1[i] - DVD_T0[i]) * 1000 * (s - DVD_S[i]) / span ))
+}
+
+# Is a sector in a menu's video (VIDEO_TS.VOB, a VTS_xx_0.VOB)?
+dvd_in_menu() {
+  local s="${1}" i=0
+  for ((i = 0; i + 1 < ${#DVD_MENU[@]}; i += 2)); do
+    [ "${s}" -ge "${DVD_MENU[i]}" ] && [ "${s}" -le "${DVD_MENU[i + 1]}" ] && return 0
+  done
+  return 1
+}
+
+# Title $1's length, chapter count and the chapter at $2 ms, into DVD_TOTAL,
+# DVD_CHAPTERS and DVD_CHAPTER.
+dvd_chapter() {
+  local -a st=()
+  local ms="${2}" i=0
+  read -r -a st <<<"${DVD_STARTS[${1}]:-0}"
+  DVD_TOTAL="${st[0]:-0}"
+  DVD_CHAPTERS=$(( ${#st[@]} - 1 ))
+  DVD_CHAPTER=0
+  for ((i = 1; i < ${#st[@]}; i++)); do
+    [ $(( st[i] * 1000 )) -le "${ms}" ] && DVD_CHAPTER="${i}"
+  done
+  [ "${DVD_CHAPTERS}" -gt 0 ] && [ "${DVD_CHAPTER}" -eq 0 ] && DVD_CHAPTER=1
+  return 0
+}
+
+# A length as the Runtime field says it: 1h 43m, 58m.
+_dvd_runtime() {
+  local s="${1:-0}"
+  _R=""
+  [ "${s}" -gt 0 ] 2>/dev/null || return 0
+  if [ "${s}" -ge 3600 ]; then printf -v _R '%dh %02dm' $(( s / 3600 )) $(( s % 3600 / 60 ))
+  else printf -v _R '%dm' $(( (s + 30) / 60 )); fi
+}
+
+# The DVD core's layout. No disc, or one not read yet: the core's picture,
+# and META_SHOWCORE when a disc shown until now has gone. Built once a disc
+# and whenever scraped/DVD.txt changes (DVD_BUILT), since this runs every
+# pass beside the film.
+#
+# DVD_FIELDS picks and orders the fields, from Year Studio Director Artist
+# Genre Runtime Titles Label. Studio is the infobox's studio, else its record
+# label or distributor; Artist a concert's band.
+: "${DVD_FIELDS:=Year Studio Director Artist Genre Runtime}"
+_DVD_KNOWN="Year Studio Director Artist Genre Runtime Titles Label"
+dvd_meta() {
+  local had="${DVD_HAD_DISC}" stamp="" f="" label="" titles=""
+  META_KIND="console"
+  if ! dvd_find || [ -z "${DVD_KEY}" ] || [ "${DVD_SCANNED}" != "${DVD_DEV}" ]; then
+    META_TITLE="${DISPLAY_CORENAME}"
+    META_SOURCE="core"
+    META_ICON=""
+    [ "${had}" = "yes" ] && META_SHOWCORE="yes"
+    DVD_HAD_DISC="no"; DVD_BUILT=""
+    return 0
+  fi
+  DVD_HAD_DISC="yes"
+  META_SOURCE="dvd"
+  META_GAME="yes"
+  META_ICON="dvd"
+
+  # scraped/DVD.txt is among the times meta_stat takes each pass: a
+  # Wikipedia answer landing, or the user's own correction, is a new build.
+  stamp="${DVD_KEY}|${META_MTIME[${SCRAPE_DIR}/DVD.txt]:-}"
+  if [ "${DVD_BUILT}" = "${stamp}" ]; then
+    META_TITLE="${DVD_C_TITLE}"; META_DESC="${DVD_C_DESC}"
+    META_FIELDS=("${DVD_C_FIELDS[@]}")
+    return 0
+  fi
+  DVD_BUILT="${stamp}"
+
+  lookup_scraped "${DVD_KEY}" "" DVD
+  META_TITLE="${SCR_TITLE:-${DVD_FALLBACK:-${DVD_LABEL:-${DISPLAY_CORENAME}}}}"
+  [ "${SHOW_DESCRIPTION:-yes}" = "yes" ] && META_DESC="${SCR_DESC}"
+  _dvd_runtime "${DVD_MAIN_TOTAL}"
+  [ "${DVD_TITLES:-0}" -gt 1 ] && titles="${DVD_TITLES}"
+  declare -A avail=(
+    [Year]="${SCR_RELEASED:0:4}"
+    [Studio]="${SCR_PUBLISHER}"
+    [Director]="${SCR_DEVELOPER}"
+    [Artist]="${SCR_SERIES}"
+    [Genre]="${SCR_GENRE}"
+    [Runtime]="${_R}"
+    [Titles]="${titles}"
+    [Label]="${DVD_LABEL}"
+  )
+  for f in ${DVD_FIELDS}; do
+    _canon_label "${f}" "${_DVD_KNOWN}" || continue
+    label="${_R}"
+    meta_addfield "${label}" "${avail[${label}]:-}"
+  done
+  META_PINNED_COUNT=0
+  DVD_C_TITLE="${META_TITLE}"; DVD_C_DESC="${META_DESC}"
+  DVD_C_FIELDS=("${META_FIELDS[@]}")
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # meta_inputs - everything build_meta reads, as one string, into META_INPUTS:
 # the core, the state files' contents, and the times of those and of the
 # tables and folders it looks things up in (meta_stat). The same string, the
@@ -1581,6 +1830,20 @@ build_meta() {
   # meta_inputs decided a build was due.
   [ "${META_STAT_FRESH}" = "yes" ] || meta_stat
   META_STAT_FRESH=""
+
+  # The DVD core: a film, not a game - its own layout, built from the disc
+  # (dvd_meta). Its name read from names.txt once a core change.
+  if [ "${DVD_SCREEN:-yes}" = "yes" ] && dvd_core "${corename}"; then
+    if [ "${corechange}" = "corechange" ] || [ -z "${DVD_DISPLAY:-}" ]; then
+      CORE_STARTPATH=""
+      _slurp _rbf "${MISTER_RBFNAME}"
+      display_corename "${corename}" "${_rbf}"
+      DVD_DISPLAY="${DISPLAY_CORENAME}"
+    fi
+    DISPLAY_CORENAME="${DVD_DISPLAY}"
+    dvd_meta
+    return 0
+  fi
 
   classify_core "${corename}"
 

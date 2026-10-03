@@ -134,9 +134,10 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `.../fadetransition.h` | `TRANSITION=-2` fade; `30`-`39` sliding fades. |
 | `.../bootoutro.h`, `busybar.h` | Boot screen as menu picture + power-on outro; the sweep as a busy bar. |
 | `.../bandnote.h` | Frontends' 54-row picture + band; `CMDNOTE` fading in/out there. |
+| `.../mediaband.h` | `CMDMEDIA`: a film's transport band under the console layout, and its chapter row. |
 | `.../linejunk.h` | Drops another program's bytes (Zaparoo's PN532 probe) ahead of a command line. |
 | `.../MiSTer_SSD1322_USB.ino` | Includes the headers; LEDC shim for ESP32 core 3.x. |
-| `tests/` | ~2870 checks, no hardware. |
+| `tests/` | ~3000 checks, no hardware. `tests/dvdiso.py` builds a DVD-Video image. |
 | `tools/build-title-index.sh`, `dat2index.awk`, `index-emit.awk`, `mamexml2index.awk` | CRC32 title index from libretro-database (+ MAME XML for Neo Geo). W. |
 | `tools/png2gsc.py` | PNG -> 4bpp `.gsc`. W **and** M: Pillow, ImageMagick, or a stdlib PNG decoder. |
 | `tools/wheels2gsc.py`, `tools/gscpack.py` | Wheel PNGs -> 256x64 `.gsc` (`--nodupes`); pack into `.bin`+`.idx`. W. |
@@ -153,6 +154,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `tools/tty2oledplus_{settings,scrape,update,uninstall}.sh`, `_scrape.py` | The launcher's entries, in the install folder. M. |
 | `tools/tty2oledplus_syscheck.py` | Would update_all update something installed? The daemon runs it in the background. M. |
 | `tools/tty2oledplus_scummvm.py` | ScummVM's icon packs -> `cache/scummvm/games.idx` + per-game 86x64 icons. Daemon, background. M. |
+| `tools/tty2oledplus_dvd.py` | A DVD's IFOs -> `cache/dvd/<key>.nav` (sector -> title/chapter/time); Wikipedia -> `scraped/DVD.txt`. Daemon, background. M. |
 | `tools/scummvm-entries.sh` | ScummVM's ini -> a `<folder>.scummvm` (game id) in each game folder, for ES-DE/RetroPie/RetroArch. Developer tool, not shipped (yet); fed over `ssh ... 'bash -s'`. M. |
 | `tools/tty2oledplus_install.sh` | The starter users drop in Scripts. M. |
 | `tools/flash-mister.sh`, `tools/fw-segments.py` | Flashes firmware, writing only segments with data. M. |
@@ -168,7 +170,7 @@ the firmware composes it.
 | kind | layout |
 |---|---|
 | `arcade` | wheel logo, then each card page, then the logo - a step every `METADATA_INTERVAL`s |
-| `console` | split: "Now playing", rule, title, paged fields left; 86x64 icon right; description page last |
+| `console` | split: "Now playing", rule, title, paged fields left; 86x64 icon right; description page last. A film (DVD core) adds a chapter row above the fields and the transport band under both columns |
 | `computer` / `unknown` | full-screen artwork as upstream (`unknown`: metadata off) |
 
 **Core change wire order: `CMDMETAOFF`, picture, `CMDCBOOT`, `CMDMETA`,
@@ -582,6 +584,7 @@ send them). Additions, ESP32 only:
 | `CMDCLOCK,<left>\|<right>` | the band's clock: two strftime formats, rest of the line, 40 kept; no `\|` is one piece, centred; empty is off. Quiet, not activity (0.7.8b) |
 | `CMDSETTIME,<local epoch>` | upstream's; also the band clock's time (0.7.8b), counted on by `millis()`. Not activity from 0.7.8b, so the daemon resends it hourly only to that |
 | `CMDFLIP,<s>` | side swap period; 0 disables |
+| `CMDMEDIA,<state>,<s in>,<s long>,<chapter>,<chapters>` | the transport band under the console layout: state 1 play (arrow flashing), 2 pause, 3 stop, 4 menu ("Disc menu", no bar), 5 still; the firmware counts the seconds on while playing; length 0 = state in words; empty / 0 = none. Quiet; activity only on a change of state; kept across `CMDMETA`, forgotten by `CMDMETAOFF` (0.8.2b) |
 | `CMDDESC,<bytes>` | + that many raw bytes, printable ASCII, 2048 kept (`DESC_MAX`, same in daemon and importer - `test-scrape.py`), excess discarded. After `CMDMETA`, which clears it |
 | `CMDSCROLL,<h>,<v>` | marquee / description speeds, px/s, 1..200 / 1..100 |
 | `CMDWRBOOT` | + 6912 raw bytes (256x54, 4bpp) |
@@ -626,7 +629,7 @@ on MiSTer's `ini_settings.sh`.
   equal to its default is **removed**. `ini_put` changes one line or appends
   under its own header; never rewrites the file. The ini is **parsed, not
   sourced** (runs as root; tested with a value that would touch a file).
-- Covers every user setting (49, seven categories). `test-settings.sh` checks
+- Covers every user setting (52, eight categories). `test-settings.sh` checks
   both ways: every offered key exists in the ini *and* is read by `tty2oled.sh`
   or `tty2oled-meta.sh`; every user key is offered or on the exclusion list
   (`BAUDRATE`, `TTYPARAM`, `NAMES_TXT`, `TITLE_INDEX`, `TITLE_INDEX_DIR`),
@@ -733,6 +736,63 @@ Degauss/Zaparoo; with `SVM_PID` known it is a read, not a search. `scummvm_core`
 - Tests: `test-scummvm.sh`, a fake `PROC_ROOT` with the real cmdline, environ,
   stat and fd links; packs built as zips.
 
+## The DVD core
+
+owenb321's [MiSTer_DVD](https://github.com/owenb321/MiSTer_DVD): decoding
+**and navigation** in the FPGA, behind its own Main (`MiSTer_DVDcss`, a
+per-core `main=` in `MiSTer.ini`), `CORENAME` `DVD`. Nothing about the film is
+written anywhere by default. **All measured on the real MiSTer** with Queen's
+On Fire disc in a USB drive:
+
+- **Where Main reads**: it holds the disc (`/dev/sr0`, or the image) on one
+  descriptor; `/proc/<pid>/fdinfo/<fd>` `pos:` moves as it reads. `dvd_find`:
+  Main by `comm` `MiSTer*` + argv[1] `*.rbf`, the fd by one `ls -l`, then
+  `-e` + `-ef` each look. The fd closes on eject - `dvd_forget` (the drive's
+  name stays `/dev/sr0` from disc to disc; `DVD_GEN` drops a late scan).
+- **The read runs a full ring ahead**: `dvd_readahead.cpp` keeps `RA_CAP`
+  16384 sectors (32MB) ahead of the core; measured lead 16854 sectors =
+  29.6s at that bitrate (0:39:15 read vs 0:38:46 on the core's HUD). So the
+  place is the daemon's clock (`DVD_E_MS`): anchored at the read on a jump
+  (back > 300 sectors, forward > 2048 + 3/ms, new title, out of the menu -
+  the ring restarts there), counted while playing, clamped to
+  `[T(read - DVD_LEAD_MAX), T(read)]`; first sight assumes the ring full
+  (`DVD_LEAD_FULL`). A forward skip still inside the ring is not a jump; the
+  lower clamp catches up as the ring refills. Pause freezes the read at once.
+- **Telemetry** (`/tmp/dvd_telem.json`, every 250ms): `flags` `media pause
+  still menu video_live`, `"t"` = seconds since boot as `/proc/uptime`
+  (stale past 3s -> taken as playing). **Only while `/media/fat/dvd_hil`
+  exists** (Main stats it every 2s) - the developer's HIL switch, which also
+  opens a FIFO `/tmp/dvd_ctl` (`osd <opt> <v>`, `mount <path>`, `ping`).
+  `dvd_arm` writes it with `DVD_ARM_MARK` inside; `dvd_disarm`, every core
+  change, and `S60tty2oled stop` remove only a file saying that. Arming
+  costs nothing measurable: Main runs a core flat out either way. No stop
+  flag; eject is `media 0` and the fd gone.
+- **The disc's table** (`tty2oledplus_dvd.py scan`, background `dvs`):
+  ISO9660 PVD (label, date, size = the key) -> `VIDEO_TS` -> IFOs. **The
+  title table's title-set sector was wrong on the real disc** (5441 for an
+  IFO at 5728): sets are found by name in the directory. Cell sectors are
+  relative to the VTS's title VOBs; times from the VTS time map (TMAP, an
+  entry per unit), cells' starts kept, else a point every `POINT_SECS`.
+  Titles sharing sectors (a concert as one title and a title a song): the
+  most chapters wins, then the longest. ~3s first time (python + a few
+  dozen sectors), one sector after (cache), network imports deferred.
+  Columns a line in the `.nav` (`read -a` each); `starts<n>` = a title's
+  length and chapter starts.
+- **Wikipedia** (`lookup`, background `dvl`): needs a User-Agent (403
+  without) and `--cacert`; search -> first hit whose title holds 60% of the
+  query's words -> intro + section 0's infoboxes (album and film boxes, both
+  on a concert's page). `scraped/DVD.txt` in `lookup_scraped`'s format:
+  developer = director, publisher = studio/label, series = artist; `miss`
+  lines retried after 30 days; an `ok` line (the user's correction) never
+  overwritten or re-asked. `meta_stat` takes `DVD.txt`'s own time.
+- **Per look** (`dvd_follow` in place of `metawait`, every `DVD_TICK_SECS`):
+  the telemetry line, `fdinfo`, a binary search - **no process** (tested
+  with logging stand-ins). `sendmedia` only on a change of state/title/
+  chapter or 2s of drift. The daemon measured 59ms/s of CPU with it.
+- **Ambiguous by nature**: a sector shared by two titles is the winning
+  title's - playing the song-title of a concert disc shows the concert's
+  chapter and time.
+
 ## Arcade descriptions from history.xml
 
 `tools/history2gamelist.py` (not shipped, nor its output - the file's licence)
@@ -765,9 +825,9 @@ own `fold()`/`clip_desc()`.
 
 ## Tests
 
-`./tests/run-all.sh` - sixteen suites (metadata, wire, index, version,
-daemon, deploy, settings, ScummVM, png2gsc, scrape, syscheck,
-history2gamelist, installer, flash, firmware parser, firmware layout). CI runs all with inotify-tools and
+`./tests/run-all.sh` - eighteen suites (metadata, wire, index, version,
+daemon, deploy, settings, ScummVM, DVD, png2gsc, scrape, syscheck,
+history2gamelist, DVD tool, installer, flash, firmware parser, firmware layout). CI runs all with inotify-tools and
 ImageMagick. No shellcheck in `run-all.sh`.
 
 - Installer: builds a real release from the working copy, serves it via
@@ -825,8 +885,8 @@ flashable at `0x0` (gitignored). Arduino IDE: `WEMOS LOLIN32`; on an S3 set
 
 | folder | what | size | whose |
 |---|---|---|---|
-| `pics/banner` | console/computer/utility core banners (192) | 256x64 | release |
-| `pics/icon` | console icons (27 core names, 26 systems) | 86x64 | release, in the scripts archive |
+| `pics/banner` | console/computer/utility core banners (195) | 256x64 | release |
+| `pics/icon` | console icons (28 core names, 27 systems - the DVD core's among them) | 86x64 | release, in the scripts archive |
 | `pics/arcade` | `wheels.bin` + `wheels.idx` | 256x64 | release, in `tty2oledplus-pics.tar.gz` |
 | `pics/user` | the user's own banners, by core or set | 256x64 | **theirs** - nothing writes it |
 

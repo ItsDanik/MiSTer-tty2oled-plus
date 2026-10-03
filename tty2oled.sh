@@ -433,6 +433,7 @@ sendmetaoff() {
   sleep ${WAITSECS}
   META_WIRE_LAST="OFF"
   ICON_SENT=""
+  MEDIA_SENT=""                         # the transport band went with it
 }
 
 # Put what build_meta produced on the wire: CMDMETA and the description, or
@@ -533,7 +534,7 @@ META_INPUTS_LAST=""
 refreshmeta() {
   local corename="${1}"
   [ "${SHOW_METADATA}" = "yes" ] || return 0
-  if ! scummvm_core "${corename}"; then
+  if ! scummvm_core "${corename}" && ! { dvd_core "${corename}" && dvd_screen_on; }; then
     meta_inputs "${corename}"
     if [ "${META_INPUTS}" = "${META_INPUTS_LAST}" ]; then
       META_STAT_FRESH=""
@@ -546,7 +547,11 @@ refreshmeta() {
   if [ "${META_SHOWCORE:-}" = "yes" ]; then
     dbug "The game has ended, back to the ${corename} picture"
     senddata "${corename}"
-  elif sendbuiltmeta; then
+    return 0
+  fi
+  # A disc's place goes ahead of its layout, which is then drawn with it.
+  [ "${META_SOURCE}" = "dvd" ] && dvd_tick
+  if sendbuiltmeta; then
     sendicon "${META_ICON}"
   elif [ "${META_GAME:-no}" = "yes" ] && [ "${META_WIRE_LAST:-}" != "OFF" ] &&
        findicon "${META_ICON}" && [ "${ICONFILE}" != "${ICON_SENT:-}" ]; then
@@ -617,6 +622,213 @@ scummvm_jobs() {
     bg_start svc "${now}" nice -n 19 python3 "${SCUMMVM_TOOL}" icon \
       --out "${out}" --engine "${engine}" --game "${gid}" "${SVM_DIRS[@]}"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# The DVD core: its telemetry armed, its disc read, its place followed
+# ---------------------------------------------------------------------------
+#
+# See tty2oled-meta.sh's DVD section for what can be seen and why. Here is
+# the doing: the telemetry switched on while the core is up, the disc's table
+# and Wikipedia's answer fetched in the background, and - between the passes,
+# every DVD_TICK_SECS - one look at the read and the telemetry, which sends
+# CMDMEDIA when the firmware's own count would be wrong: a pause, a chapter,
+# a seek. A look starts no process: two file reads, a search of the table.
+DVD_TOOL="${DVD_TOOL:-${TTY2OLED_PATH:-/media/fat/tty2oledplus}/tty2oledplus_dvd.py}"
+BG_GIVEUP_dvs=120               # the scan: a few dozen sectors, or one when cached
+BG_GIVEUP_dvl=60                # the lookup: two requests, 15s each at most
+DVD_TICK_SECS="1"
+DVD_SCAN_GEN=""; DVD_SCAN_DEV=""
+declare -A DVD_ASKED=()         # disc keys Wikipedia was asked about, this run
+MEDIA_SENT=""                   # what the firmware holds: "state|length|chapter|of"
+MEDIA_SENT_POS=0                # ...its seconds in when sent
+MEDIA_SENT_AT=0                 # ...and when, in ms
+
+dvd_screen_on() { [ "${SHOW_METADATA}" = "yes" ] && [ "${DVD_SCREEN:-yes}" = "yes" ]; }
+
+# The core's Main reports pause, still and the menu only while this file
+# exists (it looks every 2s). Ours says so inside, so that only ours is ever
+# removed: the same file is the DVD core's developer's test switch.
+dvd_arm() {
+  [ -e "${DVD_ARM}" ] && return 0
+  printf '%s\n' "${DVD_ARM_MARK}" 2>/dev/null >"${DVD_ARM}" && dbug "DVD: telemetry armed (${DVD_ARM})"
+}
+
+dvd_disarm() {
+  local l=""
+  [ -f "${DVD_ARM}" ] || return 0
+  IFS= read -r l 2>/dev/null <"${DVD_ARM}"
+  [ "${l}" = "${DVD_ARM_MARK}" ] || return 0
+  rm -f "${DVD_ARM}" && dbug "DVD: telemetry disarmed"
+}
+
+# The disc's table and its Wikipedia entry, each in the background: the scan
+# once per disc (a few dozen sectors, read while the film plays; one sector
+# for a disc seen before), the lookup once per disc a run, and never for one
+# scraped/DVD.txt already describes - the user's correction included.
+dvd_jobs() {
+  local now="${EPOCHSECONDS:-$(date +%s)}" key="" label="" nav="" title=""
+  if bg_collect dvs "${now}"; then
+    dbug "DVD: scanned ${DVD_SCAN_DEV}: ${BG_LINE:-exit ${BG_RC:-killed}}"
+    if [ "${DVD_SCAN_GEN}" = "${DVD_GEN}" ]; then
+      IFS='|' read -r key label nav title <<<"${BG_LINE}"
+      DVD_KEY="${key}"; DVD_LABEL="${label}"; DVD_NAVFILE="${nav}"; DVD_FALLBACK="${title}"
+      DVD_SCANNED="${DVD_SCAN_DEV}"
+      DVD_R_PREV=""
+      [ -n "${nav}" ] && ! dvd_navload "${nav}" && dbug "DVD: ${nav} did not load"
+    fi
+  fi
+  bg_collect dvl "${now}" && dbug "DVD: Wikipedia: ${BG_LINE:-exit ${BG_RC:-killed}}"
+
+  dvd_core "${oldcore}" && dvd_screen_on || return 0
+  dvd_find || return 0
+  if [ "${DVD_SCANNED}" != "${DVD_DEV}" ] && ! bg_running dvs; then
+    DVD_SCAN_GEN="${DVD_GEN}"; DVD_SCAN_DEV="${DVD_DEV}"
+    dbug "DVD: reading ${DVD_DEV}"
+    bg_start dvs "${now}" nice -n 10 python3 "${DVD_TOOL}" scan --dev "${DVD_DEV}" --cache "${DVD_CACHE}"
+  fi
+  if [ -n "${DVD_KEY}" ] && [ "${DVD_LOOKUP:-yes}" = "yes" ] &&
+     [ -z "${DVD_ASKED[${DVD_KEY}]:-}" ] && ! bg_running dvl; then
+    DVD_ASKED[${DVD_KEY}]=1
+    lookup_scraped "${DVD_KEY}" "" DVD && return 0
+    dbug "DVD: asking Wikipedia about ${DVD_FALLBACK:-${DVD_LABEL}}"
+    bg_start dvl "${now}" nice -n 10 python3 "${DVD_TOOL}" lookup --key "${DVD_KEY}" \
+      --query "${DVD_FALLBACK:-${DVD_LABEL}}" --db "${SCRAPE_DIR}/DVD.txt"
+  fi
+}
+
+# The core's telemetry, if it is fresh: DVD_TF yes, and its flags. Its "t" is
+# the MiSTer's seconds since boot, as /proc/uptime has them; a file older than
+# three seconds is a Main that stopped writing it - not armed yet, or gone.
+dvd_telem() {
+  local line="" t="" up=""
+  DVD_TF="no"; DVD_PAUSE=0; DVD_STILL=0; DVD_MENUF=0; DVD_MEDIA=1
+  IFS= read -r line 2>/dev/null <"${DVD_TELEM}" || [ -n "${line}" ] || return 1
+  t="${line#*\"t\":}"; t="${t%%[.,]*}"
+  IFS=' .' read -r up _ 2>/dev/null <"${PROC_ROOT:-/proc}/uptime"
+  case "${t}${up}" in ''|*[!0-9]*) return 1 ;; esac
+  [ $(( up - t )) -le 3 ] && [ $(( t - up )) -le 3 ] || return 1
+  DVD_TF="yes"
+  case "${line}" in *'"pause":1'*) DVD_PAUSE=1 ;; esac
+  case "${line}" in *'"still":1'*) DVD_STILL=1 ;; esac
+  case "${line}" in *'"menu":1'*)  DVD_MENUF=1 ;; esac
+  case "${line}" in *'"media":0'*) DVD_MEDIA=0 ;; esac
+  return 0
+}
+
+# Where Main is reading, in sectors, into DVD_R.
+dvd_pos() {
+  local k="" v=""
+  DVD_R=""
+  while read -r k v; do
+    [ "${k}" = "pos:" ] && { DVD_R=$(( v / 2048 )); return 0; }
+  done 2>/dev/null <"${PROC_ROOT:-/proc}/${DVD_PID}/fdinfo/${DVD_FD}"
+  return 1
+}
+
+# CMDMEDIA, when what the firmware shows is not what it should: the state,
+# the title's length or the chapter changed, or its count has drifted two
+# seconds from the daemon's. Firmware 0.8.2b or later; older draws it as text.
+MEDIA_FW_FOR="-"; MEDIA_FW="no"
+sendmedia() {  # sendmedia <state> <seconds in> <length> <chapter> <chapters>
+  local want="${1}|${3}|${4}|${5}" shown=0
+  # Asked once a firmware version, not every look: fw_atleast is two regexes.
+  if [ "${MEDIA_FW_FOR}" != "${FW_VERSION:-}" ]; then
+    MEDIA_FW_FOR="${FW_VERSION:-}"
+    if fw_atleast 0.8.2; then MEDIA_FW="yes"; else MEDIA_FW="no"; fi
+  fi
+  [ "${MEDIA_FW}" = "yes" ] || return 0
+  if [ "${want}" = "${MEDIA_SENT}" ]; then
+    shown="${MEDIA_SENT_POS}"
+    [ "${1}" = "1" ] && shown=$(( shown + (NOW_MS - MEDIA_SENT_AT) / 1000 ))
+    [ "${3}" -gt 0 ] && [ "${shown}" -gt "${3}" ] && shown="${3}"
+    [ $(( shown - ${2} )) -lt 2 ] && [ $(( ${2} - shown )) -lt 2 ] && return 0
+  else
+    dbug "Sending: CMDMEDIA,${1},${2},${3},${4},${5}"
+  fi
+  echo "CMDMEDIA,${1},${2},${3},${4},${5}" >"${TTYDEV}"
+  nap "${CMDWAITSECS:-0.05}"
+  MEDIA_SENT="${want}"; MEDIA_SENT_POS="${2}"; MEDIA_SENT_AT="${NOW_MS}"
+}
+
+# One look: where the film is, and CMDMEDIA if that is news. 2 when the disc
+# has gone, which a pass handles; 0 otherwise.
+dvd_tick() {
+  local r=0 idx=0 title=0 hi=0 lo=0 dt=0 state=1
+  now_ms
+  dvd_find || return 2
+  [ -n "${DVD_KEY}" ] && [ "${DVD_SCANNED}" = "${DVD_DEV}" ] || return 0
+  [ "${#DVD_S[@]}" -gt 0 ] || return 0           # no table: no place to tell
+  dvd_telem
+  dvd_pos || return 2
+  r="${DVD_R}"
+  dt=$(( NOW_MS - ${DVD_AT_PREV:-${NOW_MS}} ))
+  DVD_AT_PREV="${NOW_MS}"
+  # The core says no disc, the descriptor still open: mid-mount. Nothing
+  # plays, and nothing is said.
+  [ "${DVD_TF}" = "yes" ] && [ "${DVD_MEDIA}" = "0" ] && return 0
+
+  # In a menu: nothing to count. The film after it starts where the read is.
+  if [ "${DVD_MENUF}" = "1" ] || { ! dvd_seg "${r}" && dvd_in_menu "${r}"; }; then
+    DVD_R_PREV="${r}"; DVD_TITLE=0; DVD_STATE=4
+    sendmedia 4 0 0 0 0
+    return 0
+  fi
+  if ! dvd_seg "${r}"; then                       # between titles, say: as it was
+    DVD_R_PREV="${r}"
+    return 0
+  fi
+  idx="${_R}"; title="${DVD_TI[idx]}"
+  dvd_ms_at "${idx}" "${r}"; hi="${_R}"
+
+  if [ -z "${DVD_R_PREV}" ]; then
+    # First seen in the middle of a film - the daemon started, the disc was
+    # read just now: the ring is taken to be full.
+    DVD_E_MS=0
+    if dvd_seg $(( r - DVD_LEAD_FULL )) && [ "${DVD_TI[_R]}" = "${title}" ]; then
+      dvd_ms_at "${_R}" $(( r - DVD_LEAD_FULL )); DVD_E_MS="${_R}"
+    fi
+  elif [ "${title}" != "${DVD_TITLE}" ] || [ "${r}" -lt $(( DVD_R_PREV - DVD_BACK_SECTORS )) ] ||
+       [ "${r}" -gt $(( DVD_R_PREV + DVD_JUMP_SECTORS + DVD_JUMP_RATE * dt )) ]; then
+    # Gone somewhere - a seek, a chapter, another title, out of the menu:
+    # the ring starts again from where the core now is.
+    DVD_E_MS="${hi}"
+  elif [ "${DVD_TF}" != "yes" ] || [ "${DVD_PAUSE}${DVD_STILL}" = "00" ]; then
+    DVD_E_MS=$(( DVD_E_MS + dt ))
+  fi
+  # Never ahead of the read, never further behind it than the ring holds.
+  [ "${DVD_E_MS}" -gt "${hi}" ] && DVD_E_MS="${hi}"
+  if dvd_seg $(( r - DVD_LEAD_MAX )) && [ "${DVD_TI[_R]}" = "${title}" ]; then
+    dvd_ms_at "${_R}" $(( r - DVD_LEAD_MAX )); lo="${_R}"
+    [ "${DVD_E_MS}" -lt "${lo}" ] && DVD_E_MS="${lo}"
+  fi
+  DVD_R_PREV="${r}"; DVD_TITLE="${title}"
+
+  if [ "${DVD_TF}" = "yes" ] && [ "${DVD_PAUSE}" = "1" ]; then state=2
+  elif [ "${DVD_TF}" = "yes" ] && [ "${DVD_STILL}" = "1" ]; then state=5; fi
+  DVD_STATE="${state}"
+  dvd_chapter "${title}" "${DVD_E_MS}"
+  sendmedia "${state}" $(( DVD_E_MS / 1000 )) "${DVD_TOTAL}" "${DVD_CHAPTER}" "${DVD_CHAPTERS}"
+  return 0
+}
+
+# Between the passes while the DVD core is up: a look every DVD_TICK_SECS
+# for up to $1 seconds - less when the core changes, the disc goes, or a
+# background job has finished, all of which a pass handles.
+dvd_follow() {  # dvd_follow <seconds>
+  local end=0 core=""
+  now_ms; end=$(( NOW_MS + ${1} * 1000 ))
+  nap 0                                          # its pipe, opened once
+  while :; do
+    core=""; IFS= read -r core 2>/dev/null <"${corenamefile}"
+    [ "${core}" = "${oldcore}" ] || return 0
+    dvd_tick || return 0
+    { bg_running dvs && [ -e "${UC_OUT}.dvs.rc" ]; } && return 0
+    { bg_running dvl && [ -e "${UC_OUT}.dvl.rc" ]; } && return 0
+    now_ms
+    [ "${NOW_MS}" -lt "${end}" ] || return 0
+    nap "${DVD_TICK_SECS}"
+  done
 }
 
 # Send the 86x64 console icon, if one exists for this core.
@@ -2570,6 +2782,8 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
         readcore; newcore="${CURCORE}"			  # get CORENAME, or Degauss/Zaparoo over MENU
         if [ "${SHOW_METADATA}" = "yes" ]; then
           sam_pass                                # the header, before the pictures
+          # The DVD core's telemetry is on only while it is up.
+          if dvd_core "${newcore}" && dvd_screen_on; then dvd_arm; else dvd_disarm; fi
           # Metadata mode. Loading a ROM does not modify /tmp/CORENAME, so
           # watching that file alone never notices a game change - which is
           # why the display used to sit on the core screen forever. Watch the
@@ -2578,6 +2792,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
           if [ "${newcore}" != "${oldcore}" ]; then
             dbug "Read CORENAME: -${newcore}-"
             dbug "Send -${newcore}- to ${TTYDEV}."
+            dvd_core "${oldcore}" && dvd_reset    # its disc is not the next core's
             senddata "${newcore}"
             oldcore=$newcore
           else
@@ -2585,6 +2800,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
             refreshmeta "${newcore}"
           fi
           scummvm_jobs
+          dvd_jobs
           [ "${1}" = "tty2x" ] && exit 9
           deferred_setup						  # the half of startup the picture did not need
           metawatch="$(metawatchlist)"
@@ -2602,8 +2818,14 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
           # back to its launcher: a pass costs ~190ms of CPU on the DE10, and
           # ScummVM runs on the same two cores. The ini's folder is watched, so
           # a game starting is seen at once; the way back takes 5 to 10s.
-          # shellcheck disable=SC2086  # a list; metawatchlist leaves out names with spaces
-          metawait "${mpoll}" ${metawatch}
+          # The DVD core: the film's place looked at every second until the
+          # next pass, instead of a wait. No state file says anything there.
+          if dvd_core "${oldcore}" && dvd_screen_on; then
+            dvd_follow "${mpoll}"
+          else
+            # shellcheck disable=SC2086  # a list; metawatchlist leaves out names with spaces
+            metawait "${mpoll}" ${metawatch}
+          fi
         else
           # Upstream path, unchanged.
           #if [ "$newcore" != "$oldcore" ]; then

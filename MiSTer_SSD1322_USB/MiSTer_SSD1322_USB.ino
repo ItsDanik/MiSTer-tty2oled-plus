@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.8.1b"
+#define BuildVersion "0.8.2b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -688,10 +688,13 @@ void loop(void) {
   // any more at the MiSTer for it. Nor the header's caption, which changes
   // when Super Attract Mode starts or stops - nobody is at it then either.
   // Nor the clock, its time or the header's timer: the daemon keeps them
-  // right on its own schedule, the time once an hour.
+  // right on its own schedule, the time once an hour. Nor a disc's place,
+  // which decides for itself (meta_parseMedia): a pause is someone there, the
+  // film's seconds going by are not.
   if (updateDisplay && !newCommand.startsWith("CMDNOTE,")
       && !newCommand.startsWith("CMDHEAD,") && !newCommand.startsWith("CMDHTIMER,")
-      && !newCommand.startsWith("CMDCLOCK,") && !newCommand.startsWith("CMDSETTIME,"))
+      && !newCommand.startsWith("CMDCLOCK,") && !newCommand.startsWith("CMDSETTIME,")
+      && !newCommand.startsWith("CMDMEDIA,") && newCommand != "CMDMEDIA")
     meta_activity();
 #endif
 
@@ -931,6 +934,10 @@ void loop(void) {
 
     else if (newCommand.startsWith("CMDHTIMER,")) {                         // The header's countdown
       meta_parseTimer(newCommand.c_str());
+    }
+
+    else if (newCommand.startsWith("CMDMEDIA,") || newCommand == "CMDMEDIA") {  // A disc's place, under the layout
+      meta_parseMedia(newCommand.c_str());
     }
 
     else if (newCommand.startsWith("CMDCLOCK,")) {                          // The frontends' clock, in the band

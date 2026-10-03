@@ -14,6 +14,7 @@
 
 #include "stubs/arduino_stubs.h"
 #include <string>
+#include <algorithm>
 
 // Included before ESP32X is defined, so the ESP8266 branch compiles and no
 // LittleFS is needed. That is itself the point of the test below: the boot
@@ -3847,6 +3848,234 @@ int main() {
         meta_parseTimer("CMDHTIMER,");
         meta_parseHead("CMDHEAD,");
         meta_reset();
+        transition_cancel();
+    }
+
+    section("CMDMEDIA: the transport band's rows");
+    {
+        okInt ("the band is the last field row",       MEDIA_BAND_Y, CON_FIELD_Y0 + 3 * CON_FIELD_PITCH);
+        okInt ("its glyphs start on row 56",           MEDIA_BAND_TOP, 56);
+        okBool("and end on the panel",                 MEDIA_BAND_Y <= DispHeight - 1, true);
+        okInt ("the icon keeps rows 0..54",            MEDIA_ICON_ROWS, 55);
+        okInt ("one blank row above the band",         MEDIA_BAND_TOP - MEDIA_ICON_ROWS, 1);
+        okBool("the bar inside the glyphs' rows",
+               MEDIA_BAR_Y >= MEDIA_BAND_TOP && MEDIA_BAR_Y + MEDIA_BAR_H <= MEDIA_BAND_Y + 1, true);
+        okInt ("centred on them",                      (MEDIA_BAR_Y - MEDIA_BAND_TOP) * 2 + MEDIA_BAR_H, MEDIA_ICON_H);
+        // The last field row left above the band ends above the blank row.
+        okBool("the fields stop above it",
+               CON_FIELD_Y0 + (CON_FIELD_ROWS - MEDIA_ROWS) * CON_FIELD_PITCH < MEDIA_BAND_TOP - 1, true);
+        okBool("quiet: the boot screen, bar and band stay", boot_quietCommand("CMDMEDIA,1,0,0,0,0"), true);
+    }
+
+    section("CMDMEDIA: parsed and clamped");
+    {
+        meta_reset();
+        meta_parseMedia("CMDMEDIA,1,1945,6219,8,25");
+        okInt ("state",            mediaState, MEDIA_PLAY);
+        okInt ("seconds in",       mediaPos, 1945);
+        okInt ("seconds long",     mediaTotal, 6219);
+        okInt ("chapter",          mediaChapter, 8);
+        okInt ("of",               mediaChapters, 25);
+        meta_parseMedia("CMDMEDIA,2,-5,999999999,-1,5000");
+        okInt ("a negative place is 0",  mediaPos, 0);
+        okInt ("a length capped",        mediaTotal, MEDIA_MAX_SECS);
+        okInt ("a chapter not below 0",  mediaChapter, 0);
+        okInt ("nor above 999",          mediaChapters, MEDIA_MAX_CHAPTER);
+        meta_parseMedia("CMDMEDIA,9,1,2,3,4");
+        okInt ("an unknown state is none", mediaState, MEDIA_OFF);
+        meta_parseMedia("CMDMEDIA,1,1,2,3,4");
+        meta_parseMedia("CMDMEDIA,");
+        okInt ("nothing after the comma: none", mediaState, MEDIA_OFF);
+        meta_parseMedia("CMDMEDIA,4");
+        okInt ("the state alone",        mediaState, MEDIA_MENU);
+        meta_parseMedia("CMDMEDIA");
+        okInt ("no comma at all: none",  mediaState, MEDIA_OFF);
+
+        char t[16];
+        media_timeText(65, 6219, t, sizeof(t));   ok("an hour long: h:mm:ss", t, "0:01:05");
+        media_timeText(65, 40000, t, sizeof(t));  ok("ten hours: hh:mm:ss",   t, "00:01:05");
+        media_timeText(65, 1200, t, sizeof(t));   ok("ten minutes: mm:ss",    t, "01:05");
+        media_timeText(65, 300, t, sizeof(t));    ok("under that: m:ss",      t, "1:05");
+        media_timeText(3725, 300, t, sizeof(t));  ok("more than its length: still minutes", t, "62:05");
+    }
+
+    section("CMDMEDIA: the split layout with a disc's place under it");
+    {
+        transition_cancel();
+        meta_reset();
+        meta_parse("CMDMETA,2,10,0,0,Queen on Fire - Live at the Bowl|Year=2004|Studio=EMI/Parlophone"
+                   "|Genre=Rock|Director=Gavin Taylor");
+        meta_parseMedia("CMDMEDIA,1,1945,6219,8,25");
+        metaNeedsDraw = false; coreBootHolding = false;
+        okInt ("two field rows left",                  meta_conRows(), 2);
+        okInt ("four fields: two pages",               meta_pageCount(), 2);
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        const FakeU8g2::Draw *lab = u8g2.find(MEDIA_LABEL);
+        const FakeU8g2::Draw *ch  = u8g2.find("8/25");
+        const FakeU8g2::Draw *yr  = u8g2.find("Year");
+        okBool("the chapter row",                      lab && ch, true);
+        if (lab) okInt("first, on the first field row", lab->y, CON_FIELD_Y0);
+        okBool("its label dimmed",                     lab && lab->fg == MEDIA_DIM, true);
+        if (yr)  okInt("the fields after it",          yr->y, CON_FIELD_Y0 + CON_FIELD_PITCH);
+        // "Chapter" is the widest label, so the values line up after it.
+        const FakeU8g2::Draw *yv = u8g2.find("2004");
+        if (ch && yv) okInt("one value column, the chapter's included", ch->x, yv->x);
+        if (yv) okInt("past the widest label, Director", yv->x, meta_textX() + 8 * 5 + 5);
+        okBool("this page's two fields",               u8g2.find("Studio") != nullptr && u8g2.find("Genre") == nullptr, true);
+        bool fieldInBand = false;
+        for (const auto &d : u8g2.draws)
+            if (d.y > MEDIA_BAND_TOP - 2 && d.y != MEDIA_BAND_Y) fieldInBand = true;
+        okBool("nothing between the fields and the band", fieldInBand, false);
+
+        const FakeU8g2::Draw *in  = u8g2.find("0:32:25");
+        const FakeU8g2::Draw *len = u8g2.find("1:43:39");
+        okBool("the time in, and the length",          in && len, true);
+        if (in && len) {
+            okInt ("on the band's baseline",           in->y, MEDIA_BAND_Y);
+            okInt ("in 5x7",                           in->charW, 5);
+            okInt ("after the icon and a gap",         in->x, MEDIA_X + MEDIA_ICON_W + MEDIA_GAP);
+            okInt ("the length against the right edge", len->x + 7 * 5, DispWidth - CON_TITLE_X);
+            okBool("the length dimmed",                len->fg == MEDIA_DIM, true);
+        }
+        // The bar between them: a track, the part played, and the place.
+        const int barX = MEDIA_X + MEDIA_ICON_W + MEDIA_GAP + 35 + MEDIA_GAP;
+        const int barW = (DispWidth - CON_TITLE_X - 35) - MEDIA_GAP - barX;
+        bool track = false, played = false, knob = false;
+        for (const auto &r : oled.rects) {
+            if (r.x == barX && r.y == MEDIA_BAR_Y && r.w == barW && r.color == MEDIA_TRACK) track = true;
+            if (r.x == barX && r.y == MEDIA_BAR_Y && r.w == barW * 1945 / 6219 && r.color == SSD1322_WHITE) played = true;
+            if (r.y == MEDIA_BAND_TOP && r.h == MEDIA_ICON_H && r.w == MEDIA_KNOB_W &&
+                r.x == barX + barW * 1945 / 6219 - 1) knob = true;
+        }
+        okBool("the track, the bar's width",           track, true);
+        okBool("the part played, in proportion",       played, true);
+        okBool("the place on it",                      knob, true);
+        // The play arrow: seven columns, 7, 7, 5, 5, 3, 3, 1 high.
+        int cols = 0;
+        for (const auto &v : oled.vlines) if (v.x >= MEDIA_X && v.x < MEDIA_X + MEDIA_ICON_W && v.y >= MEDIA_BAND_TOP) cols++;
+        okInt ("the play arrow",                       cols, MEDIA_ICON_W);
+        okBool("no text past the icon column",         u8g2.maxRight <= DispWidth, true);
+
+        // The seconds count on with no command; the arrow flashes. One page,
+        // and a short title: no pip blinks and no marquee to muddle what a
+        // tick drew.
+        meta_parse("CMDMETA,2,10,0,0,Queen on Fire|Year=2004|Studio=EMI/Parlophone");
+        meta_parseMedia("CMDMEDIA,1,1945,6219,8,25");
+        metaNeedsDraw = false; mediaRedraw = false; metaHeadRedraw = false;
+        meta_showConsole();
+        u8g2.resetProbe(); oled.resetProbe();
+        g_fakeMillis += 300;
+        okBool("nothing to draw inside the half second", meta_tick(), false);
+        g_fakeMillis += 250;
+        u8g2.resetProbe(); oled.resetProbe();
+        okBool("the arrow's dark half: drawn",         meta_tick(), true);
+        cols = 0;
+        for (const auto &v : oled.vlines) if (v.x >= MEDIA_X && v.x < MEDIA_X + MEDIA_ICON_W && v.y >= MEDIA_BAND_TOP) cols++;
+        okInt ("without it",                           cols, 0);
+        g_fakeMillis += 500;
+        u8g2.resetProbe(); oled.resetProbe();
+        okBool("a second on: drawn",                   meta_tick(), true);
+        okBool("a second more",                        u8g2.find("0:32:26") != nullptr, true);
+
+        // Paused: nothing moves, nothing is drawn.
+        meta_parseMedia("CMDMEDIA,2,1946,6219,8,25");
+        okBool("arriving over the layout: drawn",      meta_tick(), true);
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        okInt ("paused: two bars",                     (int)std::count_if(oled.rects.begin(), oled.rects.end(),
+               [](const FakeOled::Rect &r) { return r.y == MEDIA_BAND_TOP && r.h == MEDIA_ICON_H && r.w == 2 && r.x < MEDIA_X + MEDIA_ICON_W; }), 2);
+        meta_showConsole();
+        bool still = true;
+        for (int i = 0; i < 20; i++) { g_fakeMillis += 250; if (meta_tick()) still = false; }
+        okBool("and five seconds of nothing",          still, true);
+        okBool("the same second",                      media_elapsed(g_fakeMillis) == 1946, true);
+
+        // Playing on to the end stops there.
+        meta_parseMedia("CMDMEDIA,1,6218,6219,25,25");
+        g_fakeMillis += 10000;
+        okInt ("never past the length",                media_elapsed(g_fakeMillis), 6219);
+
+        // The menu: no time to tell, so its name; no chapter.
+        meta_parseMedia("CMDMEDIA,4,0,6219,0,25");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        okBool("the disc's menu, in words",            u8g2.find("Disc menu") != nullptr, true);
+        okBool("no bar",                               std::none_of(oled.rects.begin(), oled.rects.end(),
+               [](const FakeOled::Rect &r) { return r.y == MEDIA_BAR_Y && r.h == MEDIA_BAR_H; }), true);
+        okBool("no times",                             u8g2.find("1:43:39") == nullptr, true);
+        const FakeU8g2::Draw *dash = u8g2.find("-");
+        okBool("no chapter",                           dash && dash->y == CON_FIELD_Y0, true);
+        okInt ("three lines for an icon",              (int)std::count_if(oled.hlines.begin(), oled.hlines.end(),
+               [](const FakeOled::HLine &h) { return h.y >= MEDIA_BAND_TOP && h.w == MEDIA_ICON_W; }), 3);
+
+        // No length known yet: the state in words.
+        meta_parseMedia("CMDMEDIA,1,0,0,0,0");
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        okBool("no length: Playing, no bar",           u8g2.find("Playing") != nullptr &&
+               std::none_of(oled.rects.begin(), oled.rects.end(),
+               [](const FakeOled::Rect &r) { return r.y == MEDIA_BAR_Y && r.h == MEDIA_BAR_H; }), true);
+
+        // The page fade turns only the rows between the chapter and the band.
+        meta_parse("CMDMETA,2,10,0,0,Queen on Fire - Live at the Bowl|Year=2004|Studio=EMI/Parlophone"
+                   "|Genre=Rock|Director=Gavin Taylor");
+        meta_parseMedia("CMDMEDIA,1,100,6219,2,25");
+        metaNeedsDraw = false; mediaRedraw = false;
+        int x, w, y0, y1;
+        meta_consolePagedRect(&x, &w, &y0, &y1);
+        okInt ("the page fade starts under the chapter", y0, CON_FIELD_Y0 + CON_FIELD_PITCH - CON_FIELD_ASCENT);
+        okInt ("and stops above the band",             y1, MEDIA_BAND_TOP - 1);
+        meta_consolePagedRect(&x, &w, &y0, &y1, true);
+        okInt ("to the description: the chapter too",  y0, DESC_TOP);
+        // ...and the band keeps counting through it.
+        meta_showConsole();
+        lastPageTick = g_fakeMillis - 10000;
+        okBool("a page turns",                         meta_tick() && pf_active(), true);
+        g_fakeMillis += 1000;
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_tick();
+        okBool("the band counts during the fade",      u8g2.find("0:01:41") != nullptr, true);
+        settlePageFade();
+
+        // The description page: the band stays, the chapter row is its.
+        meta_setDesc("A concert.", 10);
+        fieldPage = meta_fieldPageCount();
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderConsole();
+        okBool("the description",                      u8g2.find("A concert.") != nullptr, true);
+        okBool("no chapter row on it",                 u8g2.find(MEDIA_LABEL) == nullptr, true);
+        okBool("the band under it",                    u8g2.find("1:43:39") != nullptr, true);
+        fieldPage = 0;
+
+        // The icon stops above the band.
+        memset(oled.buf, 0xAA, sizeof(oled.buf));
+        memset(iconBin, 0x5C, sizeof(iconBin));
+        metaHasIcon = true;
+        meta_blitIcon();
+        okInt ("the icon's last row above the band",   oled.buf[54 * 128 + ICON_X / 2], 0x5C);
+        okInt ("and none on the blank row",            oled.buf[55 * 128 + ICON_X / 2], 0xAA);
+        okInt ("nor in the band",                      oled.buf[63 * 128 + ICON_X / 2], 0xAA);
+        metaHasIcon = false;
+
+        // Waking: a pause is someone at the MiSTer; the seconds are not.
+        metaDimmed = true;
+        meta_parseMedia("CMDMEDIA,1,200,6219,3,25");
+        okBool("the seconds moving: still dim",        metaDimmed, true);
+        meta_parseMedia("CMDMEDIA,2,200,6219,3,25");
+        okBool("paused: awake",                        metaDimmed, false);
+
+        // Kept across a new CMDMETA - the same disc, found on Wikipedia.
+        meta_parse("CMDMETA,2,10,0,0,Queen on Fire|Year=2004");
+        okInt ("a new CMDMETA keeps it",               mediaState, MEDIA_PAUSE);
+        // The card has no band, whatever is set.
+        meta_parse("CMDMETA,1,12,NBA Jam|Year=1993|Manufctr=Midway");
+        okBool("not on the arcade card",               meta_mediaOn(), false);
+        u8g2.resetProbe(); oled.resetProbe();
+        meta_renderCard();
+        okBool("nothing of it drawn there",            u8g2.find(MEDIA_LABEL) == nullptr && u8g2.find("Paused") == nullptr, true);
+        meta_reset();
+        okInt ("CMDMETAOFF forgets it",                mediaState, MEDIA_OFF);
         transition_cancel();
     }
 

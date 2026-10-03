@@ -4,6 +4,27 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.8.2b — 2026-10-03
+
+- **Films on the DVD core.** With owenb321's DVD core playing a disc - in
+  the drive or as an ISO - the display shows the film the way it shows a
+  game: its title, year, studio, director and the rest beside a DVD icon,
+  and its description as the last page. Under them runs a band with what
+  the player is doing - a flashing play arrow, pause, the disc's menu - the
+  time in and the film's length either side of a bar, and the chapter above
+  the details.
+- **What the film is comes from Wikipedia**, looked up once per disc by its
+  label (an ISO by its file name) and kept in `scraped/DVD.txt`, where a
+  wrong guess can be corrected by hand. A disc Wikipedia does not know shows
+  its label, made readable. Settings → *Films on the DVD core* turns either
+  part off, and picks the details shown.
+- **The DVD core has a banner**, shown when the core starts and while no
+  disc is in, instead of its name as text.
+- The core only says whether it is playing or paused while
+  `/media/fat/dvd_hil` exists, so the display creates that file while the DVD
+  core runs and removes it afterwards.
+- The band needs this firmware; with older firmware the rest still shows.
+
 ## 0.8.1b — 2026-09-30
 
 - **SAM's countdown keeps time with SAM.** SAM's seconds run a little

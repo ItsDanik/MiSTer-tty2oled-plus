@@ -74,6 +74,33 @@ another game or quit.
 DOS and SCUMM under the title, the game's icon
 beside them](docs/img/console-scummvm.png)
 
+**Films on the DVD core** ([owenb321's MiSTer_DVD](https://github.com/owenb321/MiSTer_DVD))
+get the console layout with a DVD beside the details, and a band under both:
+a play arrow that flashes while the film plays (two bars when paused, three
+lines in the disc's menu), the time in and the film's length either side of
+a bar, and the chapter above the details. It works the same for a disc in a
+USB drive and for an ISO. What the film is - title, year, studio, director,
+the band of a concert - comes from Wikipedia, looked up once per disc by the
+disc's label (an ISO by its file name). A disc Wikipedia does not know shows
+its label, made readable. The description page is the article's
+introduction.
+
+![Queen on Fire - Live at the Bowl: chapter 9 of 25, 2004 and EMI/Parlophone,
+a DVD beside them, and under them the play arrow, 0:38:46, a bar a third full
+and 1:43:39](docs/img/dvd-playing.png)
+
+![The same, paused: two bars](docs/img/dvd-paused.png)
+
+![In the disc's menu: three lines and "Disc menu", no chapter](docs/img/dvd-menu.png)
+
+The core reports whether it is playing, paused or in the menu only while
+the file `/media/fat/dvd_hil` exists - its developer's test switch - so
+tty2oled+ creates it while the DVD core runs and removes it afterwards. Where
+in the film you are, the core does not report at all: the display works it
+out from where the core is reading the disc, which runs half a minute ahead
+of the picture, so a time can be a second or two out for a moment after you
+skip.
+
 **Computer cores** show the core's artwork full-screen, and nothing else, yet.  
 Computer metadata support coming in the future.
 
@@ -264,6 +291,16 @@ games: their details come from ScummVM itself — its settings say which game
 is running, on which platform and in which language, and its icon packs
 (`gui-icons-*.dat`, already on your SD card) carry its games list and a
 picture for each game.
+
+Films on the DVD core come from Wikipedia: the first time a disc is played,
+its label - `QUEEN_ON_FIRE_AT_THE_BOWL`, made readable - or an ISO's file
+name is searched for, and the article's infobox gives the year, studio (or
+record label), director and band, its introduction the description. The
+answer is kept in `scraped/DVD.txt`, one disc a line, so each disc is asked
+about once. A wrong guess can be corrected there by hand - the line's fourth
+field is the title, and a correction is never overwritten; a disc nobody
+knew is asked about again after 30 days. The chapters and times come from the
+disc itself, read once and kept in `cache/dvd`.
 
 Cores are named on screen the way your MiSTer menu names them, from `names.txt`
 if you have one.

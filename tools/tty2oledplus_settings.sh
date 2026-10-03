@@ -63,13 +63,14 @@ die()  { printf '\n*** %s\n' "$1" >&2; exit 1; }
 
 # The picture-variant and screensaver options that used to be excluded here
 # are gone from the release entirely (0.4.10b, 0.4.9b).
-CATEGORIES="display console arcade panel transition updates advanced"
+CATEGORIES="display console arcade dvd panel transition updates advanced"
 
 cat_label() {
   case "$1" in
     display)    printf 'What the display shows' ;;
     console)    printf 'Console game details' ;;
     arcade)     printf 'Arcade info card' ;;
+    dvd)        printf 'Films on the DVD core' ;;
     panel)      printf 'Brightness and burn-in' ;;
     transition) printf 'Changing picture' ;;
     updates)    printf 'While updates run' ;;
@@ -81,6 +82,7 @@ cat_label() {
 # the filename and the title index; arcade fields are the tags an .mra carries,
 # and the five an imported gamelist adds.
 CONSOLE_FIELDS_ALL="System Region Year Company Genre Developer Format Platform Engine Language Players Rating Released Series"
+DVD_FIELDS_ALL="Year Studio Director Artist Genre Runtime Titles Label"
 ARCADE_FIELDS_ALL="Year Manufacturer Region Orientation Core Author Set MAME Genre Platform Version Players Controls Buttons Developer Publisher Rating Released Series"
 
 # The transition effects, as tty2oled-system.ini lists them. Kept in step with
@@ -121,6 +123,12 @@ EOS
 ARCADE_FIELDS|list|ARCADE_FIELDS_ALL|Short fields|Fields whose values are short: they pair up two to a row, four rows to a page.
 ARCADE_FIELDS_WIDE|list|ARCADE_FIELDS_ALL|Full-width fields|Fields whose values need a row to themselves - button names, control types.
 ARCADE_PINNED|prefix|ARCADE_FIELDS|Row repeated on every page|The top row of the grid, repeated above the full-width pages. It can only be the first of the short fields, so pick how far along it runs.
+EOS
+    ;;
+    dvd) cat <<'EOS'
+DVD_SCREEN|bool||A film's details and place|A disc or ISO on the DVD core gets its title and details, with play or pause, the time and the chapter under them. Off shows the DVD core as any other core.
+DVD_LOOKUP|bool||Look films up on Wikipedia|Once a disc, by its label or an ISO's name; kept in scraped/DVD.txt, which you may correct. Off shows the label alone.
+DVD_FIELDS|list|DVD_FIELDS_ALL|Fields to show|Which details appear under a film's title, in this order. Two fit beside the chapter; any more take turns.
 EOS
     ;;
     panel) cat <<'EOS'

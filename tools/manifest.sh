@@ -28,12 +28,15 @@ MANIFEST_FILES="tty2oled.sh tty2oled-meta.sh tty2oled-system.ini
 # daemon's system update check, run in the background. tty2oledplus_scummvm.py
 # builds ScummVM's games index and icons, in the background too - importing
 # png2gsc.py and the scraper's fold(), which is why they sit beside it.
+# tty2oledplus_dvd.py reads a DVD's titles and chapters off the disc and asks
+# Wikipedia what it is, in the background beside the DVD core; it imports the
+# scraper's fold() and database helpers.
 # tty2oled-port.sh is sourced by the daemon, S60tty2oled and the tools that
 # talk to the display: which port it is on, and our own node to write through.
 MANIFEST_TOOLS="tools/tty2oled-diag.sh tools/flash-mister.sh tools/fw-segments.py
                 tools/tty2oled-capture.sh tools/tty2oled-bootimg.sh tools/tty2oled-boothook.sh
                 tools/png2gsc.py tools/tty2oledplus_scrape.py tools/tty2oledplus_syscheck.py
-                tools/tty2oledplus_scummvm.py tools/tty2oled-port.sh"
+                tools/tty2oledplus_scummvm.py tools/tty2oled-port.sh tools/tty2oledplus_dvd.py"
 
 # What the launcher opens: the updater, the settings editor, the
 # uninstaller and the scraper's menu. They live in the install folder, not in the Scripts menu -
