@@ -144,17 +144,6 @@ ssh "${MISTER}" true || die "cannot reach ${MISTER}.
   If the name does not resolve, give the address:  MISTER=root@192.168.1.50 $0
   If it asks for a password every time:            ssh-copy-id ${MISTER}"
 
-# Upstream installed beside us would be started by its own boot hook on the
-# same serial port, and the init script refuses to start ours while it is
-# there - so a deploy would copy everything and then fail to start. Stop here
-# instead, before anything is copied.
-UPSTREAM_DIR="/media/fat/tty2oled"
-if ssh "${MISTER}" "[ -e ${UPSTREAM_DIR}/tty2oled.sh ] || [ -e ${UPSTREAM_DIR}/S60tty2oled ]"; then
-  die "upstream tty2oled is installed on ${MISTER} in ${UPSTREAM_DIR}.
-  tty2oled+ replaces it; the two are not made to run side by side. Remove it:
-    ssh ${MISTER} '${UPSTREAM_DIR}/S60tty2oled stop; rm -rf ${UPSTREAM_DIR} /media/fat/Scripts/update_tty2oled.sh'"
-fi
-
 say "Copying scripts to ${MISTER}:${REMOTE}"
 # The folder is this fork's own, so on a first deploy there is nothing there
 # to copy into yet.
@@ -266,6 +255,12 @@ ssh "${MISTER}" "
 # after a reboot. The script runs remotely off stdin, so the MiSTer gets it
 # verbatim and only REMOTE crosses over; tests/test-deploy.sh runs the same
 # file against fixtures.
+# Upstream may be installed beside us, and stays. Only one daemon can have the
+# port: its daemon is stopped here, and the boot hook script comments out its
+# line in user-startup.sh.
+UPSTREAM_DIR="/media/fat/tty2oled"
+ssh "${MISTER}" "[ -x ${UPSTREAM_DIR}/S60tty2oled ] && ${UPSTREAM_DIR}/S60tty2oled stop" || true
+
 say "Checking the boot hook"
 ssh "${MISTER}" "REMOTE='${REMOTE}' bash -s" < "${BOOTHOOK}"
 

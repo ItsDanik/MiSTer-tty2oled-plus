@@ -92,12 +92,16 @@ leads_group() {
   [ "${f[2]:-}" = "${1}" ]
 }
 
-# Upstream tty2oled, installed in its own folder. tty2oled+ replaces it rather
-# than running beside it: both drive the same serial port and neither knows
-# the other is there. Overridable for tests/test-daemon.sh.
+# Upstream tty2oled, installed in its own folder. The two may sit side by side
+# on the disk, and user-startup.sh says which one starts at boot - but both
+# drive the same serial port and neither knows the other is there, so ours
+# does not start while upstream's daemon runs. Nothing is searched for unless
+# upstream is installed; then it is one grep, not a process per pid, because
+# this runs at boot. Overridable for tests/test-daemon.sh.
 UPSTREAM_DIR="${UPSTREAM_DIR:-/media/fat/tty2oled}"
-upstream_installed() {
-  [ -e "${UPSTREAM_DIR}/tty2oled.sh" ] || [ -e "${UPSTREAM_DIR}/S60tty2oled" ]
+upstream_running() {
+  [ -e "${UPSTREAM_DIR}/tty2oled.sh" ] || return 1
+  [ -n "$(grep -lsF "${UPSTREAM_DIR}/tty2oled.sh" /proc/[0-9]*/cmdline 2>/dev/null)" ]
 }
 
 # Start
@@ -229,13 +233,12 @@ start() {
 
     # Refused before anything else, and said where it will be read: at boot
     # nobody sees stdout, so the daemon log gets it too.
-    if upstream_installed; then
-      local msg="Upstream tty2oled is installed in ${UPSTREAM_DIR}. tty2oled+ replaces it
-and the two are not made to run side by side, so ${DAEMONNAME} will not start.
-Remove it first:
+    if upstream_running; then
+      local msg="Upstream tty2oled (${UPSTREAM_DIR}) is running and has the display's port,
+so ${DAEMONNAME} will not start. One display takes one daemon. Stop it first:
   ${UPSTREAM_DIR}/S60tty2oled stop
-  rm -rf ${UPSTREAM_DIR} /media/fat/Scripts/update_tty2oled.sh
-Its line in /media/fat/linux/user-startup.sh does nothing once the folder is gone."
+and to keep it from starting at boot, comment out its line in
+/media/fat/linux/user-startup.sh."
       echo "${msg}"
       echo "${msg}" >>"${DAEMONLOG}" 2>/dev/null
       exit 1

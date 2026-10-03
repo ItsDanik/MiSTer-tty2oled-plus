@@ -100,11 +100,17 @@ GPLv3, on `main` (upstream `50c08ac` plus this fork). Upstream shows one
 picture per **core**; this shows the **game**.
 
 - **Install folder `/media/fat/tty2oledplus`** (upstream: `/media/fat/tty2oled`),
-  so neither updater overwrites the other. It **replaces** upstream (one serial
-  port; two boot hooks would start two daemons): while `/media/fat/tty2oled`
-  holds upstream's `tty2oled.sh` or `S60tty2oled`, the installer, the deploy
-  and `S60tty2oled start` refuse (start also logs to `DAEMONLOG`); `stop` and
-  `status` still work. The README's move-the-folder migration satisfies all.
+  so neither updater overwrites the other. **The two may be installed side
+  by side** (0.8.5b; before, everything refused while upstream's folder
+  existed) but one serial port takes one daemon, and `user-startup.sh` is
+  the switch: `boothook` comments out upstream's live line under
+  `UPSTREAM_OFF_NOTE` **only while ours is live** - ours commented out means
+  the user switched, and an update must not switch back. The updater and the
+  deploy stop upstream's daemon (never remove anything); `S60tty2oled start`
+  refuses only while upstream's daemon is **running** (one `grep -l` over
+  `/proc/*/cmdline`, and none unless its `tty2oled.sh` exists), logging to
+  `DAEMONLOG`. The uninstaller uncomments a line only directly under that
+  note. Firmware is the user's to match; upstream is not otherwise supported.
 - **Everything else keeps upstream's spelling** - script/ini names,
   `S60tty2oled`, NVS namespace, serial protocol - so existing instructions and
   muscle memory keep working.
@@ -1059,8 +1065,7 @@ row 57..63  build version        BOOT_VER_Y, 5x7 font
 - The installer checks every download against `SHA256SUMS` **before changing
   anything**; installs `tty2oled-user.ini`/`coretypes.ini` only when missing;
   flashes only on a version mismatch and only for the board the display names
-  (or `--board`); refuses while upstream is installed or its daemon holds the
-  port; restarts the daemon however it ends. No "press a key" - MiSTer's
+  (or `--board`); stops upstream's daemon if it holds the port; restarts the daemon however it ends. No "press a key" - MiSTer's
   Scripts wrapper already does.
 - The starter fetches and verifies the latest updater, runs it, and deletes
   itself only after success left the launcher beside it. Its temp dir is a
@@ -1078,8 +1083,8 @@ row 57..63  build version        BOOT_VER_Y, 5x7 font
 - **Boot hook**: `[ -e /media/fat/tty2oledplus/S60tty2oled ] && /media/fat/tty2oledplus/S60tty2oled $1`
   at the **top** of `user-startup.sh` (created from `_user-startup.sh` if
   absent), matched on the full path. An existing hook elsewhere, or commented
-  out, is reported and left alone. Warns if upstream's hook and `S60tty2oled`
-  are both live.
+  out, is reported and left alone. Upstream's live hook is commented out
+  while ours is live.
 
 ## Title index and core names
 

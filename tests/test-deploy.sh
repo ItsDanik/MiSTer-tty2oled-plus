@@ -117,25 +117,47 @@ section "boot hook: an upstream install"
 # deciding the job was done. Upstream's line names another folder.
 UPLINE="[ -e ${UPSTREAM} ] && ${UPSTREAM} \$1"
 reset
-printf '#!/bin/sh\n%s\n' "${UPLINE}" > "${US}"
-OUT="$(hook)"
-ok "an upstream hook does not count as ours" "$(grep -cxF "${HOOKLINE}" "${US}")" "1"
-ok "and is kept" "$(grep -cxF "${UPLINE}" "${US}")" "1"
-ok "no warning while upstream is not installed" "$(printf '%s' "${OUT}" | grep -c WARNING)" "0"
-
-# Both installed and both hooked: two daemons on one serial port at boot.
-reset
-printf '#!/bin/sh\n%s\n' "${UPLINE}" > "${US}"
+printf '#!/bin/sh\n%s\necho other\n' "${UPLINE}" > "${US}"
 touch "${UPSTREAM}"
 OUT="$(hook)"
-ok "both active warns about the serial port" "$(printf '%s' "${OUT}" | grep -c WARNING)" "1"
-ok "without touching upstream's line" "$(grep -cxF "${UPLINE}" "${US}")" "1"
+ok "an upstream hook does not count as ours" "$(grep -cxF "${HOOKLINE}" "${US}")" "1"
+
+# Both installed, and installed they stay - but both hooked is two daemons on
+# one serial port at boot. Ours starts; upstream's line is commented out, not
+# removed, so that going back is an edit.
+ok "upstream's line is switched off" "$(grep -cxF "${UPLINE}" "${US}")" "0"
+ok "by commenting it out, whole" "$(grep -cxF "#${UPLINE}" "${US}")" "1"
+ok "under a note saying who did it" "$(grep -B1 -xF "#${UPLINE}" "${US}" | head -n1)" "${UPSTREAM_OFF_NOTE}"
+ok "and the output says so" "$(printf '%s' "${OUT}" | grep -c "switched off upstream tty2oled's line")" "1"
+ok "nothing else in the file is touched" "$(tail -n1 "${US}")" "echo other"
+ok "the file is still executable" "$(yesno test -x "${US}")" "yes"
+ok "no temporary file left behind" "$(ls "${H}" | grep -c '\.tty2oled\.')" "0"
+FIRST="$(cat "${US}")"
+OUT="$(hook)"
+ok "a second run changes nothing" "$(cat "${US}")" "${FIRST}"
+ok "and has nothing to say about upstream" "$(printf '%s' "${OUT}" | grep -c upstream)" "0"
+
+# The folder gone today is the folder back tomorrow, and upstream's updater
+# will not add a line while it can read "tty2oled" in the file.
+reset
+printf '#!/bin/sh\n%s\n' "${UPLINE}" > "${US}"
+hook >/dev/null
+ok "switched off whether or not upstream is installed now" "$(grep -cxF "#${UPLINE}" "${US}")" "1"
+
+# The switch back: ours commented out, upstream's live. An update must not
+# undo the user's choice.
+reset
+printf '#!/bin/sh\n# %s\n%s\n' "${HOOKLINE}" "${UPLINE}" > "${US}"
+touch "${UPSTREAM}"
+BEFORE="$(cat "${US}")"
+hook >/dev/null
+ok "with ours commented out, upstream's line is left live" "$(cat "${US}")" "${BEFORE}"
 
 reset
 printf '#!/bin/sh\n# %s\n' "${UPLINE}" > "${US}"
 touch "${UPSTREAM}"
-OUT="$(hook)"
-ok "a commented-out upstream hook is no conflict" "$(printf '%s' "${OUT}" | grep -c WARNING)" "0"
+hook >/dev/null
+ok "an upstream hook already commented out is not commented again" "$(grep -c "^#.*${UPSTREAM}" "${US}")|$(grep -cF "${UPSTREAM_OFF_NOTE}" "${US}")" "1|0"
 
 # ===========================================================================
 # The deploy, against a fake MiSTer
@@ -241,13 +263,15 @@ ok "an unreachable MiSTer fails" "${RC}" "1"
 ok "after only the connection test" "$(grep -c '^SCP' "${LOG}")" "0"
 ok "and says how to give the address" "$(grep -c 'MISTER=root@' "${TMP}/out")" "1"
 
-# Upstream installed on the MiSTer: stop before copying anything. The init
-# script would refuse to start ours anyway, after the copy.
+# Upstream installed on the MiSTer is no reason to stop: the two sit side by
+# side. Its daemon is stopped before ours is started, and nothing of it removed.
 FAKE_UPSTREAM=yes deploy; RC="${?}"
-ok "upstream installed on the MiSTer fails" "${RC}" "1"
-ok "before anything is copied" "$(grep -c '^SCP' "${LOG}")" "0"
-ok "or the daemon touched" "$(grep -c 'S60tty2oled \(stop\|start\|restart\)' "${LOG}")" "0"
-ok "and says why and how to remove it" "$(grep -c 'not made to run side by side' "${TMP}/out")|$(grep -c 'rm -rf /media/fat/tty2oled ' "${TMP}/out")" "1|1"
+ok "upstream installed on the MiSTer does not stop the deploy" "${RC}" "0"
+ok "the scripts are copied" "$(yesno test "$(grep -c '^SCP' "${LOG}")" -gt 0)" "yes"
+UPSTOP="$(grep -n '/media/fat/tty2oled/S60tty2oled stop' "${LOG}" | head -n1 | cut -d: -f1)"
+OURS="$(grep -n 'tty2oledplus/S60tty2oled restart' "${LOG}" | head -n1 | cut -d: -f1)"
+ok "upstream's daemon is stopped before ours is restarted" "$(yesno test "${UPSTOP:-999}" -lt "${OURS:-0}")" "yes"
+ok "and nothing of upstream's is removed" "$(grep -c 'rm -rf /media/fat/tty2oled' "${LOG}")" "0"
 
 section "deploy: scripts only"
 

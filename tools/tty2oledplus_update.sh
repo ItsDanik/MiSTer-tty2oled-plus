@@ -31,9 +31,10 @@
 #     entry of ours there - with this, the settings editor and the uninstaller
 #     in the install folder for it to run, and removes the separate entries
 #     those had before 0.6.3b once the launcher is there
-#   - refuses to run at all while upstream tty2oled is installed in
-#     /media/fat/tty2oled - tty2oled+ replaces it, the two are not made to run
-#     side by side - and never touches that install itself
+#   - leaves an upstream tty2oled in /media/fat/tty2oled where it is: the two
+#     can be installed side by side. Only one can have the display, so this
+#     stops upstream's daemon and comments out its line in user-startup.sh;
+#     going back is editing that file (and flashing upstream's firmware)
 
 REPO="ItsDanik/MiSTer-tty2oled-plus"
 
@@ -134,21 +135,29 @@ identify_display() {
 }
 
 # Upstream's daemon holds the same serial port, and both at once garble the
-# display and make flashing fail halfway.
-upstream_running() {
+# display and make flashing fail halfway. Prints the pids running it.
+upstream_pids() {
   local d
   for d in /proc/[0-9]*; do
     # A process that ends between the glob and the read: the redirection
     # fails before a 2>/dev/null after it applies, hence the braces.
-    { tr '\0' ' ' < "${d}/cmdline"; } 2>/dev/null | grep -qF "${FAT}/tty2oled/tty2oled.sh" && return 0
+    { tr '\0' ' ' < "${d}/cmdline"; } 2>/dev/null | grep -qF "${FAT}/tty2oled/tty2oled.sh" && echo "${d##*/}"
   done
-  return 1
 }
+upstream_running() { [ -n "$(upstream_pids)" ]; }
 
-# Upstream installed at all, running or not. Its boot hook would start it
-# beside ours on the next reboot, on the same serial port.
-upstream_installed() {
-  [ -e "${FAT}/tty2oled/tty2oled.sh" ] || [ -e "${FAT}/tty2oled/S60tty2oled" ]
+# Upstream stays installed; its daemon gives up the port. Its own init script
+# is asked first - it knows what its daemon started - and whatever is still
+# running after that is killed, children first (its inotifywait outlives it).
+upstream_stop() {
+  local pid=""
+  [ -x "${FAT}/tty2oled/S60tty2oled" ] && "${FAT}/tty2oled/S60tty2oled" stop >/dev/null 2>&1
+  for pid in $(upstream_pids); do
+    pkill -P "${pid}" 2>/dev/null
+    kill "${pid}" 2>/dev/null
+  done
+  sleep 0.5
+  ! upstream_running
 }
 
 # Has something else claimed the display?
@@ -488,20 +497,13 @@ main() {
   [ -r "${INSTALL}/pics/arcade/wheels.idx" ] && [ -r "${INSTALL}/pics/arcade/wheels.bin" ] \
     && [ -d "${INSTALL}/pics/banner" ] || pics="yes"
 
-  if upstream_installed; then
-    die "Upstream tty2oled is installed in ${FAT}/tty2oled. tty2oled+ replaces it
-    and the two are not made to run side by side. Remove it first:
-      ${FAT}/tty2oled/S60tty2oled stop
-      rm -rf ${FAT}/tty2oled ${FAT}/Scripts/update_tty2oled.sh
-    Its line in ${FAT}/linux/user-startup.sh does nothing once the folder is
-    gone. Then run this again."
-  fi
-
   if upstream_running; then
-    die "Upstream tty2oled is running and has the serial port. Stop it first:
+    say "Stopping upstream tty2oled"
+    note "it stays installed in ${FAT}/tty2oled, but one display takes one daemon"
+    upstream_stop || die "Upstream tty2oled is running, has the serial port, and did not stop.
+    Stop it by hand:
       ${FAT}/tty2oled/S60tty2oled stop
-    and comment out its line in ${FAT}/linux/user-startup.sh so it does not
-    come back at boot. Then run this again."
+    Then run this again."
   fi
 
   if display_claimed; then
@@ -661,7 +663,8 @@ main() {
   say "Checking the boot hook"
   (
     BOOTHOOK_LIB=yes . "${INSTALL}/tty2oled-boothook.sh"
-    boothook "${FAT}/linux/user-startup.sh" "${FAT}/linux/_user-startup.sh" "${INSTALL}/S60tty2oled"
+    boothook "${FAT}/linux/user-startup.sh" "${FAT}/linux/_user-startup.sh" "${INSTALL}/S60tty2oled" \
+      "${FAT}/tty2oled/S60tty2oled"
   )
 
   if [ "${scripts}" = "yes" ] && [ -d "${FAT}/Scripts" ]; then

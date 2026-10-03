@@ -206,15 +206,23 @@ sed '/^case "\$1" in/,$d' "${ROOT}/S60tty2oled" \
 PIDFILE_LEGACY="${TMP}/tty2oled-daemon.pid"
 UPSTREAM_DIR="${TMP}/upstream"            # none, unless a test makes one
 
-# Upstream installed: start refuses, says so where boot would log it, and
-# starts nothing. start() exits rather than returns, so it runs in a subshell.
-mkdir -p "${UPSTREAM_DIR}"; touch "${UPSTREAM_DIR}/tty2oled.sh"
+# Upstream installed beside us is not a reason to refuse - which of the two
+# starts at boot is user-startup.sh's business. Upstream *running* is: it has
+# the port. start() exits rather than returns, so it runs in a subshell.
+mkdir -p "${UPSTREAM_DIR}"; touch "${UPSTREAM_DIR}/S60tty2oled"
+printf '#!/bin/bash\nsleep 30\n' > "${UPSTREAM_DIR}/tty2oled.sh"; chmod +x "${UPSTREAM_DIR}/tty2oled.sh"
+ok "upstream installed but not running is not in the way" "$(upstream_running && echo yes || echo no)" "no"
+"${UPSTREAM_DIR}/tty2oled.sh" & UPSTREAM_PID=$!
+sleep 0.3
 : > "${DAEMONLOG}"; rm -f "${PIDFILE}"
 OUT="$( (start) 2>&1 )"; RC="${?}"
-ok "start refuses while upstream is installed" "${RC}" "1"
-ok "saying so" "$(printf '%s' "${OUT}" | grep -c 'not made to run side by side')" "1"
-ok "in the daemon log too, for a start at boot" "$(grep -c 'not made to run side by side' "${DAEMONLOG}")" "1"
+ok "start refuses while upstream's daemon runs" "${RC}" "1"
+ok "saying it has the port" "$(printf '%s' "${OUT}" | grep -c "is running and has the display's port")" "1"
+ok "in the daemon log too, for a start at boot" "$(grep -c "is running and has the display's port" "${DAEMONLOG}")" "1"
+ok "without telling anyone to remove it" "$(printf '%s' "${OUT}" | grep -c 'rm -rf')" "0"
 ok "and nothing is started" "$([ -e "${PIDFILE}" ] && echo started || echo none)" "none"
+pkill -P "${UPSTREAM_PID}" 2>/dev/null; kill "${UPSTREAM_PID}" 2>/dev/null; wait "${UPSTREAM_PID}" 2>/dev/null
+ok "once it has stopped it is not in the way" "$(upstream_running && echo yes || echo no)" "no"
 rm -rf "${UPSTREAM_DIR}"
 
 # The menu entry reaches the Scripts folder from here, not only from the

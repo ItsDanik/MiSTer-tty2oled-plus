@@ -38,6 +38,8 @@
 #     installed, or when it has been changed since. It is MiSTer's own setting
 #     and other things read that log.
 #   - /media/fat/tty2oled, if upstream is installed there. Not ours to touch.
+#     Its line in user-startup.sh is switched back on if the installer was
+#     what commented it out.
 
 # Overridable for tests/test-installer.sh, which runs this against a fake
 # /media/fat with a stand-in init script and no display.
@@ -147,15 +149,22 @@ restore_misterini() {
 # Written by tools/tty2oled-boothook.sh as a comment line followed by the
 # hook. The comment goes only when it is that comment directly above that
 # line: everything else in this file is somebody else's.
+#
+# An upstream hook the installer switched off goes back on - the note it wrote
+# and the "#" it put in front, and only where that note is directly above:
+# a line the user commented out themselves stays as they left it.
+UPSTREAM_OFF_NOTE="# tty2oled+ switched the next line off:"
 unhook() {
   local f="${FAT}/linux/user-startup.sh" tmp
   [ -f "${f}" ] || return 0
   grep -qF "${INSTALL}/S60tty2oled" "${f}" || { note "no boot hook in ${f}"; return 0; }
   if [ "${DRYRUN}" = "yes" ]; then note "would remove the boot hook from ${f}"; return 0; fi
   tmp="${f}.tty2oled.$$"
-  awk -v hook="${INSTALL}/S60tty2oled" '
+  awk -v hook="${INSTALL}/S60tty2oled" -v off="${UPSTREAM_OFF_NOTE}" '
     # Hold back the comment: it is only dropped if the hook follows it.
     { if (held != "") { if (index($0, hook) == 0) print held; held = "" } }
+    noted { noted = 0; if (substr($0, 1, 1) == "#") { print substr($0, 2); next } }
+    index($0, off) == 1 { noted = 1; next }
     $0 == "# Startup tty2oled+" { held = $0; next }
     index($0, hook) > 0 { next }
     { print }

@@ -4,6 +4,31 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.8.5b — 2026-10-03
+
+- **tty2oled+ can be installed beside the original tty2oled.** Until now the
+  installer, and the display's start at boot, refused while
+  `/media/fat/tty2oled` held the original: you had to delete it, or move the
+  folder out of the way. Now it is left where it is, untouched, and
+  installing tty2oled+ goes ahead.
+- Only one of the two can have the display - there is one serial port, and
+  each needs its own firmware on the ESP32. So installing tty2oled+ stops the
+  original's daemon if it is running and comments out its line in
+  `/media/fat/linux/user-startup.sh`, under a note saying so. Nothing of the
+  original's is removed.
+- **To switch back, edit that file**: comment out the `tty2oledplus` line,
+  uncomment the `tty2oled` one, and flash the original's firmware. Updates
+  respect that - while the tty2oled+ line is commented out, the original's is
+  left alone. To return, swap them again and run **Update**, which flashes
+  tty2oled+'s firmware back. Which firmware is on the display is yours to
+  keep in step; the original is not supported here beyond staying out of its
+  way.
+- tty2oled+ will not start while the original's daemon is running and has
+  the port, and says so in `/tmp/tty2oled-daemon.log`.
+- Uninstalling tty2oled+ switches the original's line back on, if the
+  installer was what switched it off.
+- No change to the firmware beyond its version number.
+
 ## 0.8.4b — 2026-10-03
 
 - **A news ticker under the menu.** The row under the picture of the menu,

@@ -226,6 +226,28 @@ curl -fsSL --cacert /etc/ssl/certs/cacert.pem \
 If you want to manally name it the board:
 `... | bash -s -- --board lolin32` (or `esp32de`, `esp32s3`).
 
+### Beside the original tty2oled
+
+tty2oled+ lives in its own folder, `/media/fat/tty2oledplus`, and leaves an
+original tty2oled in `/media/fat/tty2oled` exactly where it is. Both can be
+installed; only one can have the display, because there is one serial port
+and each needs its own firmware on the ESP32.
+
+Installing tty2oled+ therefore stops the original's daemon and comments out
+its line in `/media/fat/linux/user-startup.sh`, under a note saying so, and
+puts its own line at the top. To go back to the original, edit that file:
+comment out the `tty2oledplus/S60tty2oled` line, uncomment the
+`tty2oled/S60tty2oled` one, and flash the original's firmware. To return,
+swap the two again and run **Update**, which sees the other firmware on the
+display and flashes tty2oled+'s. An update never undoes your choice in that
+file: while the tty2oled+ line is commented out, the original's is left alone.
+
+Which firmware is on the display is yours to keep in step with the line you
+enabled. The original is not supported here beyond staying out of its way;
+running its own updater may start its daemon beside this one, and tty2oled+
+will not start while the original's is running. Uninstalling tty2oled+ puts
+the original's line back if the installer was what switched it off.
+
 ### The Scripts menu entry
 
 **Scripts → tty2oledplus** opens a menu you can drive with a pad — arrows and

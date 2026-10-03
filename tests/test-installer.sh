@@ -543,34 +543,6 @@ T2OP_FAT="${FAT}" T2OP_URL="file://${TMP}/nowhere" T2OP_INIT="${TMP}/fake-init" 
 ok "an unreachable release fails" "${?}" "1"
 ok "with the installed scripts untouched" "$(grep -c '# marker' "${INSTALL}/tty2oled.sh")" "1"
 
-# Upstream's daemon on the same port: refuse before stopping anything.
-mkdir -p "${FAT}/tty2oled"
-printf '#!/bin/bash\nsleep 30\n' > "${FAT}/tty2oled/tty2oled.sh"
-chmod +x "${FAT}/tty2oled/tty2oled.sh"
-"${FAT}/tty2oled/tty2oled.sh" &
-UPSTREAM=$!
-sleep 0.3
-T2OP_HWINF="HWLOLIN32;0.1;" install; RC="${?}"
-kill "${UPSTREAM}" 2>/dev/null; wait "${UPSTREAM}" 2>/dev/null
-ok "a running upstream daemon is refused" "${RC}" "1"
-ok "and named" "$(said 'Upstream tty2oled is installed')" "1"
-ok "before our daemon is touched" "$(grep -c 'init stop' "${CALLS}")" "0"
-ok "or anything installed" "$(grep -c '# marker' "${INSTALL}/tty2oled.sh")" "1"
-
-# Installed but not running is refused too: its boot hook would start it
-# beside ours at the next reboot. The init script alone is enough to count.
-rm -f "${FAT}/tty2oled/tty2oled.sh"
-touch "${FAT}/tty2oled/S60tty2oled"
-: > "${CALLS}"
-T2OP_HWINF="HWLOLIN32;0.1;" install; RC="${?}"
-ok "an installed upstream is refused, running or not" "${RC}" "1"
-ok "saying they do not run side by side" "$(said 'not made to run side by side')" "1"
-ok "and how to remove it" "$(said "rm -rf ${FAT}/tty2oled ")" "1"
-ok "before our daemon is touched" "$(grep -c 'init stop' "${CALLS}")" "0"
-ok "or anything installed" "$(grep -c '# marker' "${INSTALL}/tty2oled.sh")" "1"
-ok "and upstream's files are left where they are" "$([ -e "${FAT}/tty2oled/S60tty2oled" ] && echo kept)" "kept"
-rm -rf "${FAT}/tty2oled"
-
 # Something else holding the display. /tmp/tty2oled_sleep is a mutex on the
 # serial port - MiSTer SAM takes it for a whole attract session and drives the
 # panel itself - and our daemon standing aside is not enough here: this script
@@ -593,6 +565,37 @@ ok "reading the path from the ini, not a literal" "$(said "${SLEEPY}")" "2"
 ok "before our daemon is touched" "$(grep -c 'init stop' "${CALLS}")" "0"
 ok "and before the display is flashed" "$(grep -c 'flash' "${CALLS}")" "0"
 ok "or anything installed" "$(grep -c '# marker' "${INSTALL}/tty2oled.sh")" "1"
+
+section "installer: upstream tty2oled installed beside it"
+
+# Upstream installed beside us, its daemon on the port and its line in
+# user-startup.sh: the install goes ahead. Its daemon is stopped, its line
+# commented out, and nothing of it is removed.
+mkdir -p "${FAT}/tty2oled"
+printf '#!/bin/bash\nsleep 30\n' > "${FAT}/tty2oled/tty2oled.sh"
+chmod +x "${FAT}/tty2oled/tty2oled.sh"
+touch "${FAT}/tty2oled/S60tty2oled"
+UPLINE="[[ -e ${FAT}/tty2oled/S60tty2oled ]] && ${FAT}/tty2oled/S60tty2oled \$1"
+cp "${FAT}/linux/user-startup.sh" "${TMP}/user-startup.before"
+echo "${UPLINE}" >> "${FAT}/linux/user-startup.sh"
+"${FAT}/tty2oled/tty2oled.sh" &
+UPSTREAM=$!
+sleep 0.3
+T2OP_HWINF="HWLOLIN32;${VERSION};" install; RC="${?}"
+ok "an upstream install beside us does not stop the install" "${RC}" "0"
+ok "its daemon is stopped" "$(yesno kill -0 "${UPSTREAM}")" "no"
+kill "${UPSTREAM}" 2>/dev/null; wait "${UPSTREAM}" 2>/dev/null
+ok "and that is said" "$(said 'Stopping upstream tty2oled')" "1"
+ok "its line in user-startup.sh is commented out" "$(grep -cxF "#${UPLINE}" "${FAT}/linux/user-startup.sh")|$(grep -cxF "${UPLINE}" "${FAT}/linux/user-startup.sh")" "1|0"
+ok "ours stays live" "$(grep -c "^\[ -e ${INSTALL}/S60tty2oled" "${FAT}/linux/user-startup.sh")" "1"
+ok "upstream's files are left where they are" "$(yesno test -e "${FAT}/tty2oled/tty2oled.sh")|$(yesno test -e "${FAT}/tty2oled/S60tty2oled")" "yes|yes"
+ok "and our daemon is running" "$(running)" "running"
+
+# Installed but not running: nothing to stop, nothing said about stopping.
+T2OP_HWINF="HWLOLIN32;${VERSION};" install --force; RC="${?}"
+ok "an upstream install that is not running is no trouble either" "${RC}|$(said 'Stopping upstream tty2oled')" "0|0"
+rm -rf "${FAT}/tty2oled"
+cp "${TMP}/user-startup.before" "${FAT}/linux/user-startup.sh"
 
 section "installer: a pinned version"
 
@@ -634,11 +637,21 @@ ok "saying so" "$(said 'does not match')" "1"
 ok "before it runs" "$(yesno test -e "${INSTALL}")" "no"
 ok "and the starter stays, to try again" "$(yesno test -e "${FAT}/Scripts/tty2oledplus_install.sh")" "yes"
 
+# The installer itself intact, what it goes on to download not.
+fresh_mister
+HALF="${TMP}/releases-half"
+rm -rf "${HALF}"; cp -r "${REL}" "${HALF}"
+printf 'x' >> "${HALF}/latest/download/tty2oledplus.tar.gz"
+starter "${HALF}"; RC="${?}"
+ok "an installer that fails fails the starter" "${RC}|$(said 'does not match its checksum')" "1|1"
+ok "which stays in Scripts" "$(yesno test -e "${FAT}/Scripts/tty2oledplus_install.sh")" "yes"
+
+# Upstream installed beside it is no reason to refuse a first install.
 fresh_mister
 mkdir -p "${FAT}/tty2oled"; touch "${FAT}/tty2oled/S60tty2oled"
 starter "${REL}"; RC="${?}"
-ok "an installer that refuses fails the starter" "${RC}" "1"
-ok "which stays in Scripts" "$(yesno test -e "${FAT}/Scripts/tty2oledplus_install.sh")" "yes"
+ok "a first install beside upstream goes through" "${RC}|$(yesno test -e "${INSTALL}/tty2oled.sh")" "0|yes"
+ok "leaving upstream's folder alone" "$(yesno test -e "${FAT}/tty2oled/S60tty2oled")" "yes"
 rm -rf "${FAT}/tty2oled"
 
 starter "${TMP}/nowhere"; RC="${?}"
@@ -919,8 +932,16 @@ ok "--yes goes straight through"      "$(yesno test -e "${INSTALL}")" "no"
 fresh_mister
 T2OP_HWINF="HWLOLIN32;0.3.9b;" install
 mkdir -p "${FAT}/tty2oled"; touch "${FAT}/tty2oled/S60tty2oled"
+UPLINE="[[ -e ${FAT}/tty2oled/S60tty2oled ]] && ${FAT}/tty2oled/S60tty2oled \$1"
+MINE="#[ -e ${FAT}/tty2oled/S60tty2oled ] && echo commented out by hand"
+{ echo "${UPLINE}"; echo "${MINE}"; } >> "${FAT}/linux/user-startup.sh"
+T2OP_HWINF="HWLOLIN32;${VERSION};" install --force
+ok "the installer switched upstream's line off" "$(grep -cxF "#${UPLINE}" "${FAT}/linux/user-startup.sh")" "1"
 uninstall
 ok "upstream's install is left alone" "$(yesno test -e "${FAT}/tty2oled/S60tty2oled")" "yes"
+ok "and its line in user-startup.sh is switched back on" "$(grep -cxF "${UPLINE}" "${FAT}/linux/user-startup.sh")" "1"
+ok "without the note that said it was off" "$(grep -c 'switched the next line off' "${FAT}/linux/user-startup.sh")" "0"
+ok "a line the user commented out stays commented" "$(grep -cxF "${MINE}" "${FAT}/linux/user-startup.sh")" "1"
 ok "and its pid file, which may name its daemon" \
    "$(grep -c 'removed /run/tty2oled-daemon.pid' "${TMP}/out")" "0"
 ok "and said so" "$(said 'is left alone')" "1"

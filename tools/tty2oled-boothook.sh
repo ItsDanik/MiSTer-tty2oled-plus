@@ -17,6 +17,10 @@
 # daemons are not left set to start on the same serial port.
 UPSTREAM_INIT="/media/fat/tty2oled/S60tty2oled"
 
+# Written above an upstream hook this switched off. The uninstaller looks for
+# exactly this line to know which commented-out line it may switch back on.
+UPSTREAM_OFF_NOTE="# tty2oled+ switched the next line off: one display, one daemon. To use upstream tty2oled instead, uncomment it and comment out the tty2oled+ line."
+
 # boothook <user-startup.sh> <its template> <our init script> [upstream init]
 #
 # Matched on the full path, not on the string "tty2oled": a MiSTer that has
@@ -32,6 +36,12 @@ UPSTREAM_INIT="/media/fat/tty2oled/S60tty2oled"
 # An existing line of ours is never moved or re-enabled, only reported. It is
 # the user's file, and a line further down or commented out may be exactly
 # where they want it.
+#
+# Upstream's hook is commented out, under UPSTREAM_OFF_NOTE, while ours is
+# live: the two installs sit side by side on the disk, but one port takes one
+# daemon. With ours commented out the user has switched to upstream, and then
+# nothing of upstream's is touched - which is what makes editing this file
+# the switch between the two.
 boothook() {
   local userstartup="${1}" template="${2}" initscript="${3}"
   local upstream="${4:-${UPSTREAM_INIT}}" tmp=""
@@ -78,14 +88,21 @@ boothook() {
     echo "added the boot hook at the top of ${userstartup}"
   fi
 
-  # Both hooks active means both daemons start at boot and fight over one
-  # serial port. Only a warning: the upstream line is guarded by "[ -e ... ]",
-  # so it is harmless once that install has been moved or removed, and whether
-  # to keep upstream at all is the user's call.
-  if [ -e "${upstream}" ] && grep -F "${upstream}" "${userstartup}" | grep -qv '^[[:space:]]*#'; then
-    echo "WARNING: ${userstartup} also starts upstream tty2oled (${upstream})."
-    echo "  Both daemons would drive the same serial port. Comment that line out,"
-    echo "  or move the upstream install away, before rebooting."
+  # Both hooks live means both daemons start at boot and fight over one
+  # serial port. Whether upstream's folder is there now does not matter: a
+  # line that does nothing today starts a second daemon the day it is back.
+  if grep -F "${initscript}" "${userstartup}" | grep -qv '^[[:space:]]*#' \
+     && grep -F "${upstream}" "${userstartup}" | grep -qv '^[[:space:]]*#'; then
+    tmp="${userstartup}.tty2oled.$$"
+    awk -v up="${upstream}" -v note="${UPSTREAM_OFF_NOTE}" '
+      index($0, up) > 0 && $0 !~ /^[[:space:]]*#/ { print note; print "#" $0; next }
+      { print }
+    ' "${userstartup}" > "${tmp}" || { rm -f "${tmp}"; echo "could not rewrite ${userstartup}"; return 0; }
+    chmod +x "${tmp}"
+    mv "${tmp}" "${userstartup}"
+    echo "switched off upstream tty2oled's line in ${userstartup} (commented out, not removed)."
+    echo "  tty2oled+ starts at boot in its place. To go back, uncomment that line and"
+    echo "  comment out the tty2oled+ one - and flash the firmware that goes with it."
   fi
   return 0
 }
