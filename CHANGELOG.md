@@ -4,6 +4,26 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.8.3b — 2026-10-03
+
+- **New core banners arrive with an Update.** The banners now travel with
+  the scripts, as the icons always have, so a banner a release adds or
+  changes is on the MiSTer after its next Update. Until now they were only
+  in the artwork pack, which an existing install never downloads again - so
+  the DVD core's banner from 0.8.2b reached new installs only. Updating to
+  this version brings it, and every banner since.
+- An Update writes only the pictures that are new or have changed, rather
+  than all of them again.
+- **Flashing works on a MiSTer that never had upstream's tty2oled.** The
+  flasher needs pyserial, and used to install it into Python's own folder -
+  which is on MiSTer's read-only system partition, so on a MiSTer where
+  upstream's installer had not already put it there the firmware could not
+  be flashed at all. It is now kept in the tty2oled+ folder instead, fetched
+  once, and a download that fails or does not load stops the flash before
+  anything is written rather than leaving a broken file behind.
+- Starting, stopping or asking the status of the display no longer prints a
+  stray "No such file or directory" when a process ends in the same moment.
+
 ## 0.8.2b — 2026-10-03
 
 - **Films on the DVD core.** With owenb321's DVD core playing a disc - in

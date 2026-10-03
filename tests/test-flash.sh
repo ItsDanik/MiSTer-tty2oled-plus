@@ -217,5 +217,65 @@ FAKE_TABLE="${TMP}/table.bin" flash
 ok "an install without fw-segments.py writes the whole image" "$(written)" "0x0 tty2oledplus-lolin32.bin"
 ok "without asking for the table" "$(grep -c read_flash "${LOG}")" "0"
 
+# ===========================================================================
+section "flash-mister.sh: a MiSTer with no pyserial"
+# ===========================================================================
+# MiSTer's root filesystem is mounted read-only, so pyserial cannot be put in
+# python's site-packages: it is kept in the install folder and python is
+# pointed at it. This python has no pyserial unless PYTHONPATH names one, and
+# says which one it was run with.
+cat > "${FAKEBIN}/python" <<'FAKE'
+#!/bin/bash
+if [ "$1" = "-c" ] && [ "$2" = "import serial" ]; then
+  IFS=: read -r -a dirs <<< "${PYTHONPATH:-}"
+  for d in "${dirs[@]}"; do
+    [ "$(cat "${d}" 2>/dev/null)" = "an egg" ] && exit 0
+  done
+  exit 1
+fi
+echo "PYTHONPATH=${PYTHONPATH:-}" >> "${FAKE_LOG}"
+exec python3 "$@"
+FAKE
+cat > "${FAKEBIN}/wget" <<'FAKE'
+#!/bin/bash
+echo "$*" >> "${FAKE_WGET}"
+[ -n "${FAKE_WGET_FAILS:-}" ] && exit 4
+while [ "$#" -gt 0 ]; do
+  [ "$1" = "-O" ] && { printf 'an egg\n' > "$2"; exit 0; }
+  shift
+done
+exit 1
+FAKE
+chmod +x "${FAKEBIN}/python" "${FAKEBIN}/wget"
+export FAKE_WGET="${TMP}/wget.log"
+cp "${ROOT}/tools/fw-segments.py" "${T2O}/"
+EGG="${T2O}/pyserial-3.5-py3.9.egg"
+
+: > "${FAKE_WGET}"
+FAKE_TABLE="${TMP}/table.bin" flash; RC="${?}"
+ok "the flash succeeds" "${RC}" "0"
+ok "pyserial is fetched into the install folder" "$(cat "${EGG}" 2>/dev/null)" "an egg"
+ok "and nowhere under /lib" "$(grep -c -e '-O /lib' "${FAKE_WGET}")" "0"
+ok "esptool is run with it on python's path" "$(grep -c "^PYTHONPATH=${EGG}\$" "${LOG}")" "$(grep -c '^PYTHONPATH=' "${LOG}")"
+ok "and the firmware is written" "$(written)" "0x0 segment-000000.bin 0xe000 segment-00e000.bin 0x10000 segment-010000.bin"
+
+: > "${FAKE_WGET}"
+FAKE_TABLE="${TMP}/table.bin" flash; RC="${?}"
+ok "the next flash succeeds" "${RC}" "0"
+ok "without downloading it again" "$(grep -c '' "${FAKE_WGET}")" "0"
+
+rm -f "${EGG}"; echo running > "${TMP}/state"
+FAKE_WGET_FAILS=1 FAKE_TABLE="${TMP}/table.bin" flash; RC="${?}"
+ok "a failed download stops the flash" "${RC}" "1"
+ok "saying so" "$(grep -c 'Could not download pyserial' "${TMP}/out")" "1"
+ok "leaving no half file to be taken for pyserial" "$(ls "${T2O}" | grep -c pyserial)" "0"
+ok "nothing is written" "$(written)" ""
+ok "and the daemon is running again" "$(cat "${TMP}/state")" "running"
+
+printf 'not one\n' > "${EGG}"
+FAKE_WGET_FAILS=1 FAKE_TABLE="${TMP}/table.bin" flash; RC="${?}"
+ok "a file there that python cannot load stops the flash" "${RC}" "1"
+ok "and is removed, so the next run fetches it afresh" "$([ -e "${EGG}" ] && echo there || echo gone)" "gone"
+
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n\n' "${PASS}" "${FAIL}"
 [ "${FAIL}" -eq 0 ]

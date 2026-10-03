@@ -138,7 +138,9 @@ identify_display() {
 upstream_running() {
   local d
   for d in /proc/[0-9]*; do
-    tr '\0' ' ' < "${d}/cmdline" 2>/dev/null | grep -qF "${FAT}/tty2oled/tty2oled.sh" && return 0
+    # A process that ends between the glob and the read: the redirection
+    # fails before a 2>/dev/null after it applies, hence the braces.
+    { tr '\0' ' ' < "${d}/cmdline"; } 2>/dev/null | grep -qF "${FAT}/tty2oled/tty2oled.sh" && return 0
   done
   return 1
 }
@@ -421,6 +423,21 @@ on_exit() {
   fi
 }
 
+# copy_changed <from> <to>: every file under <from> that <to> lacks or holds
+# differently. Nothing is removed: <to> is pics/, and pics/user and
+# pics/boot.png in it are the user's.
+copy_changed() {
+  local src="${1}" dst="${2}" f="" rel="" n=0
+  while IFS= read -r f; do
+    rel="${f#"${src}"/}"
+    cmp -s "${f}" "${dst}/${rel}" && continue
+    case "${rel}" in */*) mkdir -p "${dst}/${rel%/*}" ;; *) mkdir -p "${dst}" ;; esac
+    cp "${f}" "${dst}/${rel}" && n=$((n + 1))
+  done < <(find "${src}" -type f)
+  [ "${n}" -gt 0 ] && note "${n} new or changed pictures"
+  return 0
+}
+
 # --- Main ------------------------------------------------------------------
 # All in a function, called on the last line. "curl | bash" executes as the
 # bytes arrive, so a connection dropped halfway would otherwise run half a
@@ -576,6 +593,9 @@ main() {
         # over in place, bash would go on reading the new script from the old
         # one's byte offset. So it goes in by rename, below.
         tty2oledplus_update.sh) continue ;;
+        # The icons and banners: only those that differ. ${FAT} is mounted
+        # sync, and two hundred pictures written again took nine seconds.
+        pics) copy_changed "${f}" "${INSTALL}/pics"; continue ;;
       esac
       cp -r "${f}" "${INSTALL}/"
     done

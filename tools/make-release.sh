@@ -93,17 +93,23 @@ pack() {  # pack <archive> <dir under STAGE>
 # --- Scripts, tools, defaults, icons, index --------------------------------
 say "Packing tty2oledplus.tar.gz"
 P="${STAGE}/tty2oledplus"
-mkdir -p "${P}/titleindex" "${P}/pics/icon"
+mkdir -p "${P}/titleindex" "${P}/pics/icon" "${P}/pics/banner"
 for f in ${MANIFEST_FILES} ${MANIFEST_DEFAULTS}; do cp -p "${f}" "${P}/"; done
 for f in ${MANIFEST_TOOLS} ${MANIFEST_APPS} ${MANIFEST_MENU}; do cp -p "${f}" "${P}/$(basename "${f}")"; done
 cp -p "${INDEX}"/*.idx "${P}/titleindex/"
 cp -p "${PICS}/icon"/*.gsc "${P}/pics/icon/"
+# The core banners ride here too (0.8.3b), as the icons do: every updater
+# copies this archive's pics/ into the install, so a banner a release adds
+# reaches a MiSTer on its next Update. They used to be in the pack alone,
+# which is fetched only when it is missing - the DVD core's banner reached
+# nobody who updated to 0.8.2b.
+cp -p "${PICS}/banner"/*.gsc "${P}/pics/banner/"
 pack "${OUT}/tty2oledplus.tar.gz" tty2oledplus
 
-# The core banners and the arcade wheel pack. pics/icon ships in the scripts
-# archive above instead - 27 small files that every update should carry,
-# against a pack that is fetched only when it is missing. pics/user ships in
-# neither: it is the user's own and no release may write into it.
+# The arcade wheel pack, and the core banners again - so installing the pack
+# still replaces pics/banner whole, and a picture a release has dropped goes
+# from the card. pics/icon ships in the scripts archive above only. pics/user
+# ships in neither: it is the user's own and no release may write into it.
 say "Packing tty2oledplus-pics.tar.gz"
 [ -s "${PICS}/arcade/wheels.bin" ] && [ -s "${PICS}/arcade/wheels.idx" ] \
   || die "no ${PICS}/arcade/wheels.bin and wheels.idx - build them with tools/wheels2gsc.py and tools/gscpack.py"

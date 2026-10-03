@@ -89,13 +89,16 @@ done
 ok "the scripts archive has everything in the manifest" "${MISSING}" ""
 ok "tools are flattened, as they are on the MiSTer" "$(printf '%s\n' "${LISTING}" | grep -c '/tools/')" "0"
 ok "the title index goes in" "$(printf '%s\n' "${LISTING}" | grep -c 'titleindex/NES.idx')" "1"
-# The icons ride in the scripts archive, not the 80MB pack: 27 small files
-# that every update should carry, against artwork that is fetched only when it
-# is missing.
+# The icons ride in the scripts archive, not the pack: small files that every
+# update should carry, against a pack that is fetched only when it is missing.
 ok "and the drawn icons" "$(printf '%s\n' "${LISTING}" | grep -c 'pics/icon/.*\.gsc')" "2"
+# And the core banners with them: in the pack alone, the DVD core's banner
+# reached nobody who updated to 0.8.2b.
+ok "and the core banners" "$(printf '%s\n' "${LISTING}" | grep -c 'pics/banner/NES\.gsc')" "1"
+ok "but not the wheel pack" "$(printf '%s\n' "${LISTING}" | grep -c 'pics/arcade')" "0"
 ok "everything unpacks under tty2oledplus/" "$(printf '%s\n' "${LISTING}" | grep -vc '^tty2oledplus/')" "0"
 PICSLIST="$(tar tzf "${D}/tty2oledplus-pics.tar.gz")"
-ok "the artwork is in its own archive" "$(printf '%s\n' "${PICSLIST}" | grep -c 'tty2oledplus/pics/banner/NES.gsc')" "1"
+ok "the pack has the banners too, to replace the folder whole" "$(printf '%s\n' "${PICSLIST}" | grep -c 'tty2oledplus/pics/banner/NES.gsc')" "1"
 ok "with the wheel pack beside it" \
    "$(printf '%s\n' "${PICSLIST}" | grep -c 'tty2oledplus/pics/arcade/wheels\.\(bin\|idx\)$')" "2"
 ok "and no alternatives, which are gone" "$(printf '%s\n' "${PICSLIST}" | grep -c 'pics/alt')" "0"
@@ -257,9 +260,19 @@ echo bootpng > "${INSTALL}/pics/boot.png"
 echo mine    > "${INSTALL}/pics/user/NES.gsc"
 mkdir -p "${INSTALL}/scraped"
 echo 'Game|x|ok|Game||||||||' > "${INSTALL}/scraped/NES.txt"
+# The pictures of the last version: one the release has since changed, one it
+# has since added, and the rest as they are - which must not be written again.
+echo "#define old 1" > "${INSTALL}/pics/icon/NES.gsc"
+rm -f "${INSTALL}/pics/banner/NES.gsc"
+touch -d '2001-01-01 00:00' "${INSTALL}/pics/icon/SNES.gsc"
 set_installed_version "0.0.1b"
 T2OP_HWINF="HWLOLIN32;${VERSION};" install; RC="${?}"
 ok "an update succeeds" "${RC}" "0"
+ok "a banner the release added arrives with the scripts, no pack fetched" \
+   "$(cat "${INSTALL}/pics/banner/NES.gsc" 2>/dev/null)" "#define x 1"
+ok "a picture the release changed is replaced" "$(cat "${INSTALL}/pics/icon/NES.gsc")" "#define x 1"
+ok "one that is the same is not written again" "$(date -r "${INSTALL}/pics/icon/SNES.gsc" +%Y)" "2001"
+ok "and it says how many" "$(said '2 new or changed pictures')" "1"
 ok "with nothing for the shell to complain about" "$(shell_errors)" ""
 ok "the scripts are replaced" "$(grep -c '# stale' "${INSTALL}/tty2oled.sh")" "0"
 ok "your settings are not" "$(cat "${INSTALL}/tty2oled-user.ini")" 'TTYDEV="/dev/ttyUSB1"   # mine'

@@ -885,7 +885,7 @@ flashable at `0x0` (gitignored). Arduino IDE: `WEMOS LOLIN32`; on an S3 set
 
 | folder | what | size | whose |
 |---|---|---|---|
-| `pics/banner` | console/computer/utility core banners (195) | 256x64 | release |
+| `pics/banner` | console/computer/utility core banners (195) | 256x64 | release, in the scripts archive **and** the pack |
 | `pics/icon` | console icons (28 core names, 27 systems - the DVD core's among them) | 86x64 | release, in the scripts archive |
 | `pics/arcade` | `wheels.bin` + `wheels.idx` | 256x64 | release, in `tty2oledplus-pics.tar.gz` |
 | `pics/user` | the user's own banners, by core or set | 256x64 | **theirs** - nothing writes it |
@@ -909,6 +909,16 @@ flashable at `0x0` (gitignored). Arduino IDE: `WEMOS LOLIN32`; on an S3 set
   differing only in case.
 - `test-wire.sh` fails if a banner is named after a wheel set that is not a
   core.
+
+**Banners ride in the scripts archive** (0.8.3b), as the icons do: every
+updater `cp -r`s that archive's `pics/` into the install, so a new banner
+arrives with the next Update - in the pack alone (fetched only when the
+wheels are missing) the DVD core's banner reached no one who updated to
+0.8.2b. +683KB. The updater's `copy_changed` writes only files that differ
+(`cmp`): 195 banners rewritten cost 9s on the `sync` mount, which the update
+*to* 0.8.3b still pays once, being run by the previous updater. Nothing is
+removed that way; a dropped banner goes only when the pack is installed
+(`--pics`), which still replaces `pics/banner` whole.
 
 **`migrate_pics`** (in `S60tty2oled`, every start, idempotent - the previous
 updater knows nothing of new layouts): renames `pics/GSC` -> `pics/banner`

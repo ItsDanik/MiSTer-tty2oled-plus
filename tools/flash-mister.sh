@@ -19,7 +19,7 @@ set -u
 T2O_DIR="${TTY2OLED_PATH:-/media/fat/tty2oledplus}"
 INIT="${T2O_DIR}/S60tty2oled"
 ESPTOOL="${T2O_DIR}/esptool.py"
-PYSERIAL_DIR="/lib/python3.9/site-packages"
+PYSERIAL="${T2O_DIR}/pyserial-3.5-py3.9.egg"
 URL="https://www.tty2tft.de//MiSTer_tty2oled-installer"
 DBAUD="${DBAUD:-921600}"
 
@@ -120,11 +120,21 @@ if [ ! -r "${ESPTOOL}" ]; then
   chmod +x "${ESPTOOL}"
 fi
 
+# pyserial, which esptool needs. Kept beside esptool and put on python's path
+# from there: MiSTer's root filesystem is mounted read-only, so it cannot go
+# into python's site-packages, where this used to write it - which only ever
+# worked on a MiSTer that upstream's installer had already put it on.
 if ! python -c "import serial" 2>/dev/null; then
-  say "Installing pyserial"
-  wget -q "${URL}/pyserial-3.5-py3.9.egg" -O "${PYSERIAL_DIR}/pyserial-3.5-py3.9.egg" \
-    || die "Could not download pyserial"
-  echo "./pyserial-3.5-py3.9.egg" >> "${PYSERIAL_DIR}/easy-install.pth"
+  export PYTHONPATH="${PYSERIAL}${PYTHONPATH:+:${PYTHONPATH}}"
+  if ! python -c "import serial" 2>/dev/null; then
+    say "Fetching pyserial into ${T2O_DIR}"
+    rm -f "${PYSERIAL}"
+    wget -q "${URL}/${PYSERIAL##*/}" -O "${PYSERIAL}.part" \
+      && mv -f "${PYSERIAL}.part" "${PYSERIAL}" \
+      || { rm -f "${PYSERIAL}.part"; die "Could not download pyserial"; }
+    python -c "import serial" 2>/dev/null \
+      || { rm -f "${PYSERIAL}"; die "The pyserial that was downloaded does not load"; }
+  fi
 fi
 
 # --- What to write ----------------------------------------------------------
