@@ -1,0 +1,17 @@
+# tty2oled+ hybrid cores
+#
+# A hybrid core is one game: the game runs on the ARM, the FPGA core gives it
+# video, sound and input (github.com/ItsDanik/Hybrid_MiSTer). MiSTer has no
+# game to report for it - no file is ever selected - so what the display shows
+# is read from here, by the name the core writes to /tmp/CORENAME.
+#
+#   <corename>|<title>|<label>=<value>|...|<description>
+#
+# The core name is matched without regard to case. The rows are shown in the
+# order given, four to a page; the last field is the description page's text
+# (one line, printable ASCII, 2048 characters kept) and may be left empty.
+# The picture is pics/banner/<corename>.gsc, the icon pics/icon/<corename>.gsc.
+#
+# This file is replaced by every update.
+Dethrace|Carmageddon|Dev=Stainless Software Ltd.|Year=1997, SCi, Interplay|Core=dethrace|Author=danik|Carmageddon is a violent car racing game where the racing element can be equally important as wrecking opponents' cars or gathering kills by ramming into pedestrians. At the beginning the player has only one car and is ranked at #99. The overall objective is to race all the way to the top, collecting the opponents' cars on the way as trophies (and possibly replacements to one's vehicle). In the race itself the player tries to damage opponents by driving into them, and can also kill pedestrians. Damage, kills and spectacular moves earn credits for upgrades and even making repairs to the car at anytime during the race. If a specific opponent's car is wrecked multiple times in successive races, it is added to the choice of available vehicles. There are many power-ups strewn around the courses that range from useful (more speed, instant brake) to fun and downright absurd. Though the player can win a race by finishing first, wrecking everything in sight is encouraged. The game offers open environments where exploration away from the racing course is encouraged.
+ECWolf|Wolfenstein 3D|Dev=Id Software|Year=1992, Apogee, id|Core=ecwolf|Author=danik|Wolfenstein 3D is an episodic first-person shooter and a follow-up to the top-down infiltration game Castle Wolfenstein. The game puts the player in the boots of B.J. Blazkowicz, an allied spy. There are six episodes: the first distributed completely as shareware; the second and the third available after registration; and the three final missions (which happen before the events of the first episode) available in the Nocturnal Missions pack. In the first episode (Escape from Wolfenstein), B.J. is captured, but overpowers a guard with the help of a concealed knife and manages to get out of his cell. Throughout the next nine levels, the player guides B.J. searching for an escape from Wolfenstein, guarded by Hans Grosse. After returning to Allied territory, B.J. is given the instructions to Operation: Eisenfaust, where he has to stop Dr. Schabbs and his army of mutant prototypes before they are released into the battlefields. The final mission (Die, Fuhrer, Die!) has a simple goal: infiltrate the bunker under the Reichstag, and terminate Hitler (in a robotic suit) himself. The Nocturnal Missions are focused on the Nazi plans for chemical warfare, and start with Dark Secret, where B.J. hunts for lead researcher Dr. Otto Giftmacher. It's followed by Trail of the Madman, where the goal is capturing the war plans guarded by Gretel Grosse, and the final episode Confrontation, where B.J. meets General Fettgesicht, the planner for the chemical assault.

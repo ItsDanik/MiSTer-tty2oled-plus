@@ -327,6 +327,21 @@ static void scene_menuClock(const char *name, const char *fmt, long when) {
   band_clockParse("CMDCLOCK,");
 }
 
+// The feed's turn in the band: headlines part way through their run, one
+// leaving at the left as the next comes in behind its dot.
+static void scene_menuTicker(const char *name, const char *feed, int x) {
+  boot_compose(logoBin);
+  noteText[0] = '\0';
+  band_render();
+  band_rssSet(feed, strlen(feed));
+  rssPhase = RSS_SCROLL; rssFirst = 0; rssX = x;
+  rssAdmit = 0; rssClosing = false; rssLead = false;
+  band_rssDraw();
+  save(name);
+  band_rssSet("", 0);
+  rssPhase = RSS_CLOCK;
+}
+
 // Super Attract Mode playing: its caption in the header, and the time to its
 // next game after it.
 static void scene_sam(const char *name, const char *cmd, const char *icon, long secs,
@@ -435,6 +450,10 @@ int main(int argc, char **argv) {
 
   // ...and when none is: the date and time, as the ini has them by default.
   scene_menuClock("menu-clock", "%d/%m/%y|%H:%M", 1790789640L);
+  // The news ticker, which takes turns with it.
+  scene_menuTicker("menu-ticker",
+                   "SNES: core updated\nArcade: Galaga added\nPSX: faster disc seeking\nNew core: Game of Life",
+                   -40);
 
   // Super Attract Mode: its caption and countdown, console (three pages, so
   // pips) and card.

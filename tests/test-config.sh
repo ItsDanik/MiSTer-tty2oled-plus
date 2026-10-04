@@ -346,6 +346,42 @@ rows = [y for y in range(480) if any(lit(x, y) for x in range(720))]
 print(min(cols) >= 40 + 32, max(cols) < 40 + 608, min(rows) >= 24, max(rows) < 456,
       all(lit(x, y) == lit(x + 1, y) == lit(x, y + 1) for y in rows[::2][:40] for x in range(40, 680, 2)))" "${FB}")" \
    "True True True True True"
+# What a screen of w x h shows, against the canvas the same run dumped:
+# whether every screen pixel is the canvas pixel it should be, with <rows> of
+# the canvas shown, each pixel sx by sy, and whether anything drawn was in
+# the rows left out.
+fitted() {  # fitted <w> <h> <rows> <sx> <sy>
+  rm -f "${FB}"
+  printf '' | "${BIN}" --table "${TABLE}" --out "${OUT}" --fb "${FB}" --geometry "${1}x${2}x32" \
+    --dump "${TMP}/fit.pgm" 2>/dev/null
+  echo "$?:$(python3 -c "
+import sys
+d = open(sys.argv[1], 'rb').read()
+c = open(sys.argv[2], 'rb').read(); c = c[len(c) - 320 * 240:]
+w, h, rows, sx, sy = (int(a) for a in sys.argv[3:8])
+ox, oy, cy = (w - 320 * sx) // 2, (h - rows * sy) // 2, (240 - rows) // 2
+def want(x, y):
+    cx, r = (x - ox) // sx, (y - oy) // sy
+    if x < ox or cx >= 320 or y < oy or r >= rows: return 0
+    return c[(cy + r) * 320 + cx]
+bad = sum(1 for y in range(h) for x in range(w) if d[(y * w + x) * 4 + 1] != want(x, y))
+lost = sum(1 for y in range(240) for x in range(320) if c[y * 320 + x] and not cy <= y < cy + rows)
+print(len(d) == w * h * 4, bad, lost)" "${FB}" "${TMP}/fit.pgm" "$@")"
+}
+# 640x240 is a 15kHz mode with twice the columns: on the 4:3 screen it fills,
+# a pixel is half as wide as it is tall. Drawn a pixel for a pixel the canvas
+# was a squashed strip in the middle.
+ok "640x240: every pixel twice as wide, the whole width used" "$(fitted 640 240 240 2 1)" "13:True 0 0"
+# 224 lines are fewer than the canvas has, and the utility refused - the old
+# menus came up instead. The canvas's top and bottom eight rows are empty.
+ok "640x224: the middle 224 rows, twice as wide, nothing drawn left out" "$(fitted 640 224 224 2 1)" "13:True 0 0"
+ok "320x224: the middle 224 rows as they are"   "$(fitted 320 224 224 1 1)" "13:True 0 0"
+ok "640x448: those rows doubled, rather than 240 of them small" "$(fitted 640 448 224 2 2)" "13:True 0 0"
+ok "720x240: twice as wide, centred"            "$(fitted 720 240 240 2 1)" "13:True 0 0"
+ok "1280x720 has square pixels: three by three" "$(fitted 1280 720 240 3 3)" "13:True 0 0"
+ok "and so has an ultrawide 2560x1080"          "$(fitted 2560 1080 240 4 4)" "13:True 0 0"
+printf '' | "${BIN}" --table "${TABLE}" --out "${OUT}" --fb "${FB}" --geometry 640x223x32 2>/dev/null; RC="${?}"
+ok "a line short of 224 is refused" "${RC}" "12"
 printf '' | "${BIN}" --table "${TABLE}" --out "${OUT}" --fb "${FB}" --geometry 256x192x32 2>/dev/null; RC="${?}"
 ok "one too small to hold it is refused, for the menus to take over" "${RC}" "12"
 printf '' | "${BIN}" --table "${TMP}/no-such-table" --out "${OUT}" --fb "${FB}" --geometry 320x240x32 2>/dev/null; RC="${?}"
@@ -380,6 +416,8 @@ ok "an install without the utility has none" "$(UI_BIN_SRC="${TMP}/nope" T2OP_UI
 ok "no framebuffer, no screen" "$(UI_FBDEV="${TMP}/no-such-fb" ui_begin; echo $?)" "1"
 ok "a framebuffer it cannot draw on is found out before the first screen" \
    "$(T2OP_CONFIG_ARGS="--geometry 200x100x32" T2OP_UI=fb ui_begin; echo $?)" "1"
+ok "640x224 is a screen it can draw on" \
+   "$(T2OP_CONFIG_ARGS="--geometry 640x224x32" T2OP_UI=fb ui_begin; echo $?)" "0"
 T2OP_UI=fb ui_begin; RC="${?}"
 ok "with both, the screen is taken" "${RC}:$(ui_fb && echo yes)" "0:yes"
 ok "by a copy of the utility in /tmp, which Update may then write over" \

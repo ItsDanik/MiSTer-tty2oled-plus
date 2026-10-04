@@ -34,6 +34,10 @@
 // fonts the firmware draws with (fonts.h, generated from them). The canvas is
 // 320x240 with everything inside a 16-pixel margin, which is what a 15kHz
 // CRT shows; a larger framebuffer gets it scaled by a whole number, centred.
+// One with fewer lines than that, down to 224, gets the canvas less its top
+// and bottom edge, which are empty; and one whose pixels are not square - a
+// 15kHz mode with twice the columns, 640x240 - gets it wider than tall by a
+// whole number too (fb_fit).
 //
 // The table, a line a record, tab separated:
 //
@@ -95,6 +99,9 @@
 #define X1 304
 #define Y0 12
 #define Y1 228
+// The fewest lines a screen may have: the canvas's rows less eight above and
+// below, which leaves four of the empty edge either side of what is drawn.
+#define CH_MIN 224
 
 static unsigned char cv[CH][CW];
 static int clipx0 = 0, clipx1 = CW, clipy0 = 0, clipy1 = CH;
@@ -192,12 +199,45 @@ static int text_window(const Font *f, int x, int y, int w, const char *s, int lv
 // The framebuffer.
 // ---------------------------------------------------------------------------
 static struct {
-  int fd, w, h, bpp, stride, scale, ox, oy;
+  int fd, w, h, bpp, stride, sx, sy, ox, oy, cy, vh;
   int ro, go, bo, rl, gl, bl;
   unsigned char *mem;
   size_t len;
   unsigned int pal[16];
 } fb = { .fd = -1 };
+
+// How the canvas goes on a screen of w x h, into fb: vh of its rows from cy
+// on, each pixel sx wide and sy tall, at ox, oy. 1 if it does not fit.
+//
+// Rows. All 240 where they fit; the middle 224 where the screen has fewer
+// lines (640x224), or where that takes a larger whole-number scale (448
+// lines). Nothing is drawn in the rows left out: everything is inside Y0..Y1,
+// and a 224-line mode is the middle of a 240-line raster, so what a CRT
+// shows stays where it was.
+//
+// Columns. The framebuffer fills the screen whatever its size, so 640x240 on
+// a 4:3 screen has pixels half as wide as tall, and the canvas a pixel for a
+// pixel was a narrow strip in the middle. A mode far wider than any screen -
+// more than five columns to two lines, where 21:9 is seven to three - is
+// taken to be that: a 4:3 screen, and the pixel as wide as it comes out. The
+// width follows, to the nearest whole number that fits. Anything else has
+// square pixels.
+static int fb_fit(int w, int h) {
+  if (w < CW || h < CH_MIN) return 1;
+  fb.vh = CH;
+  if (h / CH_MIN > h / CH) fb.vh = CH_MIN;
+  fb.cy = (CH - fb.vh) / 2;
+  fb.sy = h / fb.vh;
+  fb.sx = fb.sy;
+  if (w * 2 > h * 5) fb.sx = (2 * 3 * w * fb.sy + 4 * h) / (2 * 4 * h);   // sy x 3w/4h, rounded
+  if (fb.sx > w / CW) fb.sx = w / CW;
+  if (fb.sx < 1) fb.sx = 1;
+  // Square pixels on a screen too narrow for the height's scale: both down.
+  if (w * 2 <= h * 5 && fb.sy > fb.sx) fb.sy = fb.sx;
+  fb.ox = (w - CW * fb.sx) / 2;
+  fb.oy = (h - fb.vh * fb.sy) / 2;
+  return 0;
+}
 
 static int fb_open(const char *dev, const char *geometry) {
   struct fb_var_screeninfo v;
@@ -222,13 +262,10 @@ static int fb_open(const char *dev, const char *geometry) {
   } else {
     return -1;
   }
-  if ((fb.bpp != 16 && fb.bpp != 32) || fb.w < CW || fb.h < CH) return -1;
+  if ((fb.bpp != 16 && fb.bpp != 32) || fb_fit(fb.w, fb.h)) return -1;
   fb.mem = mmap(NULL, fb.len, PROT_READ | PROT_WRITE, MAP_SHARED, fb.fd, 0);
   if (fb.mem == MAP_FAILED) { fb.mem = NULL; return -1; }
 
-  fb.scale = fb.w / CW < fb.h / CH ? fb.w / CW : fb.h / CH;
-  fb.ox = (fb.w - CW * fb.scale) / 2;
-  fb.oy = (fb.h - CH * fb.scale) / 2;
   // Sixteen levels of cyan: no red, green and blue together.
   for (int i = 0; i < 16; i++) {
     unsigned int lv = (unsigned int)i * 17;
@@ -246,28 +283,29 @@ static void fb_present(void) {
   if (!fb.mem) return;
   if (!margins) {
     size_t bytes = (size_t)(fb.bpp / 8), left = (size_t)fb.ox * bytes;
-    size_t right = (size_t)(fb.ox + CW * fb.scale) * bytes, width = (size_t)fb.w * bytes;
+    size_t right = (size_t)(fb.ox + CW * fb.sx) * bytes, width = (size_t)fb.w * bytes;
     for (int y = 0; y < fb.h; y++) {
       unsigned char *line = fb.mem + (size_t)y * (size_t)fb.stride;
-      if (y < fb.oy || y >= fb.oy + CH * fb.scale) memset(line, 0, width);
+      if (y < fb.oy || y >= fb.oy + fb.vh * fb.sy) memset(line, 0, width);
       else { memset(line, 0, left); memset(line + right, 0, width - right); }
     }
     margins = 1;
   }
-  for (int y = 0; y < CH; y++) {
-    unsigned char *line = fb.mem + (size_t)(fb.oy + y * fb.scale) * (size_t)fb.stride
+  for (int r = 0; r < fb.vh; r++) {
+    int y = fb.cy + r;
+    unsigned char *line = fb.mem + (size_t)(fb.oy + r * fb.sy) * (size_t)fb.stride
                         + (size_t)fb.ox * (size_t)(fb.bpp / 8);
     if (fb.bpp == 32) {
       unsigned int *p = (unsigned int *)(void *)line;
       for (int x = 0; x < CW; x++)
-        for (int s = 0; s < fb.scale; s++) *p++ = fb.pal[cv[y][x]];
+        for (int s = 0; s < fb.sx; s++) *p++ = fb.pal[cv[y][x]];
     } else {
       unsigned short *p = (unsigned short *)(void *)line;
       for (int x = 0; x < CW; x++)
-        for (int s = 0; s < fb.scale; s++) *p++ = (unsigned short)fb.pal[cv[y][x]];
+        for (int s = 0; s < fb.sx; s++) *p++ = (unsigned short)fb.pal[cv[y][x]];
     }
-    for (int s = 1; s < fb.scale; s++)
-      memcpy(line + (size_t)s * (size_t)fb.stride, line, (size_t)CW * (size_t)fb.scale * (size_t)(fb.bpp / 8));
+    for (int s = 1; s < fb.sy; s++)
+      memcpy(line + (size_t)s * (size_t)fb.stride, line, (size_t)CW * (size_t)fb.sx * (size_t)(fb.bpp / 8));
   }
 }
 

@@ -191,7 +191,7 @@ meta_stat() {
              "${MISTER_STARTPATH}" "${MISTER_FULLPATH}" "${MISTER_CURRENTPATH}" \
              "${MISTER_FILESELECT}" "${MISTER_GAMEID}" "${NAMES_TXT}" \
              "${CORETYPE_MAP:-}" "${SCRAPE_DIR}" "${TITLE_INDEX_DIR}" \
-             "${TITLE_INDEX}" "${SCRAPE_DIR}/DVD.txt" 2>/dev/null)
+             "${TITLE_INDEX}" "${SCRAPE_DIR}/DVD.txt" "${HYBRID_CORES}" 2>/dev/null)
   return 0
 }
 
@@ -246,6 +246,69 @@ _coretypes_load() {
     case "${k}" in '#'*|';'*) continue ;; esac
     [ -z "${CORETYPES[${k,,}]+set}" ] && CORETYPES[${k,,}]="${v//[[:space:]]/}"
   done <"${CORETYPE_MAP}"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Hybrid cores - a game on the ARM behind an FPGA core of its own
+# (github.com/ItsDanik/Hybrid_MiSTer: Dethrace, ECWolf). The core is the game:
+# nothing is ever selected, so MiSTer publishes a core name and no more, and
+# what the layout says comes from hybridcores.txt, by that name:
+#
+#   <corename>|<title>|<label>=<value>|...|<description>
+#
+# Read into a table when its time changes, as names.txt is; the core name
+# lower-cased -> the rest of its line.
+# ---------------------------------------------------------------------------
+: "${HYBRID_CORES:=${TTY2OLED_PATH:-/media/fat/tty2oledplus}/hybridcores.txt}"
+declare -A HYBRID_MAP=()
+HYBRID_REF=""
+_hybrid_load() {
+  local line="" k=""
+  _table_stale "${HYBRID_CORES}" HYBRID_REF || return 0
+  HYBRID_MAP=()
+  [ -r "${HYBRID_CORES}" ] || return 0
+  while IFS= read -r line || [ -n "${line}" ]; do
+    line="${line%$'\r'}"
+    case "${line}" in '#'*|';'*|'') continue ;; esac
+    [[ "${line}" == *'|'* ]] || continue
+    k="${line%%|*}"
+    [ -n "${k}" ] && [ -z "${HYBRID_MAP[${k,,}]+set}" ] && HYBRID_MAP[${k,,}]="${line#*|}"
+  done <"${HYBRID_CORES}"
+  return 0
+}
+
+hybrid_core() {  # hybrid_core <corename>
+  [ -n "${1}" ] || return 1
+  _hybrid_load
+  [ -n "${HYBRID_MAP[${1,,}]+set}" ]
+}
+
+# The console layout for a hybrid core: its title, its rows as the table
+# orders them - none pinned, so four to a page - and its description. The
+# icon is the core's own, pics/icon/<corename>.
+hybrid_meta() {  # hybrid_meta <corename>
+  local corename="${1}" rest="" part="" desc=""
+  local -a parts=()
+  rest="${HYBRID_MAP[${corename,,}]}"
+  # The last field is the description, empty or not - taken off first, since
+  # read drops an empty field at the end of a line.
+  if [[ "${rest}" == *'|'* ]]; then
+    desc="${rest##*|}"
+    rest="${rest%|*}"
+  fi
+  IFS='|' read -r -a parts <<<"${rest}"
+  META_KIND="console"
+  META_SOURCE="hybrid"
+  META_GAME="yes"
+  META_ICON="${corename}"
+  META_PINNED_COUNT=0
+  META_TITLE="${parts[0]:-${DISPLAY_CORENAME}}"
+  # The fields between are rows, and one that is no <label>=<value> is none.
+  for part in "${parts[@]:1}"; do
+    [[ "${part}" == *=* ]] && meta_addfield "${part%%=*}" "${part#*=}"
+  done
+  [ "${SHOW_DESCRIPTION:-yes}" = "yes" ] && META_DESC="${desc}"
   return 0
 }
 
@@ -1849,6 +1912,13 @@ build_meta() {
 
   _slurp _rbf "${MISTER_RBFNAME}"
   display_corename "${corename}" "${_rbf}"
+
+  # A hybrid core is its game, wherever it was started from and whatever is
+  # left in the state files: the table's line is the whole of it.
+  if hybrid_core "${corename}"; then
+    hybrid_meta "${corename}"
+    return 0
+  fi
 
   case "${META_KIND}" in
 

@@ -4,6 +4,26 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.8.7b — 2026-10-05
+
+- **Hybrid cores show their game.** Dethrace (Carmageddon) and ECWolf
+  (Wolfenstein 3D) - games that run on the MiSTer's ARM behind an FPGA core
+  of their own - get their banner when the core loads and then the game's
+  page: the title, who developed it, the year and publishers, the core and
+  its author, the game's icon beside them, and a description as the last
+  page. Nothing to set up: the banners, icons and details come with the
+  update.
+- **The TV menus work on a 224-line screen.** On 640x224 the menu, Settings
+  and the rest fell back to the old text menus, because the screen has fewer
+  lines than they are drawn in. They now fit: nothing was ever drawn in the
+  top and bottom eight lines, and those are what a 224-line screen leaves
+  out.
+- **And are the right shape on 640x240.** A mode with twice the columns of a
+  15kHz picture has pixels half as wide as they are tall, and the menus came
+  out as a squashed strip in the middle of the screen. They are now drawn
+  twice as wide there, filling it. Modes with square pixels - 320x240,
+  720p, 1080p - look as they did.
+
 ## 0.8.6b — 2026-10-03
 
 - **Everything in the Scripts menu's tty2oledplus is now drawn on the TV in

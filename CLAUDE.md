@@ -134,6 +134,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `tty2oled-system.ini`, `tty2oled-user.ini` | Defaults; the user's overrides (sourced after, never shipped over). |
 | `VERSION`, `CHANGELOG.md`, `tools/bump-version.sh` | One version; an entry per release; moves/checks it. |
 | `coretypes.ini` | `corename=console\|computer\|arcade`, consulted before folder guessing. |
+| `hybridcores.txt` | `corename\|title\|label=value\|...\|description`: the layout of a hybrid core (Dethrace, ECWolf). Shipped, replaced by every update. |
 | `MiSTer_SSD1322_USB/metadisplay.h` | Arcade card + console split layout. |
 | `.../bootscreen.h`, `bootlogo.h`, `bootlogo.png` | LittleFS boot image + reserved band; built-in 256x54 logo (generated from the PNG). |
 | `.../contrastfade.h` | Every contrast change fades; base level x transition veil. |
@@ -739,6 +740,16 @@ leave, 12 cannot draw, 13 keys ran out (tests).
   and bottom (tested for every screen and popup) for a 15kHz CRT; a larger
   framebuffer gets a whole-number scale, centred; 16 or 32 bpp from the
   device's own offsets. Palette = level x 17 on green and blue, no red.
+- **`fb_fit` puts it on the screen, an axis at a time.** Rows: all 240, or
+  the middle 224 (`CH_MIN`) where the screen has fewer lines or where that
+  takes a larger scale (448) - nothing is drawn in the eight left out either
+  side, and 640x224 used to be refused (exit 12, so the dialog menus).
+  Columns: the framebuffer fills the screen whatever its size, so 640x240 has
+  half-width pixels and the canvas was a squashed strip; a mode wider than
+  5:2 is taken for a 4:3 screen and the width scaled by `sy x 3w/4h`,
+  rounded, capped at what fits. Up to 5:2 (21:9 included) pixels are square.
+  Tested per mode against the canvas dump; **not seen on a real 640x224 or
+  640x240 screen** - a user's report.
 - **Fonts are the firmware's**: `genfont.sh` renders tenfatguys, luBS08, 6x12
   and 5x7 with the real U8g2 into `fonts.h` (committed). The pen's advance is
   `drawGlyph`'s return, not `getUTF8Width` (inked width: proportional glyphs
@@ -874,6 +885,31 @@ Degauss/Zaparoo; with `SVM_PID` known it is a read, not a search. `scummvm_core`
   only a 1-4 alnum or `.scummvm` extension, as `lookup_scraped` does.
 - Tests: `test-scummvm.sh`, a fake `PROC_ROOT` with the real cmdline, environ,
   stat and fd links; packs built as zips.
+
+## Hybrid cores
+
+The user's own: [Hybrid_MiSTer](https://github.com/ItsDanik/Hybrid_MiSTer) -
+the game on the ARM, an FPGA core in `_Other` for video, sound and input,
+started by `danik_hybrid_cores.sh` while `/tmp/CORENAME` names the core
+(`Dethrace`, `ECWolf`: the `CONF_STR` name, also `games/<Name>/`). **The core
+is the game**: nothing is selected, so MiSTer publishes the core name and no
+more, and `_Other` classifies as `unknown`.
+
+- `hybridcores.txt` is the whole layout: `hybrid_core` (the table, reloaded
+  on mtime - it is in `meta_stat`) and `hybrid_meta`, in `build_meta` after
+  `classify_core`/`display_corename` and ahead of every state file - what the
+  last core left in `CURRENTPATH` is not this game's. Console kind,
+  `META_GAME=yes`, `META_SOURCE=hybrid`, nothing pinned: four rows are one
+  page, the description the next.
+- Rows are the line's own `label=value` fields, in its order - **not**
+  `METADATA_FIELDS`. The last field is the description, empty or not (taken
+  off before `read -a`, which drops an empty last field).
+- Picture and icon by core name, lower-cased: `pics/banner/dethrace.gsc`,
+  `pics/icon/dethrace.gsc`. `core_kind` is untouched (`unknown`, so
+  `findbanner`). `test-meta.sh` fails on a line without both, or with a
+  description that is not printable ASCII within `DESC_MAX`.
+- A new hybrid core is a line, a banner and an icon - no code.
+- Not checked on the real MiSTer yet.
 
 ## The DVD core
 

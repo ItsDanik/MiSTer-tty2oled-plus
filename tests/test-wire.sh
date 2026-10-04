@@ -928,6 +928,34 @@ refreshmeta "GBA" >/dev/null 2>&1
 ok "a game change in a running core sends only the details" \
    "$(wire_order)" "CMDMETA CMDICON"
 
+# A hybrid core (Dethrace, ECWolf) is its game: the core change alone brings
+# the whole layout, behind the core's own picture and its hold, with the
+# description and the icon - both named in lower case, as the release has them.
+reset_capture
+HYBRID_CORES="${TMP}/hybridcores.txt"
+printf 'Dethrace|Carmageddon|Dev=Stainless Software Ltd.|Year=1997, SCi, Interplay|Core=dethrace|Author=danik|A violent car racing game.\n' > "${HYBRID_CORES}"
+printf '/media/fat/_Other/Dethrace_20261004.rbf\n' > "${TMP}/STARTPATH"
+printf 'Dethrace\n' > "${TMP}/CORENAME"
+printf '#\n#\n#\n0a\n' > "${bannerfolder}/dethrace.gsc"
+{ echo "#"; echo "#"; echo "#"; head -c 2752 /dev/zero | xxd -p; } > "${iconfolder}/dethrace.gsc"
+senddata "Dethrace" >/dev/null 2>&1
+# The description's bytes end in no newline, so CMDICON follows them on their
+# line: the commands are picked out wherever they stand.
+ok "a hybrid core: off, picture, hold, the game, its description, its icon" \
+   "$(captured | grep -aoE 'CMD[A-Z]+' | paste -sd' ')" "CMDMETAOFF CMDCOR CMDCBOOT CMDMETA CMDDESC CMDICON"
+ok "its line: four rows on one page, nothing pinned" \
+   "$(captured | grep -a '^CMDMETA,')" \
+   "CMDMETA,2,${METADATA_INTERVAL},0,0,Carmageddon|Dev=Stainless Software Ltd.|Year=1997  SCi  Interplay|Core=dethrace|Author=danik"
+ok "its description, by length" "$(captured | grep -a '^CMDDESC,')" "CMDDESC,26"
+reset_capture
+printf '/media/fat/_Other/Dethrace_20261004.rbf\n' > "${TMP}/STARTPATH"
+refreshmeta "Dethrace" >/dev/null 2>&1
+refreshmeta "Dethrace" >/dev/null 2>&1
+ok "and a pass with nothing new sends nothing again" \
+   "$(captured | grep -ac '^CMDMETA,')" "1"
+rm -f "${bannerfolder}/dethrace.gsc" "${iconfolder}/dethrace.gsc" "${HYBRID_CORES}"
+HYBRID_CORES="${TMP}/no-such-table"
+
 rm -f "${bannerfolder}/GBA.gsc" "${iconfolder}/GBA.gsc"
 TRANSITION="-1"
 

@@ -684,6 +684,95 @@ ok "an .mra still wins over the map" "${META_KIND}" "arcade"
 export CORETYPE_MAP="${SAVED_MAP}"
 
 # ---------------------------------------------------------------------------
+section "hybrid cores - the core is the game, and the table says what it is"
+# ---------------------------------------------------------------------------
+# Dethrace and ECWolf run their game on the ARM: no file is selected, so
+# MiSTer publishes a core name and nothing else, from _Other - which
+# classifies as unknown, metadata off. hybridcores.txt is the whole layout.
+clear_state
+HYBRID_CORES="${TMP}/hybridcores.txt"
+cat > "${HYBRID_CORES}" <<'HYB'
+# a comment
+Dethrace|Carmageddon|Dev=Stainless Software Ltd.|Year=1997, SCi, Interplay|Core=dethrace|Author=danik|A violent car racing game.
+Bare|Just A Title
+NoDesc|Rows Only|Dev=Someone|Year=2001|
+Odd|Odd One|not a row|Dev=Someone|Text with a = in it.
+HYB
+touch -d '2024-01-01 00:00:00' "${HYBRID_CORES}"
+printf '/media/fat/_Other/Dethrace_20261004.rbf\n' > "${TMP}/STARTPATH"
+# Whatever the last core left behind is not this game's.
+printf 'games/GBA\n'             > "${TMP}/FULLPATH"
+printf 'Advance Wars (USA).gba\n' > "${TMP}/CURRENTPATH"
+printf 'selected\n'              > "${TMP}/FILESELECT"
+
+build_meta "Dethrace" corechange
+ok "a console layout"            "${META_KIND}"   "console"
+ok "with a game to show"         "${META_GAME}"   "yes"
+ok "the table's title"           "${META_TITLE}"  "Carmageddon"
+ok "said to be the table's"      "${META_SOURCE}" "hybrid"
+ok "the core's own icon"         "${META_ICON}"   "Dethrace"
+ok "four rows"                   "${#META_FIELDS[@]}" "4"
+ok "in the table's order"        "$(printf '%s;' "${META_FIELDS[@]}")" \
+   $'Dev\tStainless Software Ltd.;Year\t1997, SCi, Interplay;Core\tdethrace;Author\tdanik;'
+ok "none pinned: all four on one page" "${META_PINNED_COUNT}" "0"
+ok "and the description"         "${META_DESC}"   "A violent car racing game."
+
+build_meta "dethrace"
+ok "the core name without regard to case" "${META_TITLE}" "Carmageddon"
+
+SHOW_DESCRIPTION="no" build_meta "Dethrace"
+ok "SHOW_DESCRIPTION=no leaves the page out" "${META_DESC}" ""
+
+build_meta "Bare"
+ok "a title alone: the title"    "${META_TITLE}|${#META_FIELDS[@]}|${META_DESC}" "Just A Title|0|"
+build_meta "NoDesc"
+ok "an empty description is not the last row" \
+   "${#META_FIELDS[@]}|${META_FIELDS[1]}|${META_DESC}" $'2|Year\t2001|'
+build_meta "Odd"
+ok "a field that is no label=value is no row" "${#META_FIELDS[@]}" "1"
+ok "and a description may hold an ="          "${META_DESC}" "Text with a = in it."
+
+build_meta "Template"
+ok "a core not in the table is untouched" "${META_KIND}|${META_GAME}" "unknown|no"
+ok "hybrid_core says which is which" \
+   "$(hybrid_core ECWolf && echo yes || echo no)$(hybrid_core Dethrace && echo yes || echo no)" "noyes"
+
+# Read again when the file changes, not before.
+printf 'ECWolf|Wolfenstein 3D|Dev=Id Software|\n' >> "${HYBRID_CORES}"
+touch -d '2024-01-02 00:00:00' "${HYBRID_CORES}"
+build_meta "ECWolf"
+ok "a changed table is read again" "${META_TITLE}" "Wolfenstein 3D"
+
+HYBRID_CORES="${TMP}/no-such-table"
+build_meta "Dethrace"
+ok "no table: the core as any other" "${META_KIND}|${META_GAME}" "unknown|no"
+
+# The shipped table: what each line names must be there, and fit the firmware.
+HYBRID_CORES="${ROOT}/hybridcores.txt"
+build_meta "Dethrace"
+ok "shipped: Dethrace is Carmageddon" "${META_TITLE}" "Carmageddon"
+ok "shipped: its rows" "$(printf '%s;' "${META_FIELDS[@]%%$'\t'*}")" "Dev;Year;Core;Author;"
+build_meta "ECWolf"
+ok "shipped: ECWolf is Wolfenstein 3D" "${META_TITLE}" "Wolfenstein 3D"
+ok "shipped: its rows" "$(printf '%s;' "${META_FIELDS[@]}")" \
+   $'Dev\tId Software;Year\t1992, Apogee, id;Core\tecwolf;Author\tdanik;'
+hyb_bad=""
+while IFS= read -r line; do
+  case "${line}" in '#'*|'') continue ;; esac
+  core="${line%%|*}"; desc="${line##*|}"
+  [ -e "${ROOT}/pics/banner/${core,,}.gsc" ] || hyb_bad="${hyb_bad} ${core}:banner"
+  [ -e "${ROOT}/pics/icon/${core,,}.gsc" ]   || hyb_bad="${hyb_bad} ${core}:icon"
+  [ "${#desc}" -le 2048 ]                    || hyb_bad="${hyb_bad} ${core}:long"
+  [ -n "${desc}" ]                           || hyb_bad="${hyb_bad} ${core}:nodesc"
+  LC_ALL=C grep -q '[^ -~]' <<<"${line}"     && hyb_bad="${hyb_bad} ${core}:ascii"
+done < "${ROOT}/hybridcores.txt"
+ok "shipped: a banner, an icon and a printable description that fits, each" "${hyb_bad}" ""
+ok "shipped: the installer carries the table" \
+   "$(. "${ROOT}/tools/manifest.sh"; case " ${MANIFEST_FILES//$'\n'/ } " in *" hybridcores.txt "*) echo yes ;; *) echo no ;; esac)" "yes"
+HYBRID_CORES="${TMP}/no-such-table"
+rm -f "${TMP}/hybridcores.txt"
+
+# ---------------------------------------------------------------------------
 section "check_mister_ini"
 # ---------------------------------------------------------------------------
 clear_state

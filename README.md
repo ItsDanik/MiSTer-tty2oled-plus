@@ -101,6 +101,15 @@ out from where the core is reading the disc, which runs half a minute ahead
 of the picture, so a time can be a second or two out for a moment after you
 skip.
 
+**Hybrid cores** - [Dethrace](https://github.com/ItsDanik/Dethrace_MiSTer)
+(Carmageddon) and [ECWolf](https://github.com/ItsDanik/ecwolf_MiSTer)
+(Wolfenstein 3D), games that run on the MiSTer's ARM behind an FPGA core of
+their own - are one game each, so loading the core is enough: its banner,
+then the console layout with the game's title, who developed it, the year
+and publishers, the core and its author, the game's icon beside them and a
+description as the last page. What is shown for each is a line of
+`hybridcores.txt` in the install folder.
+
 **Computer cores** show the core's artwork full-screen, and nothing else, yet.  
 Computer metadata support coming in the future.
 
@@ -312,6 +321,7 @@ miss costs only the extra fields, and the title still shows.
 | Neo Geo | title, year, publisher — from the MAME set, it being arcade hardware |
 | PlayStation, Saturn, Mega CD, 3DO, PC Engine CD | title and region only |
 | ScummVM | title, year, company, series, engine, platform, language — and each game's own icon |
+| Hybrid cores (Dethrace, ECWolf) | title, developer, year and publishers, core, author, a description — and the game's icon |
 
 Disc systems are a limit of the source: the
 cartridge metadata sets carry release dates and publishers, and the disc set
@@ -435,7 +445,8 @@ waits for OK when it has finished.
 
 Settings opens on the TV in the display's own look: cyan on
 black, in the fonts the panel uses, drawn at 320x240 so a 15kHz CRT shows all
-of it. Each setting has the control that suits it — a switch, a slider, a
+of it - on a 224-line mode too (640x224), and stretched to the right shape
+where a mode's pixels are not square (640x240). Each setting has the control that suits it — a switch, a slider, a
 selector, a text field with an on-screen keyboard, a checklist you can put in
 order. Move with the d-pad, change a value with left and right, OK for the
 exact value or the full list, Cancel to go back; a keyboard's arrows, Enter
@@ -618,6 +629,8 @@ as text.
 
 ScummVM's stands in for a game's own icon until that has been converted,
 the first time the game is played.
+
+The hybrid cores, Dethrace and ECWolf, each have their game's.
 
 The twenty console cores without one still get the split layout and everything
 in it — just a black panel where the icon would be. To draw your own, work at

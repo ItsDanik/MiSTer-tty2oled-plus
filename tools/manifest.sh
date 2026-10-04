@@ -15,8 +15,11 @@
 # have to, since they run before any ini is read - so this fork's copies are the
 # ones that know about /media/fat/tty2oledplus. A stock copy left behind in a
 # moved install would go looking for the old folder and find nothing.
+#
+# hybridcores.txt is what the display says for a hybrid core (Dethrace,
+# ECWolf): a game MiSTer reports only as a core.
 MANIFEST_FILES="tty2oled.sh tty2oled-meta.sh tty2oled-system.ini
-                S60tty2oled tty2oled-read.sh"
+                S60tty2oled tty2oled-read.sh hybridcores.txt"
 
 # Tools that run on the MiSTer. They land in the install folder flat, without
 # the tools/ prefix.
