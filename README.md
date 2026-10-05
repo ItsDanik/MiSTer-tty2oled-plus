@@ -4,6 +4,8 @@
 
 Fork of **[tty2oled]**, adding extra features like game metadata display.
 
+Disclaimer: AI is being used to speed up development of this project.
+
 An SSD1322 OLED panel connects to the MiSTer over USB and shows what you are
 playing: artwork for the core, the game's title, the year it came out, who made
 it, and — for arcade boards — everything the `.mra` knows. ScummVM's games get
