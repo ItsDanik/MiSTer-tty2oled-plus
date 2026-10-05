@@ -662,6 +662,10 @@ dark-on-light. It uses Pillow if you have it and ImageMagick otherwise.
 Everything on this panel is sixteen shades of grey — no colour, no
 transparency. Draw in that palette and the conversion is exact.
 
+## Support
+
+If you enjoy this project, you can support my work on [Patreon](https://www.patreon.com/itsdanik).
+
 ## Credit and licence
 
 Original project (tty2oled): venice1200

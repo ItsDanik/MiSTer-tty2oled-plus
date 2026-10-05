@@ -174,6 +174,10 @@ curl -fsSL --cacert /etc/ssl/certs/cacert.pem https://github.com/ItsDanik/MiSTer
 After that the Scripts menu has one entry, **tty2oledplus**: Settings to
 change what the display shows, Update for the next release, and Uninstall to
 remove it all again.
+
+### Support
+
+If you enjoy this project, you can support my work on [Patreon](https://www.patreon.com/itsdanik).
 EON
   } > "${NOTES}"
 fi
