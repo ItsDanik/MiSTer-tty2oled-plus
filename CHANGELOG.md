@@ -4,6 +4,17 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.8.8b — 2026-10-06
+
+- **A display mounted the other way up shows the game's page properly.**
+  With the panel turned 180 degrees - "Upside down" in Settings, a tilt
+  sensor, or a firmware built with `XROTATE` - a core's picture was right
+  but the page after it was not: the text and the icon came out in the wrong
+  places and the wrong way round, and fades and page turns with them.
+  Everything is now turned together, as one picture, whatever is on it. This
+  is in the firmware, so the display is flashed by this update; if you built
+  your own firmware with `XROTATE`, build it again from this version.
+
 ## 0.8.7b — 2026-10-05
 
 - **Hybrid cores show their game.** Dethrace (Carmageddon) and ECWolf

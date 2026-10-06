@@ -1604,5 +1604,18 @@ ok "sent with the rest of the startup settings" \
    "$(grep -c '^  sendscroll' "${ROOT}/tty2oled.sh")" "1"
 
 # ---------------------------------------------------------------------------
+section "a turned panel: the library's rotation stays 0"
+# ---------------------------------------------------------------------------
+# The layouts copy the framebuffer out and back and write into it directly,
+# which is only the picture while the library does not rotate it (panelflip.h).
+FWDIR="${ROOT}/MiSTer_SSD1322_USB"
+ok "nothing asks the library for a rotation but 0" \
+   "$(grep -h 'setRotation(' "${FWDIR}"/*.ino "${FWDIR}"/*.h | grep -cv 'oled\.setRotation(0);')" "0"
+ok "CMDROT, XROTATE and the tilt sensor turn the output instead" \
+   "$(grep -c 'oled\.setFlipped(true);' "${FWDIR}/MiSTer_SSD1322_USB.ino")" "4"
+ok "on a panel that can be turned" \
+   "$(grep -c '^FlippablePanel<Adafruit_SSD1322> oled(' "${FWDIR}/MiSTer_SSD1322_USB.ino")" "2"
+
+# ---------------------------------------------------------------------------
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n\n' "${PASS}" "${FAIL}"
 [ "${FAIL}" -eq 0 ] || exit 1

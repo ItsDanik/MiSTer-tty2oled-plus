@@ -44,7 +44,7 @@
 // is written by tools/bump-version.sh from the VERSION file at the repo root.
 // The trailing letter is this fork's pre-release mark ("b" for beta), not
 // upstream's "T" for Testing - that one still switches runsTesting on below.
-#define BuildVersion "0.8.7b"
+#define BuildVersion "0.8.8b"
 
 // Include Libraries
 #include <Arduino.h>
@@ -53,6 +53,7 @@
 #include "bitmaps.h"                              // Some needed pictures
 #include "linejunk.h"                             // Someone else's bytes on the port (Zaparoo's PN532 probe)
 #include "fonts.h"                                // Some needed fonts
+#include "panelflip.h"                            // A panel mounted the other way up: turned on the way out
 
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -195,10 +196,10 @@
 
 // Create OLED Object
 #ifdef USE_ESP32S3DEV
-Adafruit_SSD1322 oled(256, 64, &OLED_SPI, OLED_DC, OLED_RESET, OLED_CS);
+FlippablePanel<Adafruit_SSD1322> oled(256, 64, &OLED_SPI, OLED_DC, OLED_RESET, OLED_CS);
 #else
 // Hardware Constructor OLED Display and U8G2 Support
-Adafruit_SSD1322 oled(256, 64, &SPI, OLED_DC, OLED_RESET, OLED_CS);
+FlippablePanel<Adafruit_SSD1322> oled(256, 64, &SPI, OLED_DC, OLED_RESET, OLED_CS);
 #endif
 U8G2_FOR_ADAFRUIT_GFX u8g2;
 
@@ -408,7 +409,7 @@ void setup(void) {
   // Init Display SSD1322
   oled.begin();
   oled.clearDisplay();
-  oled.setRotation(0);
+  oled.setRotation(0);                              // Stays 0: a turned panel is panelflip.h's
   veil_fadeOver(0, 0);                              // Black: the boot screen fades itself in,
   contrast_jump(255);                               // lifting the veil over the base level
   oled.setTextSize(1);
@@ -556,15 +557,15 @@ void setup(void) {
   RotationDebouncer.interval(DEBOUNCE_TIME);               // Use a debounce interval of 25 milliseconds
   delay(10);                                               // Short Delay
   if (digitalRead(TILT_PIN)) {                             // Set Startup Rotation
-    oled.setRotation(0);                                   // If Signal = 1 no Rotation
+    oled.setFlipped(false);                                   // If Signal = 1 no Rotation
  }
   else {                                                   // If Signal = 0 180° Rotation
-    oled.setRotation(2);
+    oled.setFlipped(true);
   }
 
 // XROTATE Option Rotation
 #ifdef XROTATE
-  oled.setRotation(2);                                     // 180° Rotation
+  oled.setFlipped(true);                                     // 180° Rotation
 #endif
 
 // Mount the filesystem that may hold a user boot image. Must run before the
@@ -605,7 +606,7 @@ void loop(void) {
 #ifdef XDEBUG
     Serial.println("Tilt Rose...");
 #endif
-    oled.setRotation(0);
+    oled.setFlipped(false);
     if (actCorename.startsWith("No Core")) {
       oled_showStartScreen();
     }
@@ -617,7 +618,7 @@ void loop(void) {
 #ifdef XDEBUG
     Serial.println("Tilt Fell...");
 #endif
-    oled.setRotation(2);
+    oled.setFlipped(true);
     if (actCorename.startsWith("No Core")) {
       oled_showStartScreen();
     }
@@ -1724,13 +1725,13 @@ void oled_readnsetrotation(void) {
   
   switch (r) {
     case 0:
-      oled.setRotation(0);
+      oled.setFlipped(false);
     break;
     case 1:
-      oled.setRotation(2);
+      oled.setFlipped(true);
     break;
     default:
-      oled.setRotation(0);
+      oled.setFlipped(false);
     break;
   }
 }

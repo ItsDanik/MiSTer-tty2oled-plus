@@ -143,6 +143,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `.../bootoutro.h`, `busybar.h` | Boot screen as menu picture + power-on outro; the sweep as a busy bar. |
 | `.../bandnote.h` | Frontends' 54-row picture + band; `CMDNOTE` fading in/out there; the clock and the feed's ticker taking turns. |
 | `.../mediaband.h` | `CMDMEDIA`: a film's transport band under the console layout, and its chapter row. |
+| `.../panelflip.h` | A panel mounted the other way up (`CMDROT`, `XROTATE`, tilt): the framebuffer turned in `display()`, the library's rotation always 0. |
 | `.../linejunk.h` | Drops another program's bytes (Zaparoo's PN532 probe) ahead of a command line. |
 | `.../MiSTer_SSD1322_USB.ino` | Includes the headers; LEDC shim for ESP32 core 3.x. |
 | `tests/` | ~3000 checks, no hardware. `tests/dvdiso.py` builds a DVD-Video image. |
@@ -586,6 +587,14 @@ are reset in `meta_reset`, or a console game inherits the last card's pairing.
   `DIM_FADE_MS` (default 6s); wake uses `CONTRAST_FADE_MS`. `meta_activity()`
   is called **only** from the command dispatcher - counting marquee/pager draws
   kept the panel from ever dimming.
+- **A turned panel is turned on the way out** (`panelflip.h`, 0.8.8b):
+  `oled` is `FlippablePanel<Adafruit_SSD1322>`, whose `display()` reverses
+  the framebuffer, sends it and reverses it back. The library's
+  `setRotation(2)` turns drawing calls and `draw4bppBitmap()` *into* the
+  framebuffer, and everything here that copies the framebuffer out and back
+  (`metaBin`), or writes it directly (icon, fades), assumes it is the
+  picture: the layout came out turned twice with the icon in the opposite
+  corner. `test-wire.sh` fails on any `setRotation` but `(0)`.
 - **Side swap** mirrors the console layout every `FLIP_MINUTES`, via a
   transition (`metaFlipped` toggled before `meta_transitionToConsole`).
   `meta_iconX`/`meta_textX`/`meta_textW` own the geometry. Icon x must be

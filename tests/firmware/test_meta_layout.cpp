@@ -22,6 +22,61 @@
 // same numbers whichever branch the sketch builds.
 #include "../../MiSTer_SSD1322_USB/bootscreen.h"
 #include "../../MiSTer_SSD1322_USB/bootlogo.h"
+#include "../../MiSTer_SSD1322_USB/panelflip.h"
+
+// The library's panel class, as far as a turned panel goes: transcribed from
+// Adafruit_GrayOLED::drawPixel and Adafruit_SSD1322::draw4bppBitmap/display,
+// rotations 0 and 2 (the only ones the sketch ever asked for). `sent` is what
+// display() put on the glass.
+class LibPanel {
+public:
+    LibPanel(int16_t w, int16_t h) : WIDTH(w), HEIGHT(h) {
+        buffer = (uint8_t *)calloc(1, (size_t)w * h / 2);
+        sent   = (uint8_t *)calloc(1, (size_t)w * h / 2);
+        window_x1 = 0; window_y1 = 0; window_x2 = w - 1; window_y2 = h - 1;
+    }
+    ~LibPanel() { free(buffer); free(sent); }
+    LibPanel(const LibPanel &) = delete;
+    LibPanel &operator=(const LibPanel &) = delete;
+    void     setRotation(uint8_t r) { rotation = r; }
+    uint8_t *getBuffer(void)        { return buffer; }
+    void drawPixel(int16_t x, int16_t y, uint16_t color) {
+        if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return;
+        if (rotation == 2) { x = WIDTH - x - 1; y = HEIGHT - y - 1; }
+        uint8_t *p = &buffer[x / 2 + (y * WIDTH / 2)];
+        if (x % 2 == 0) *p = (uint8_t)((*p & 0x0F) | ((color & 0xF) << 4));
+        else            *p = (uint8_t)((*p & 0xF0) | (color & 0xF));
+    }
+    void draw4bppBitmap(uint8_t *bitmap) {
+        int n = WIDTH * HEIGHT / 2;
+        for (int i = 0; i < n; i++) {
+            if (rotation == 2) {
+                uint8_t v = bitmap[n - i - 1];
+                buffer[i] = (uint8_t)((0xF0 & v) >> 4 | (0x0F & v) << 4);
+            } else buffer[i] = bitmap[i];
+        }
+    }
+    void display(void) {
+        memcpy(sent, buffer, (size_t)WIDTH * HEIGHT / 2);
+        sentX1 = window_x1; sentY1 = window_y1; sentX2 = window_x2; sentY2 = window_y2;
+        window_x1 = 0; window_y1 = 0; window_x2 = WIDTH - 1; window_y2 = HEIGHT - 1;
+    }
+    // The grey at a place on the glass.
+    int seen(int x, int y) {
+        uint8_t b = sent[x / 2 + y * WIDTH / 2];
+        return (x % 2 == 0) ? (b >> 4) : (b & 0x0F);
+    }
+    void dirty(int16_t x1, int16_t y1, int16_t x2, int16_t y2) {
+        window_x1 = x1; window_y1 = y1; window_x2 = x2; window_y2 = y2;
+    }
+    uint8_t *sent;
+    int16_t  sentX1 = 0, sentY1 = 0, sentX2 = 0, sentY2 = 0;
+protected:
+    int16_t  WIDTH, HEIGHT;
+    uint8_t *buffer;
+    int16_t  window_x1, window_y1, window_x2, window_y2;
+    uint8_t  rotation = 0;
+};
 
 unsigned long g_fakeMillis = 1000;
 
@@ -4615,6 +4670,71 @@ int main() {
         band_rssParse("CMDRSS,30,60,40,0");
         clockSet = false; clockFmt[0] = '\0';
         bandReset();
+    }
+
+    section("a panel mounted the other way up: turned on the way out, not in the framebuffer");
+    {
+        // What the layouts do with the framebuffer, in small: draw, copy the
+        // frame out, put an icon's bytes straight into the copy's place, hand
+        // the frame back as a picture, show it.
+        struct Play {
+            static void run(FlippablePanel<LibPanel> &p) {
+                static uint8_t shot[8192];
+                p.drawPixel(3, 1, 15);                      // text, top left
+                p.drawPixel(100, 40, 9);
+                memcpy(shot, p.getBuffer(), sizeof(shot));  // metaBin
+                memset(p.getBuffer(), 0, 8192);
+                p.draw4bppBitmap(shot);                     // a transition's source
+                p.getBuffer()[170 / 2 + 10 * 128] = 0x7C;   // the icon: (170,10) and (171,10)
+                p.display();
+            }
+        };
+        FlippablePanel<LibPanel> up(256, 64);
+        Play::run(up);
+        okBool("upright: the text where it was drawn",
+               up.seen(3, 1) == 15 && up.seen(100, 40) == 9, true);
+        okBool("...and the icon beside it", up.seen(170, 10) == 7 && up.seen(171, 10) == 12, true);
+
+        FlippablePanel<LibPanel> turned(256, 64);
+        turned.setFlipped(true);
+        okBool("flipped says so", turned.flipped(), true);
+        Play::run(turned);
+        bool same = true;
+        for (int y = 0; y < 64 && same; y++)
+            for (int x = 0; x < 256; x++)
+                if (turned.seen(255 - x, 63 - y) != up.seen(x, y)) { same = false; break; }
+        okBool("turned: the same frame, every pixel a half turn away", same, true);
+        okBool("...the icon too, its two pixels in order",
+               turned.seen(255 - 170, 53) == 7 && turned.seen(255 - 171, 53) == 12, true);
+        okBool("the framebuffer itself stays the right way up",
+               (turned.getBuffer()[3 / 2 + 1 * 128] & 0x0F) == 15 &&
+               turned.getBuffer()[170 / 2 + 10 * 128] == 0x7C, true);
+
+        // The library's own rotation, which is what the sketch used: the
+        // copied-out frame is turned a second time and the icon is not turned
+        // at all. This is the bug, kept here so the stand-in is known to show it.
+        FlippablePanel<LibPanel> lib(256, 64);
+        lib.setRotation(2);
+        Play::run(lib);
+        okBool("the library's rotation turns a copied-out frame twice",
+               lib.seen(3, 1) == 15 && lib.seen(255 - 3, 63 - 1) == 0, true);
+        okBool("...and leaves the icon where the bytes were put", lib.seen(170, 10) == 7, true);
+
+        turned.dirty(10, 2, 41, 7);
+        turned.display();
+        okBool("the dirty window turns with the picture",
+               turned.sentX1 == 255 - 41 && turned.sentX2 == 255 - 10 &&
+               turned.sentY1 == 63 - 7  && turned.sentY2 == 63 - 2, true);
+        up.dirty(10, 2, 41, 7);
+        up.display();
+        okBool("...and stays put upright", up.sentX1 == 10 && up.sentX2 == 41 &&
+               up.sentY1 == 2 && up.sentY2 == 7, true);
+
+        uint8_t odd[3] = { 0x12, 0x34, 0x56 };
+        panel_flipBytes(odd, 3);
+        okBool("an odd count turns its middle byte too",
+               odd[0] == 0x65 && odd[1] == 0x43 && odd[2] == 0x21, true);
+        panel_flipBytes(nullptr, 8192);                     // no framebuffer: nothing to do
     }
 
     printf("\n\033[1mResults:\033[0m %d passed, %d failed\n\n", passed, failed);
