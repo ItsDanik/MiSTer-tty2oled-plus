@@ -32,7 +32,7 @@
 # A 256x64 banner is shown as it is, a 256x54 boot screen with the firmware's
 # band below it black, and an 86x64 icon in the middle of a black panel.
 #
-# Host defaults to root@MiSTer.local; override with MISTER=root@192.168.1.206.
+# Host defaults to root@MiSTer.local; override with MISTER=root@192.168.1.205.
 # Every ssh rides on one connection, so a password is asked for once at most.
 
 set -u

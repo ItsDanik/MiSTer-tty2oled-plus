@@ -207,11 +207,12 @@ static void scene_console(const char *name, const char *cmd, const char *icon,
 
 // A film on the DVD core: the split layout with the disc's icon, and its
 // place under both columns - CMDMEDIA as the daemon sends it.
-static void scene_dvd(const char *name, const char *cmd, const char *media) {
+static void scene_dvd(const char *name, const char *cmd, const char *media,
+                      const char *icon = "pics/icon/dvd.gsc") {
   meta_reset();
   meta_parse(cmd);
   meta_parseMedia(media);
-  metaHasIcon = gsc_load((repoRoot + "/pics/icon/dvd.gsc").c_str(), iconBin, ICON_BYTES);
+  metaHasIcon = gsc_load((repoRoot + "/" + icon).c_str(), iconBin, ICON_BYTES);
   meta_renderConsole();
   save(name);
 }
@@ -418,6 +419,28 @@ int main(int argc, char **argv) {
   scene_dvd("dvd-playing", queen, "CMDMEDIA,1,2326,6219,9,25");
   scene_dvd("dvd-paused",  queen, "CMDMEDIA,2,2326,6219,9,25");
   scene_dvd("dvd-menu",    queen, "CMDMEDIA,4,0,0,0,0");
+
+  // Music on MiSTer Hi-Fi: the player's banner, and an audio CD playing -
+  // what the daemon sent for Bjork's Greatest Hits on the MiSTer, the album
+  // and the track's title from MusicBrainz. The row says Track.
+  scene_picture("hifi-art", "pics/banner/misterhifi.gsc");
+  scene_dvd("hifi-playing",
+            "CMDMETA,2,12,0,0,All Is Full of Love"
+            "|Artist=Bjork|Album=Greatest Hits|Year=2002|Format=Audio CD",
+            "CMDMEDIA,1,169,286,1,15,Track", "pics/icon/misterhifi.gsc");
+
+  // Hybrid cores: the core's banner, then the game's page - the rows are
+  // hybridcores.txt's own.
+  scene_picture("hybrid-jfsw-art", "pics/banner/jfsw.gsc");
+  scene_console("hybrid-jfsw",
+                "CMDMETA,2,12,0,0,Shadow Warrior"
+                "|Dev=3D Realms|Year=1997  GT Interactive|Core=jfSW|Author=danik",
+                "pics/icon/jfsw.gsc");
+  scene_picture("hybrid-openscreamer-art", "pics/banner/openscreamer.gsc");
+  scene_console("hybrid-openscreamer",
+                "CMDMETA,2,12,0,0,Screamer"
+                "|Dev=Graffiti|Year=1995  Virgin Interactive|Core=openscreamer|Author=danik",
+                "pics/icon/openscreamer.gsc");
 
   // Arcade card, as the shipped lists lay it out for a set an imported
   // gamelist describes: the grid's first page, the wide fields under a repeat

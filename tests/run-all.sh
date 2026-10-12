@@ -13,11 +13,13 @@
 #   test-deploy.sh      deploy-mister.sh against a fake MiSTer, and the boot hook
 #   test-settings.sh    the Scripts-menu settings editor and the ini it writes
 #   test-dvd.sh         the DVD core: the disc found, its place followed, the wire
+#   test-hifi.sh        MiSTer Hi-Fi: the player found, its track followed, the wire
 #   test-png2gsc.py     the image converter, on both of its backends
 #   test-scrape.py      Scrape metadata: the gamelist.xml import
 #   test-syscheck.py    the system update check: update_all's state vs its databases
 #   test-history2gamelist.py  arcade descriptions out of MAME's history.xml
 #   test-dvd.py         a DVD's titles and chapters off the disc, and Wikipedia
+#   test-cd.py          an audio CD named from its table of contents
 #   test-installer.sh   the release package, and the installer that unpacks it
 #   test-flash.sh       flashing: what is written, and what is kept
 #   test_meta_parse     the firmware's CMDMETA parser
@@ -48,11 +50,13 @@ run "shell: settings editor"     "${HERE}/test-settings.sh"
 run "settings utility"           "${HERE}/test-config.sh"
 run "shell: ScummVM"             "${HERE}/test-scummvm.sh"
 run "shell: DVD"                 "${HERE}/test-dvd.sh"
+run "shell: Hi-Fi"               "${HERE}/test-hifi.sh"
 run "tools: png2gsc"             "${HERE}/test-png2gsc.py"
 run "tools: scraper"             "${HERE}/test-scrape.py"
 run "tools: system update check" "${HERE}/test-syscheck.py"
 run "tools: history2gamelist"    "${HERE}/test-history2gamelist.py"
 run "tools: DVD"                 "${HERE}/test-dvd.py"
+run "tools: audio CD"            "${HERE}/test-cd.py"
 run "tools: feed"                "${HERE}/test-rss.py"
 run "release: installer"        "${HERE}/test-installer.sh"
 run "tools: flashing"            "${HERE}/test-flash.sh"

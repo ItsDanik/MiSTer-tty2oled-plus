@@ -3945,6 +3945,22 @@ int main() {
         okInt ("the state alone",        mediaState, MEDIA_MENU);
         meta_parseMedia("CMDMEDIA");
         okInt ("no comma at all: none",  mediaState, MEDIA_OFF);
+        // The row's label: a music player's is "Track".
+        ok    ("no label given: Chapter",  mediaLabel, MEDIA_LABEL);
+        meta_parseMedia("CMDMEDIA,1,80,295,1,9,Track");
+        ok    ("a label",                  mediaLabel, "Track");
+        okInt ("and the numbers before it", mediaChapters, 9);
+        meta_parseMedia("CMDMEDIA,1,80,295,1,9");
+        ok    ("not kept: none given is Chapter again", mediaLabel, MEDIA_LABEL);
+        meta_parseMedia("CMDMEDIA,1,80,295,1,9,A label far too long\x01");
+        okInt ("ten characters of it kept", (int)strlen(mediaLabel), MEDIA_LABEL_MAX);
+        meta_parseMedia("CMDMEDIA,1,80,295,1,9,");
+        ok    ("an empty one is Chapter",  mediaLabel, MEDIA_LABEL);
+        meta_parseMedia("CMDMEDIA,1,80,Track");
+        ok    ("a word where a number belongs is no label", mediaLabel, MEDIA_LABEL);
+        meta_parseMedia("CMDMEDIA,1,80,295,1,9,Track");
+        media_reset();
+        ok    ("forgotten with the band",  mediaLabel, MEDIA_LABEL);
 
         char t[16];
         media_timeText(65, 6219, t, sizeof(t));   ok("an hour long: h:mm:ss", t, "0:01:05");
@@ -3970,6 +3986,21 @@ int main() {
         const FakeU8g2::Draw *ch  = u8g2.find("8/25");
         const FakeU8g2::Draw *yr  = u8g2.find("Year");
         okBool("the chapter row",                      lab && ch, true);
+        {
+            // A music player's row says Track, and the values keep one column.
+            meta_parseMedia("CMDMEDIA,1,80,295,3,9,Track");
+            u8g2.resetProbe(); oled.resetProbe();
+            meta_renderConsole();
+            const FakeU8g2::Draw *tl = u8g2.find("Track");
+            const FakeU8g2::Draw *tv = u8g2.find("3/9");
+            const FakeU8g2::Draw *y2 = u8g2.find("2004");
+            okBool("a label of its own: Track 3/9",    tl && tv && u8g2.find(MEDIA_LABEL) == nullptr, true);
+            if (tv && y2) okInt("on the fields' value column", tv->x, y2->x);
+            meta_parseMedia("CMDMEDIA,1,1945,6219,8,25");
+            u8g2.resetProbe(); oled.resetProbe();
+            meta_renderConsole();
+            lab = u8g2.find(MEDIA_LABEL); ch = u8g2.find("8/25"); yr = u8g2.find("Year");
+        }
         if (lab) okInt("first, on the first field row", lab->y, CON_FIELD_Y0);
         okBool("its label dimmed",                     lab && lab->fg == MEDIA_DIM, true);
         if (yr)  okInt("the fields after it",          yr->y, CON_FIELD_Y0 + CON_FIELD_PITCH);

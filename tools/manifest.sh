@@ -34,6 +34,9 @@ MANIFEST_FILES="tty2oled.sh tty2oled-meta.sh tty2oled-system.ini
 # tty2oledplus_dvd.py reads a DVD's titles and chapters off the disc and asks
 # Wikipedia what it is, in the background beside the DVD core; it imports the
 # scraper's fold() and database helpers.
+# tty2oledplus_cd.py names an audio CD from its table of contents (MusicBrainz,
+# then Wikipedia), in the background beside MiSTer Hi-Fi; it imports the DVD
+# tool's Wikipedia reader and the scraper's helpers.
 # tty2oledplus_rss.py reads the feed whose headlines run under the menu's
 # picture, in the background too, with the scraper's fold() again.
 # tty2oledplus_preview.sh shows a setting on the display while the settings
@@ -44,7 +47,7 @@ MANIFEST_TOOLS="tools/tty2oled-diag.sh tools/flash-mister.sh tools/fw-segments.p
                 tools/tty2oled-capture.sh tools/tty2oled-bootimg.sh tools/tty2oled-boothook.sh
                 tools/png2gsc.py tools/tty2oledplus_scrape.py tools/tty2oledplus_syscheck.py
                 tools/tty2oledplus_scummvm.py tools/tty2oled-port.sh tools/tty2oledplus_dvd.py
-                tools/tty2oledplus_rss.py tools/tty2oledplus_preview.sh
+                tools/tty2oledplus_rss.py tools/tty2oledplus_preview.sh tools/tty2oledplus_cd.py
                 tools/tty2oledplus_ui.sh"
 
 # The one thing in an install that is compiled: the settings utility that

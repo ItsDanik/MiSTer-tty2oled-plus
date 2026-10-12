@@ -756,6 +756,14 @@ build_meta "ECWolf"
 ok "shipped: ECWolf is Wolfenstein 3D" "${META_TITLE}" "Wolfenstein 3D"
 ok "shipped: its rows" "$(printf '%s;' "${META_FIELDS[@]}")" \
    $'Dev\tId Software;Year\t1992, Apogee, id;Core\tecwolf;Author\tdanik;'
+build_meta "jfSW"
+ok "shipped: jfSW is Shadow Warrior" "${META_TITLE}" "Shadow Warrior"
+ok "shipped: its rows" "$(printf '%s;' "${META_FIELDS[@]}")" \
+   $'Dev\t3D Realms;Year\t1997, GT Interactive;Core\tjfSW;Author\tdanik;'
+build_meta "openscreamer"
+ok "shipped: openscreamer is Screamer" "${META_TITLE}" "Screamer"
+ok "shipped: its rows" "$(printf '%s;' "${META_FIELDS[@]}")" \
+   $'Dev\tGraffiti;Year\t1995, Virgin Interactive;Core\topenscreamer;Author\tdanik;'
 hyb_bad=""
 while IFS= read -r line; do
   case "${line}" in '#'*|'') continue ;; esac

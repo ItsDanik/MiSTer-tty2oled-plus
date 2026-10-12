@@ -89,7 +89,7 @@ cat_label() {
     display)    printf 'What the display shows' ;;
     console)    printf 'Console game details' ;;
     arcade)     printf 'Arcade info card' ;;
-    dvd)        printf 'Films on the DVD core' ;;
+    dvd)        printf 'Films and music' ;;
     panel)      printf 'Brightness and burn-in' ;;
     transition) printf 'Changing picture' ;;
     updates)    printf 'While updates run' ;;
@@ -102,6 +102,8 @@ cat_label() {
 # with none is short enough to need none. The dialog menus have no dividers,
 # which is why this is beside the records rather than among them.
 SUBSECTIONS='SHOW_METADATA=Game details
+DVD_SCREEN=Films on the DVD core
+HIFI_SCREEN=Music on MiSTer Hi-Fi
 SAM_HEADER=Super Attract Mode
 BAND_CLOCK=Date and time
 RSS_FEED=News ticker
@@ -131,7 +133,7 @@ cat_help() {
     display)    printf 'Game details on or off, the clock and news ticker under the menu, Super Attract Mode, paging and scroll speeds.' ;;
     console)    printf 'Which details a console game shows beside its icon, their order, which of them stay put, and the description page.' ;;
     arcade)     printf 'The fields on the arcade info card: the short ones that pair up, the full-width ones, and the row repeated on every page.' ;;
-    dvd)        printf 'A film on the DVD core: its details, its chapter and time, and whether to look it up.' ;;
+    dvd)        printf 'A film on the DVD core, music and audio CDs on MiSTer Hi-Fi: the details, the place in it, and whether to look it up.' ;;
     panel)      printf 'How bright the panel is, how it fades, when it dims itself and how often the layout swaps sides.' ;;
     transition) printf 'How one picture replaces the last: the effect and its timings.' ;;
     updates)    printf 'What the display says while update_all or its own updater runs, and whether it looks for updates.' ;;
@@ -144,6 +146,7 @@ cat_help() {
 # and the five an imported gamelist adds.
 CONSOLE_FIELDS_ALL="System Region Year Company Genre Developer Format Platform Engine Language Players Rating Released Series"
 DVD_FIELDS_ALL="Year Studio Director Artist Genre Runtime Titles Label"
+HIFI_FIELDS_ALL="Artist Album Year Label Genre Format"
 ARCADE_FIELDS_ALL="Year Manufacturer Region Orientation Core Author Set MAME Genre Platform Version Players Controls Buttons Developer Publisher Rating Released Series"
 
 # The transition effects, as tty2oled-system.ini lists them. Kept in step with
@@ -197,6 +200,9 @@ EOS
 DVD_SCREEN|bool||A film's details and place|A disc or ISO on the DVD core gets its title and details, with play or pause, the time and the chapter under them. Off shows the DVD core as any other core.
 DVD_LOOKUP|bool||Look films up on Wikipedia|Once a disc, by its label or an ISO's name; kept in scraped/DVD.txt, which you may correct. Off shows the label alone.
 DVD_FIELDS|list|DVD_FIELDS_ALL|Fields to show|Which details appear under a film's title, in this order. Two fit beside the chapter; any more take turns.
+HIFI_SCREEN|bool||A track's details and place|Music on MiSTer Hi-Fi gets the track's title, artist and album, with play or pause, the time and the track number under them. Its web remote must be on. Off leaves the menu's picture up.
+HIFI_LOOKUP|bool||Look audio CDs up online|Once a disc: MusicBrainz for the album and the tracks' titles, Wikipedia for a description; kept in scraped/CD.txt, which you may correct. Off shows Track 03.
+HIFI_FIELDS|list|HIFI_FIELDS_ALL|Fields to show|Which details appear under a track's title, in this order. Two fit beside the track number; any more take turns.
 EOS
     ;;
     panel) cat <<'EOS'

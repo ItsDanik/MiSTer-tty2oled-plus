@@ -103,14 +103,40 @@ out from where the core is reading the disc, which runs half a minute ahead
 of the picture, so a time can be a second or two out for a moment after you
 skip.
 
+**Music on MiSTer Hi-Fi** - the player in Scripts, and what an audio CD
+starts when your MiSTer runs the physical disc Main - gets the same layout
+and the same band: the track's title, its artist and album beside the
+player's icon, play, pause or stop, the time in and the track's length
+either side of a bar, and which track of how many above the details. Files
+and streams show the tags the player reads from them. An audio CD has no
+names on it, so the first time a disc is played it is looked up - the album,
+its artist, the year and each track's title - and until the answer arrives,
+or for a disc nobody knows, the tracks are "Track 03". The description page
+is the introduction of the album's Wikipedia article.
+
+![An audio CD playing: "All Is Full of Love", Track 1/15, Bjork and Greatest
+Hits beside the Compact Disc logo, and the bar at 2:49 of
+4:46](docs/img/hifi-playing.png)
+
+It is read from the player's own web remote, which is on unless you
+switched it off in the player's settings; with it off the display shows the
+player's picture and nothing more. Firmware before 0.8.9b calls the track
+row "Chapter".
+
 **Hybrid cores** - [Dethrace](https://github.com/ItsDanik/Dethrace_MiSTer)
-(Carmageddon) and [ECWolf](https://github.com/ItsDanik/ecwolf_MiSTer)
-(Wolfenstein 3D), games that run on the MiSTer's ARM behind an FPGA core of
+(Carmageddon), [ECWolf](https://github.com/ItsDanik/ecwolf_MiSTer)
+(Wolfenstein 3D), [jfSW](https://github.com/ItsDanik/jfSW_MiSTer)
+(Shadow Warrior) and the upcoming openscreamer (Screamer), games that run on the MiSTer's ARM behind an FPGA core of
 their own - are one game each, so loading the core is enough: its banner,
 then the console layout with the game's title, who developed it, the year
 and publishers, the core and its author, the game's icon beside them and a
 description as the last page. What is shown for each is a line of
 `hybridcores.txt` in the install folder.
+
+![The jfSW core's banner: Shadow Warrior](docs/img/hybrid-jfsw-art.png)
+
+![Shadow Warrior's page: 3D Realms, 1997 GT Interactive, the core and its
+author, the yin-yang icon beside them](docs/img/hybrid-jfsw.png)
 
 **Computer cores** show the core's artwork full-screen, and nothing else, yet.  
 Computer metadata support coming in the future.
@@ -323,7 +349,7 @@ miss costs only the extra fields, and the title still shows.
 | Neo Geo | title, year, publisher — from the MAME set, it being arcade hardware |
 | PlayStation, Saturn, Mega CD, 3DO, PC Engine CD | title and region only |
 | ScummVM | title, year, company, series, engine, platform, language — and each game's own icon |
-| Hybrid cores (Dethrace, ECWolf) | title, developer, year and publishers, core, author, a description — and the game's icon |
+| Hybrid cores (Dethrace, ECWolf, jfSW, openscreamer) | title, developer, year and publishers, core, author, a description — and the game's icon |
 
 Disc systems are a limit of the source: the
 cartridge metadata sets carry release dates and publishers, and the disc set
@@ -345,6 +371,16 @@ about once. A wrong guess can be corrected there by hand - the line's fourth
 field is the title, and a correction is never overwritten; a disc nobody
 knew is asked about again after 30 days. The chapters and times come from the
 disc itself, read once and kept in `cache/dvd`.
+
+Audio CDs on MiSTer Hi-Fi come from [MusicBrainz](https://musicbrainz.org):
+a disc is known there by where its tracks start, which the drive reports,
+and the answer is the album, its artist, label and year and every track's
+title; Wikipedia is then asked for the album's article, for a genre and the
+description. Nothing of yours is sent but that table of track positions.
+The album is kept in `scraped/CD.txt`, one disc a line, with the same rules
+as a film's: correct it by hand and the correction stays, and a disc nobody
+knew is asked about again after 30 days. The track titles are kept in
+`cache/cd`. `HIFI_LOOKUP="no"` asks nobody.
 
 Cores are named on screen the way your MiSTer menu names them, from `names.txt`
 if you have one.
@@ -399,7 +435,7 @@ Running Skraper under Wine on Linux, the path GNOME mounts the share at
 path cannot. A symlink without one fixes it:
 
 ```sh
-ln -s "/run/user/1000/gvfs/smb-share:server=192.168.1.206,share=sdcard" ~/mister-sd
+ln -s "/run/user/1000/gvfs/smb-share:server=192.168.1.205,share=sdcard" ~/mister-sd
 ```
 
 and then `Z:\home\<you>\mister-sd\games` in Skraper.
@@ -632,7 +668,8 @@ as text.
 ScummVM's stands in for a game's own icon until that has been converted,
 the first time the game is played.
 
-The hybrid cores, Dethrace and ECWolf, each have their game's.
+The hybrid cores, Dethrace, ECWolf, jfSW and openscreamer, each have their game's,
+and MiSTer Hi-Fi has its own.
 
 The twenty console cores without one still get the split layout and everything
 in it — just a black panel where the icon would be. To draw your own, work at

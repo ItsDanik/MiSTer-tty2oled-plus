@@ -75,7 +75,7 @@ DEMO_ARCADE="galaga"
 DEMO_OTHER="genesis"      # the transition's second picture
 
 core_kind() {
-  case "${DEMO_KIND}" in arcade) CORE_KIND="arcade" ;; console|dvd) CORE_KIND="console" ;; *) CORE_KIND="unknown" ;; esac
+  case "${DEMO_KIND}" in arcade) CORE_KIND="arcade" ;; console|dvd|hifi) CORE_KIND="console" ;; *) CORE_KIND="unknown" ;; esac
 }
 
 build_meta() {
@@ -84,6 +84,7 @@ build_meta() {
     console) demo_console ;;
     arcade)  demo_arcade ;;
     dvd)     demo_dvd ;;
+    hifi)    demo_hifi ;;
     *)       META_KIND="unknown"; META_TITLE="${1}"; META_ICON="${1}" ;;
   esac
   return 0
@@ -143,6 +144,24 @@ demo_dvd() {
   META_PINNED_COUNT=0
 }
 
+demo_hifi() {
+  local f label
+  if [ "${HIFI_SCREEN:-yes}" != "yes" ]; then META_KIND="unknown"; META_TITLE="MiSTerHiFi"; return 0; fi
+  META_KIND="console"; META_GAME="yes"; META_SOURCE="sample"; META_ICON="misterhifi"
+  META_TITLE="Cup of Wonder"
+  [ "${SHOW_DESCRIPTION:-yes}" = "yes" ] && META_DESC="A sample description, to show how the page reads. An audio CD looked up online gets its album's introduction here; music played from files has none."
+  local -A avail=(
+    [Artist]="Jethro Tull" [Album]="Songs from the Wood" [Year]="1977"
+    [Label]="Chrysalis" [Genre]="Folk rock" [Format]="Audio CD"
+  )
+  for f in ${HIFI_FIELDS}; do
+    _canon_label "${f}" "${_HIFI_KNOWN}" || continue
+    label="${_R}"
+    meta_addfield "${label}" "${avail[${label}]:-}"
+  done
+  META_PINNED_COUNT=0
+}
+
 SAMPLE_FEED=$'tty2oled+ news ticker: this is how headlines run under the menu\nA second headline follows the first after a gap\nThe third is the last of this sample'
 
 # ---------------------------------------------------------------------------
@@ -181,6 +200,7 @@ scene_of() {  # into SCENE_WANT: the screen this setting is seen on
       SCENE_WANT="menu" ;;
     ARCADE_*)           SCENE_WANT="arcade" ;;
     DVD_*)              SCENE_WANT="dvd" ;;
+    HIFI_*)             SCENE_WANT="hifi" ;;
     TRANSITION*)        SCENE_WANT="transition" ;;
     UPDATE_ALL_SCREEN|UPDATE_ALL_TEXT|UPDATE_ALL_DETAILS|UPDATE_DONE_TEXT|UPDATE_DONE_SECS|UPDATE_FAILED_TEXT|SELF_UPDATE_SCREEN|SELF_UPDATE_TEXT)
       SCENE_WANT="busy" ;;
@@ -288,6 +308,10 @@ show_scene() {  # show_scene <scene>
       DEMO_KIND="dvd"; DEMO_CORE="DVD"
       demo_head; senddata "${DEMO_CORE}"
       [ "${SHOW_METADATA}" = "yes" ] && [ "${DVD_SCREEN:-yes}" = "yes" ] && fw_atleast 0.8.2 && say "CMDMEDIA,1,1325,5760,4,12" ;;
+    hifi)
+      DEMO_KIND="hifi"; DEMO_CORE="MiSTerHiFi"
+      demo_head; senddata "${DEMO_CORE}"
+      [ "${SHOW_METADATA}" = "yes" ] && [ "${HIFI_SCREEN:-yes}" = "yes" ] && fw_atleast 0.8.2 && say "CMDMEDIA,1,95,274,3,9,Track" ;;
     transition)
       sendmetaoff; TRANS_SIDE=0; trans_step ;;
     busy)
@@ -298,7 +322,7 @@ show_scene() {  # show_scene <scene>
 # The game's details again, the picture left alone: a game change, to the
 # daemon.
 refresh_meta() {
-  case "${SCENE}" in console|arcade|dvd) ;; *) return 0 ;; esac
+  case "${SCENE}" in console|arcade|dvd|hifi) ;; *) return 0 ;; esac
   with_desc sendmeta "${DEMO_CORE}" || return 0
   sendicon "${META_ICON}"
   [ "${SCENE}" = "arcade" ] && say "CMDSHMETA"
@@ -364,9 +388,9 @@ apply() {  # apply <key>
     SAM_*)                    demo_head ;;
     UPDATE_ALL_*|SELF_UPDATE_*|UPDATE_DONE_*|UPDATE_FAILED_TEXT)
       [ "${SCENE}" = "busy" ] && NEED_SCENE="yes" ;;
-    METADATA_FIELDS|METADATA_PINNED|COMPACT_YEAR_COMPANY|METADATA_INTERVAL|ARCADE_FIELDS|ARCADE_FIELDS_WIDE|ARCADE_PINNED|DVD_FIELDS|USE_NAMES_TXT)
+    METADATA_FIELDS|METADATA_PINNED|COMPACT_YEAR_COMPANY|METADATA_INTERVAL|ARCADE_FIELDS|ARCADE_FIELDS_WIDE|ARCADE_PINNED|DVD_FIELDS|HIFI_FIELDS|USE_NAMES_TXT)
       NEED_META="yes" ;;
-    SHOW_METADATA|SHOW_DESCRIPTION|core_bootscreen_time|DVD_SCREEN|BOOTSCREEN_AS_MENU)
+    SHOW_METADATA|SHOW_DESCRIPTION|core_bootscreen_time|DVD_SCREEN|HIFI_SCREEN|BOOTSCREEN_AS_MENU)
       NEED_SCENE="yes" ;;
   esac
   [ "${1}" = "${FOCUS}" ] && NEED_DEMO="yes"
@@ -407,7 +431,7 @@ act() {
       case "${SCENE}" in
         menu) demo_band ;;
         busy) demo_busy ;;
-        console|arcade|dvd) demo_head ;;
+        console|arcade|dvd|hifi) demo_head ;;
       esac
     fi
   fi

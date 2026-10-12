@@ -81,7 +81,7 @@ tagged-never-released; `0.4.2b` was the first installable.)
 version behind, and the daemon says so in `/tmp/tty2oled`:
 
 ```bash
-MISTER=root@192.168.1.206 ./tools/deploy-mister.sh --firmware --flash
+MISTER=root@192.168.1.205 ./tools/deploy-mister.sh --firmware --flash
 ```
 
 `MiSTer.local` does not resolve here. The MiSTer then holds the released
@@ -134,7 +134,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `tty2oled-system.ini`, `tty2oled-user.ini` | Defaults; the user's overrides (sourced after, never shipped over). |
 | `VERSION`, `CHANGELOG.md`, `tools/bump-version.sh` | One version; an entry per release; moves/checks it. |
 | `coretypes.ini` | `corename=console\|computer\|arcade`, consulted before folder guessing. |
-| `hybridcores.txt` | `corename\|title\|label=value\|...\|description`: the layout of a hybrid core (Dethrace, ECWolf). Shipped, replaced by every update. |
+| `hybridcores.txt` | `corename\|title\|label=value\|...\|description`: the layout of a hybrid core (Dethrace, ECWolf, jfSW, openscreamer). Shipped, replaced by every update. |
 | `MiSTer_SSD1322_USB/metadisplay.h` | Arcade card + console split layout. |
 | `.../bootscreen.h`, `bootlogo.h`, `bootlogo.png` | LittleFS boot image + reserved band; built-in 256x54 logo (generated from the PNG). |
 | `.../contrastfade.h` | Every contrast change fades; base level x transition veil. |
@@ -169,6 +169,7 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `tools/tty2oledplus_scummvm.py` | ScummVM's icon packs -> `cache/scummvm/games.idx` + per-game 86x64 icons. Daemon, background. M. |
 | `tools/tty2oledplus_rss.py` | An RSS/Atom feed -> `/tmp/.tty2oledplus-rss.txt` (`# <url>`, then a headline a line, folded to ASCII). Daemon, background. M. |
 | `tools/tty2oledplus_dvd.py` | A DVD's IFOs -> `cache/dvd/<key>.nav` (sector -> title/chapter/time); Wikipedia -> `scraped/DVD.txt`. Daemon, background. M. |
+| `tools/tty2oledplus_cd.py` | An audio CD's table of contents -> MusicBrainz disc ID -> `cache/cd/<id>.cd` (track titles), `scraped/CD.txt` (album, + Wikipedia); `fold` for a player's UTF-8 tags. Daemon, background. M. |
 | `tools/scummvm-entries.sh` | ScummVM's ini -> a `<folder>.scummvm` (game id) in each game folder, for ES-DE/RetroPie/RetroArch. Developer tool, not shipped (yet); fed over `ssh ... 'bash -s'`. M. |
 | `tools/tty2oledplus_install.sh` | The starter users drop in Scripts. M. |
 | `tools/flash-mister.sh`, `tools/fw-segments.py` | Flashes firmware, writing only segments with data. M. |
@@ -184,7 +185,7 @@ the firmware composes it.
 | kind | layout |
 |---|---|
 | `arcade` | wheel logo, then each card page, then the logo - a step every `METADATA_INTERVAL`s |
-| `console` | split: "Now playing", rule, title, paged fields left; 86x64 icon right; description page last. A film (DVD core) adds a chapter row above the fields and the transport band under both columns |
+| `console` | split: "Now playing", rule, title, paged fields left; 86x64 icon right; description page last. A film (DVD core) adds a chapter row above the fields and the transport band under both columns; music (MiSTer Hi-Fi) the same, the row saying Track |
 | `computer` / `unknown` | full-screen artwork as upstream (`unknown`: metadata off) |
 
 **Core change wire order: `CMDMETAOFF`, picture, `CMDCBOOT`, `CMDMETA`,
@@ -628,7 +629,7 @@ send them). Additions, ESP32 only:
 | `CMDRSS,<clock s>,<scroll s>,<px/s>,<bytes>` | + that many raw bytes: the band's feed, headlines separated by newlines, 2048 bytes / 48 headlines kept (`RSS_MAX`, `RSS_ITEMS_MAX`, same in daemon and tool - `test-rss.py`, `test-wire.sh`), excess discarded; 0 bytes is no feed. Clock 0..3600 (0: ticker alone), scroll 1..3600, speed 5..200. Quiet, not activity; read on every board (0.8.4b) |
 | `CMDSETTIME,<local epoch>` | upstream's; also the band clock's time (0.7.8b), counted on by `millis()`. Not activity from 0.7.8b, so the daemon resends it hourly only to that |
 | `CMDFLIP,<s>` | side swap period; 0 disables |
-| `CMDMEDIA,<state>,<s in>,<s long>,<chapter>,<chapters>` | the transport band under the console layout: state 1 play (arrow flashing), 2 pause, 3 stop, 4 menu ("Disc menu", no bar), 5 still; the firmware counts the seconds on while playing; length 0 = state in words; empty / 0 = none. Quiet; activity only on a change of state; kept across `CMDMETA`, forgotten by `CMDMETAOFF` (0.8.2b) |
+| `CMDMEDIA,<state>,<s in>,<s long>,<chapter>,<chapters>[,<label>]` | the transport band under the console layout: state 1 play (arrow flashing), 2 pause, 3 stop, 4 menu ("Disc menu", no bar), 5 still; the firmware counts the seconds on while playing; length 0 = state in words; empty / 0 = none. Quiet; activity only on a change of state; kept across `CMDMETA`, forgotten by `CMDMETAOFF` (0.8.2b). The label (0.8.9b, 10 characters) names the chapter row - Hi-Fi's is `Track`; none is "Chapter", every time; older firmware reads past it |
 | `CMDDESC,<bytes>` | + that many raw bytes, printable ASCII, 2048 kept (`DESC_MAX`, same in daemon and importer - `test-scrape.py`), excess discarded. After `CMDMETA`, which clears it |
 | `CMDSCROLL,<h>,<v>` | marquee / description speeds, px/s, 1..200 / 1..100 |
 | `CMDWRBOOT` | + 6912 raw bytes (256x54, 4bpp) |
@@ -677,7 +678,7 @@ on MiSTer's `ini_settings.sh`.
   equal to its default is **removed**. `ini_put` changes one line or appends
   under its own header; never rewrites the file. The ini is **parsed, not
   sourced** (runs as root; tested with a value that would touch a file).
-- Covers every user setting (59, eight categories). `test-settings.sh` checks
+- Covers every user setting (62, eight categories). `test-settings.sh` checks
   both ways: every offered key exists in the ini *and* is read by `tty2oled.sh`
   or `tty2oled-meta.sh`; every user key is offered or on the exclusion list
   (`BAUDRATE`, `TTYPARAM`, `NAMES_TXT`, `TITLE_INDEX`, `TITLE_INDEX_DIR`),
@@ -900,7 +901,7 @@ Degauss/Zaparoo; with `SVM_PID` known it is a read, not a search. `scummvm_core`
 The user's own: [Hybrid_MiSTer](https://github.com/ItsDanik/Hybrid_MiSTer) -
 the game on the ARM, an FPGA core in `_Other` for video, sound and input,
 started by `danik_hybrid_cores.sh` while `/tmp/CORENAME` names the core
-(`Dethrace`, `ECWolf`: the `CONF_STR` name, also `games/<Name>/`). **The core
+(`Dethrace`, `ECWolf`, `jfSW`, `openscreamer`: the `CONF_STR` name, also `games/<Name>/`). **The core
 is the game**: nothing is selected, so MiSTer publishes the core name and no
 more, and `_Other` classifies as `unknown`.
 
@@ -977,6 +978,75 @@ On Fire disc in a USB drive:
   title's - playing the song-title of a concert disc shows the concert's
   chapter and time.
 
+## MiSTer Hi-Fi
+
+A music player (third-party, v1.12.0 seen), not a core: `mister_hifi` over
+`menu.rbf`, started by `Scripts/misterhifi.sh` or - `main=MiSTer_Physical-CD`
+under `[menu]` - by an audio CD going in (`--physical-cd`). `CORENAME` stays
+`MENU` and no state file says anything. `menu_frontend` finds the binary by
+argv[0] (`_hifi_argv`: not `--send`, the same binary passing a command on)
+and `readcore` makes it `MiSTerHiFi` (`HIFI_CORE`), over Degauss and Zaparoo;
+with `HIFI_PID` known it is a read. Only while `hifi_screen_on`: with
+`HIFI_SCREEN="no"` the menu stays the menu. `hifi_core` routes `build_meta`
+to `hifi_meta` (console kind, icon and banner `misterhifi.gsc`). **All
+measured on the real MiSTer** with Jethro Tull's Songs from the Wood:
+
+- **What plays** is asked of the player: its web remote (`web_remote_enabled`,
+  `web_remote_port` 8182 in the `config.json` beside the binary; read when
+  the player is found and after any look that got no answer) answers
+  `GET /api/state` with one line of JSON, **no newline after it** - `state`
+  (`playing`, `stopped`; pause not seen yet, `pause*` assumed), `title`,
+  `artist`, `album`, `format`, `position`, `duration`, `queue_index`,
+  `queue_length`. `hifi_get` reads it over bash's `/dev/tcp` and `_hifi_str`/
+  `_hifi_num` pick it apart: **no process**, 7ms of CPU a look (tested with
+  logging stand-ins, and against a socket that answers as the player does).
+  Another project's interface: a field left out is empty, not an error.
+  `HIFI_STATE_FILE` stands in for the socket in the tests.
+- **Bash writes a request a line at a time** - a server that answers after
+  its first `recv` sees half of it (the test's stand-in did).
+- **Per look** (`hifi_follow` in place of `metawait`, every `HIFI_TICK_SECS`):
+  `hifi_tick` -> `sendmedia <state> <s in> <s long> <track> <of> Track` on a
+  change of state or 2s of drift (a seek), as for a film. A change of
+  `HF_SIG` - title, artist, album, format, queue length, disc - ends the
+  wait: the pass builds, sends `CMDMEDIA` and then `CMDMETA` (and the icon
+  again: `CMDMETA` drops it). A player there but not answering is napped on
+  for `UPDATE_ALL_POLL`, never asked in a spin.
+- **Nothing chosen** (empty `title`): the player's picture, `META_SHOWCORE`
+  when a track had been up - as the DVD core with no disc.
+- **An audio CD** is `format` `CDDA`, title `Track 03` (the disc's own
+  number, which is what is shown - not `queue_index`, which shuffle moves),
+  album `Audio CD`. Which disc: `/sys/block/sr*/size` + the queue's length
+  (`hifi_discsig`, a read); a new one drops the last one's names in
+  `hifi_meta`, before the job has run.
+- **Naming it** (`hifi_jobs`, background `hfd`, once a disc):
+  `tty2oledplus_cd.py disc` reads the table of contents with
+  `CDROMREADTOCHDR`/`CDROMREADTOCENTRY` on an `O_NONBLOCK` descriptor - the
+  drive answers while the player reads - and computes MusicBrainz's disc ID
+  (SHA-1 of first, last, lead-out and 99 offsets in hex, frames from the
+  lead-in so LBA + 150; a CD-Extra's lead-out is its data track - 11400).
+  `ws/2/discid/<id>?toc=...` (the table too, for a fuzzy match; 404 = not
+  known) -> the release whose medium holds that ID: album, artist, label,
+  the release **group's** first year, a `<title>|<artist>` a track (artist
+  only where it is not the album's). Then Wikipedia (`wiki_album`: searched
+  `"<album>" <artist> album`, a title in brackets accepted only if it says
+  album/EP/soundtrack - **the title track's "(song)" article was the first
+  hit on the MiSTer** - and the article must name the artist).
+  `scraped/CD.txt` in `lookup_scraped`'s format (title = album, series =
+  artist, publisher = label), `ok` lines never overwritten, `miss` retried
+  after 30 days; exit 1 (no answer) is tried again after `HIFI_RETRY_SECS`.
+  `CD.txt` is in `meta_stat`.
+- **Files and streams**: the player's own tags. UTF-8, so a track with
+  non-ASCII in them costs one `tty2oledplus_cd.py fold` (cached for the
+  track). **Greek, Cyrillic and the like fold to nothing** - the title falls
+  back to `Track <n>`.
+- `HIFI_FIELDS` from Artist Album Year Label Genre Format (`_HIFI_KNOWN`);
+  Year, Label, Genre are a looked-up CD's alone. Built once a track
+  (`HIFI_BUILT`).
+- Measured beside a playing CD, debug log on: a pass every 5s, about 100ms
+  of CPU a second in all (half the daemon, half its children).
+- Not seen yet: pause and the end of a disc in the API; a mixed data/audio
+  disc; the player's `/api/art` (JPEG, which nothing here decodes).
+
 ## Arcade descriptions from history.xml
 
 `tools/history2gamelist.py` (not shipped, nor its output - the file's licence)
@@ -1009,9 +1079,9 @@ own `fold()`/`clip_desc()`.
 
 ## Tests
 
-`./tests/run-all.sh` - twenty suites (metadata, wire, index, version,
-daemon, deploy, settings, settings utility, ScummVM, DVD, png2gsc, scrape, syscheck,
-history2gamelist, DVD tool, feed, installer, flash, firmware parser, firmware layout). CI runs all with inotify-tools and
+`./tests/run-all.sh` - twenty-two suites (metadata, wire, index, version,
+daemon, deploy, settings, settings utility, ScummVM, DVD, Hi-Fi, png2gsc, scrape, syscheck,
+history2gamelist, DVD tool, audio CD tool, feed, installer, flash, firmware parser, firmware layout). CI runs all with inotify-tools and
 ImageMagick. No shellcheck in `run-all.sh`.
 
 - Installer: builds a real release from the working copy, serves it via
@@ -1046,7 +1116,7 @@ flashable at `0x0` (gitignored). Arduino IDE: `WEMOS LOLIN32`; on an S3 set
 **USB CDC On Boot: Disabled**. Flatpak IDE needs
 `flatpak override --user --device=all cc.arduino.IDE2`.
 
-**Deploy** (SSH, from anywhere; `MISTER=root@192.168.1.206`):
+**Deploy** (SSH, from anywhere; `MISTER=root@192.168.1.205`):
 
 ```bash
 ./tools/deploy-mister.sh                    # scripts, then restart the daemon
@@ -1069,8 +1139,8 @@ flashable at `0x0` (gitignored). Arduino IDE: `WEMOS LOLIN32`; on an S3 set
 
 | folder | what | size | whose |
 |---|---|---|---|
-| `pics/banner` | console/computer/utility core banners (195) | 256x64 | release, in the scripts archive **and** the pack |
-| `pics/icon` | console icons (28 core names, 27 systems - the DVD core's among them) | 86x64 | release, in the scripts archive |
+| `pics/banner` | console/computer/utility core banners (200) | 256x64 | release, in the scripts archive **and** the pack |
+| `pics/icon` | console icons (33 core names: 27 systems - the DVD core's among them - four hybrid cores' games and MiSTer Hi-Fi's) | 86x64 | release, in the scripts archive |
 | `pics/arcade` | `wheels.bin` + `wheels.idx` | 256x64 | release, in `tty2oledplus-pics.tar.gz` |
 | `pics/user` | the user's own banners, by core or set | 256x64 | **theirs** - nothing writes it |
 

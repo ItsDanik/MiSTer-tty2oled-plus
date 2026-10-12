@@ -6,8 +6,8 @@
 # Runs on the MiSTer and reads ScummVM's own ini, so only games added in
 # ScummVM's launcher get one. From the workstation:
 #
-#   ssh root@192.168.1.206 'bash -s -- -n' < tools/scummvm-entries.sh   # list
-#   ssh root@192.168.1.206 'bash -s' < tools/scummvm-entries.sh         # write
+#   ssh root@192.168.1.205 'bash -s -- -n' < tools/scummvm-entries.sh   # list
+#   ssh root@192.168.1.205 'bash -s' < tools/scummvm-entries.sh         # write
 #
 # An entry is "<game folder>.scummvm" beside the game's files, holding the
 # game id, no newline: "Full Throttle (CD DOS)/Full Throttle (CD DOS).scummvm"

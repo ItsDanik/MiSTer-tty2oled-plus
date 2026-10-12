@@ -4,6 +4,39 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## 0.8.9b — 2026-10-13
+
+- **Music on MiSTer Hi-Fi shows what is playing.** With the player from
+  Scripts up - or started by an audio CD going in, if your MiSTer runs the
+  physical disc Main - the display gets the page a film gets on the DVD
+  core: the track's title, its artist and album beside the Compact Disc
+  logo, play, pause or stop, the time in and the track's length either side
+  of a bar, and "Track 3/9" above the details. Files and streams show the
+  tags the player reads from them. It is read from the player's web remote,
+  which is on unless you switched it off in the player's settings; with it
+  off you get the player's picture and no more.
+- **Audio CDs are named.** A CD carries no names, so the first time a disc
+  is played it is looked up on MusicBrainz by its table of contents - the
+  album, the artist, the year, the label and every track's title - and the
+  album's Wikipedia introduction becomes the description page. Until the
+  answer arrives, with no network, or for a disc nobody knows, the tracks
+  are "Track 03". What was found is kept in `scraped/CD.txt` and
+  `cache/cd`, so a disc is asked about once; a line you correct in `CD.txt`
+  is never overwritten.
+- **Three settings for it**, under "Films and music" in Settings (which the
+  DVD core's moved into): the page on or off, the lookup on or off, and
+  which of Artist, Album, Year, Label, Genre and Format to show, in which
+  order. Settings shows a sample of the page on the display while you
+  change them.
+- **Two more hybrid cores show their game**: jfSW (Shadow Warrior) and the
+  upcoming openscreamer (Screamer), each with its banner, its icon and its
+  page - developer, year and publisher, core, author, and a description.
+- Accented letters written with a typographic hyphen in a scraped
+  description no longer lose the hyphen.
+- The row under a title can now say something other than "Chapter", which
+  is new in the firmware: the display is flashed by this update. On older
+  firmware a track is called a chapter.
+
 ## 0.8.8b — 2026-10-06
 
 - **A display mounted the other way up shows the game's page properly.**

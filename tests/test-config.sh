@@ -670,8 +670,8 @@ sed "s|/media/fat/tty2oledplus|${PI}|g" "${ROOT}/tty2oled-system.ini" > "${PI}/t
 cp "${ROOT}/tty2oled.sh" "${ROOT}/tty2oled-meta.sh" "${ROOT}/tools/tty2oled-port.sh" \
    "${ROOT}/tools/tty2oledplus_preview.sh" "${PI}/"
 mkdir -p "${PI}/pics/banner" "${PI}/pics/icon" "${PI}/pics/arcade"
-for b in snes genesis menu dvd; do printf 'a\nb\nc\n00\n' > "${PI}/pics/banner/${b}.gsc"; done
-for b in snes dvd; do printf 'a\nb\nc\n00\n' > "${PI}/pics/icon/${b}.gsc"; done
+for b in snes genesis menu dvd misterhifi; do printf 'a\nb\nc\n00\n' > "${PI}/pics/banner/${b}.gsc"; done
+for b in snes dvd misterhifi; do printf 'a\nb\nc\n00\n' > "${PI}/pics/icon/${b}.gsc"; done
 head -c 8192 /dev/zero > "${PI}/pics/arcade/wheels.bin"
 printf '# frames 1\ngalaga|0\n' > "${PI}/pics/arcade/wheels.idx"
 
@@ -716,6 +716,9 @@ if command -v xxd >/dev/null 2>&1; then
   ok "an arcade setting gets the card, at once" "$(cmds | sed 's/.*CMDHTIMER //')" "CMDMETAOFF CMDCOR CMDMETA CMDDESC CMDSHMETA "
   preview "focus DVD_FIELDS"
   ok "a film's gets a film, playing" "$(printf '%s\n' "${WIRE}" | tail -n1)" "CMDMEDIA,1,1325,5760,4,12"
+  preview "focus HIFI_FIELDS"
+  ok "music's gets a track, playing, its row named" "$(printf '%s\n' "${WIRE}" | tail -n1)" "CMDMEDIA,1,95,274,3,9,Track"
+  ok "with its fields" "$(printf '%s\n' "${WIRE}" | grep -c '^CMDMETA,2,[0-9]*,0,0,Cup of Wonder|Artist=Jethro Tull|Album=Songs from the Wood|Year=1977|Format=Audio CD$')" "1"
   preview "focus UPDATE_ALL_TEXT" "set UPDATE_ALL_TEXT Fetching..."
   ok "an update screen's text is the busy screen's label" \
      "$(printf '%s\n' "${WIRE}" | grep -c '^CMDBUSY,1,Fetching\.\.\.,')" "1"
@@ -751,7 +754,7 @@ fi
 SCENES="$(sed -n '/^scene_of()/,/^}/p' "${ROOT}/tools/tty2oledplus_preview.sh")"
 ok "the preview names the scenes it has" \
    "$(printf '%s\n' "${SCENES}" | grep -o 'SCENE_WANT="[a-z]*"' | sort -u | tr '\n' ' ')" \
-   'SCENE_WANT="arcade" SCENE_WANT="busy" SCENE_WANT="console" SCENE_WANT="dvd" SCENE_WANT="menu" SCENE_WANT="transition" '
+   'SCENE_WANT="arcade" SCENE_WANT="busy" SCENE_WANT="console" SCENE_WANT="dvd" SCENE_WANT="hifi" SCENE_WANT="menu" SCENE_WANT="transition" '
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1mResults:\033[0m %d passed, %d failed\n' "${PASS}" "${FAIL}"

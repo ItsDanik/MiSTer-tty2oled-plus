@@ -25,7 +25,7 @@
   ---------------------------------------------------------------------------
   The clock
   ---------------------------------------------------------------------------
-  CMDMEDIA,<state>,<seconds in>,<seconds long>,<chapter>,<chapters>
+  CMDMEDIA,<state>,<seconds in>,<seconds long>,<chapter>,<chapters>[,<label>]
 
   The firmware counts the seconds on itself while the state is "playing",
   from when the command arrived - so the daemon sends one when something
@@ -38,6 +38,10 @@
   arriving late must not take its place away), forgotten by CMDMETAOFF. Not
   activity, except a change of state - someone pressed pause - which wakes a
   dimmed panel as any other button on the MiSTer would.
+
+  The label (0.8.9b) names the chapter row for what is not a film: a music
+  player's is "Track". None given is "Chapter", every time - it is not kept
+  from one command to the next. Firmware before it reads past the field.
 */
 
 #ifndef MEDIABAND_H
@@ -67,7 +71,8 @@
 #define MEDIA_TRACK      3                             // grey of the bar still to come
 #define MEDIA_DIM        8                             // grey of the length and the label
 #define MEDIA_BLINK_MS   500                           // the play arrow: lit, dark, lit...
-#define MEDIA_LABEL      "Chapter"
+#define MEDIA_LABEL      "Chapter"                     // the row's label unless CMDMEDIA names one
+#define MEDIA_LABEL_MAX  10                            // characters of it kept
 
 long          mediaPos      = 0;        // seconds in, when it arrived
 long          mediaTotal    = 0;        // seconds long; 0 unknown
@@ -207,24 +212,35 @@ static void media_drawChapter(int x, int y, int w, int valueOff) {
   if (mediaChapters <= 0 || mediaState == MEDIA_MENU) snprintf(v, sizeof(v), "-");
   else if (mediaChapter <= 0) snprintf(v, sizeof(v), "-/%d", mediaChapters);
   else snprintf(v, sizeof(v), "%d/%d", mediaChapter, mediaChapters);
-  int vx = meta_textWidth(MEDIA_LABEL) + 5;
+  int vx = meta_textWidth(mediaLabel) + 5;
   if (valueOff > vx) vx = valueOff;
   u8g2.setForegroundColor(MEDIA_DIM);
   u8g2.setCursor(x, y);
-  u8g2.print(MEDIA_LABEL);
+  u8g2.print(mediaLabel);
   u8g2.setForegroundColor(SSD1322_WHITE);
   meta_drawClipped(v, x + vx, y, w - vx, 0);
 }
 
 // ---------------------------------------------------------------------------
 // meta_parseMedia - CMDMEDIA,<state>,<seconds in>,<seconds long>,<chapter>,
-// <chapters>. Draws nothing here: a layout up is drawn again once idle.
+// <chapters>[,<label>]. Draws nothing here: a layout up is drawn again once
+// idle.
 // ---------------------------------------------------------------------------
 void meta_parseMedia(const char *cmd) {
   const char *p = strchr(cmd, ',');
   long v[5] = { 0, 0, 0, 0, 0 };
   int n = 0;
   if (p && p[1]) n = sscanf(p + 1, "%ld,%ld,%ld,%ld,%ld", &v[0], &v[1], &v[2], &v[3], &v[4]);
+  // The sixth field, if there is one: the row's label, printable ASCII.
+  const char *lab = p;
+  for (int i = 0; lab && i < 5; i++) lab = strchr(lab + 1, ',');
+  size_t ln = 0;
+  if (n >= 5 && lab) {
+    for (lab++; *lab && ln < MEDIA_LABEL_MAX; lab++)
+      if (*lab >= ' ' && *lab <= '~' && *lab != ',') mediaLabel[ln++] = *lab;
+  }
+  if (ln == 0) { strncpy(mediaLabel, MEDIA_LABEL, sizeof(mediaLabel) - 1); ln = strlen(MEDIA_LABEL); }
+  mediaLabel[ln] = '\0';
   int state = (n >= 1) ? (int)v[0] : MEDIA_OFF;
   if (state < MEDIA_OFF || state > MEDIA_STILL) state = MEDIA_OFF;
   for (int i = 1; i < 3; i++) {
@@ -251,6 +267,8 @@ void media_reset(void) {
   mediaState = MEDIA_OFF;
   mediaPos = mediaTotal = 0;
   mediaChapter = mediaChapters = 0;
+  strncpy(mediaLabel, MEDIA_LABEL, sizeof(mediaLabel) - 1);
+  mediaLabel[sizeof(mediaLabel) - 1] = '\0';
   mediaRedraw = false;
   mediaShown = -2;
 }

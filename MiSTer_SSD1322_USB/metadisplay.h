@@ -320,6 +320,7 @@ long          metaTimerShown  = -2;     // what the header last drew; -2 nothing
 // know the rows it takes: the chapter row above the fields, and the band.
 #define MEDIA_ROWS      2
 int           mediaState      = 0;      // MEDIA_*; 0: no band
+char          mediaLabel[12]  = "Chapter";  // its row's label (MEDIA_LABEL), or CMDMEDIA's own
 
 // Also set by a description arriving for a layout already on the panel: its
 // page adds a pip, so the same picture has to be drawn again.
@@ -933,7 +934,7 @@ static int meta_valueOffsetFor(int colW) {
   }
   // The band's chapter row is a field row too, and shares the column.
   if (meta_mediaOn()) {
-    int w = meta_textWidth(MEDIA_LABEL);
+    int w = meta_textWidth(mediaLabel);
     if (w > widest) widest = w;
   }
   int off = widest + 5;

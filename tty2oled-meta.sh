@@ -191,7 +191,8 @@ meta_stat() {
              "${MISTER_STARTPATH}" "${MISTER_FULLPATH}" "${MISTER_CURRENTPATH}" \
              "${MISTER_FILESELECT}" "${MISTER_GAMEID}" "${NAMES_TXT}" \
              "${CORETYPE_MAP:-}" "${SCRAPE_DIR}" "${TITLE_INDEX_DIR}" \
-             "${TITLE_INDEX}" "${SCRAPE_DIR}/DVD.txt" "${HYBRID_CORES}" 2>/dev/null)
+             "${TITLE_INDEX}" "${SCRAPE_DIR}/DVD.txt" "${SCRAPE_DIR}/CD.txt" \
+             "${HYBRID_CORES}" 2>/dev/null)
   return 0
 }
 
@@ -1258,7 +1259,7 @@ scummvm_core() { [ "${1,,}" = "scummvm" ]; }
 # proc_hits - the processes worth a closer look, into PROC_HITS (their
 # cmdline files): one grep over every command line, for everything the daemon
 # looks for - update_all, MiSTer's own updater, this one's, Super Attract
-# Mode, Degauss, Zaparoo, ScummVM. It used to be a grep each, three to five a
+# Mode, Degauss, Zaparoo, ScummVM, MiSTer Hi-Fi. It used to be a grep each, three to five a
 # pass, each walking all of /proc. Case is ignored, which only widens the
 # net: every caller still decides from the command line itself what it has.
 # The brackets keep grep's own command line, which holds the patterns, out.
@@ -1274,6 +1275,7 @@ proc_hits() {
       -e '[u]pdate_all' -e '[t]mp/downloader[.]sh' -e '[s]cripts/update[.]sh' \
       -e '[u]a_downloader' -e '[t]ty2oledplus_update' -e '[u]pdate_tty2oledplus' \
       -e '[m]ister_sam_on[.]sh' -e '[d]egauss/degauss' -e '[m]enu_zaparoo' -e '[s]cummvm' \
+      -e '[m]ister_hifi' \
       "${PROC_ROOT:-/proc}"/[0-9]*/cmdline 2>/dev/null)
   PROC_SCANNED="${PROC_PASS}"
 }
@@ -1834,6 +1836,313 @@ dvd_meta() {
 }
 
 # ---------------------------------------------------------------------------
+# MiSTer Hi-Fi: music, and an audio CD's tracks
+# ---------------------------------------------------------------------------
+#
+# A music player for the MiSTer (not ours, and not a core): a Linux program
+# over the menu core, started from Scripts or - with the physical disc Main -
+# by a CD going into the drive. CORENAME says MENU throughout and no state
+# file says anything, so the daemon finds the binary (menu_frontend) and
+# calls it a core of its own, HIFI_CORE.
+#
+# All measured on the real MiSTer, v1.12.0 playing a CD:
+#
+#   What plays. The player has a web remote, on by default
+#   (web_remote_enabled / web_remote_port in the config.json beside the
+#   binary, 8182), and its GET /api/state answers in one line of JSON:
+#   state, title, artist, album, format, position and duration in seconds,
+#   queue_index and queue_length. Asked over bash's /dev/tcp: no process, 7ms
+#   of CPU a look on the DE10. It is another project's interface: every field
+#   is taken as optional, and a remote switched off leaves the player its
+#   picture and nothing more.
+#
+#   A CD. The player knows nothing of it: "Track 03", album "Audio CD",
+#   format "CDDA". The disc's table of contents names it (MusicBrainz's disc
+#   ID), read off the drive beside the player by tty2oledplus_cd.py - once a
+#   disc, in the background: the tracks' titles into HIFI_CACHE/<id>.cd, the
+#   album into scraped/CD.txt (lookup_scraped's format, the user's to
+#   correct). Which disc is in is /sys/block/sr*/size, a read.
+: "${HIFI_CACHE:=/media/fat/tty2oledplus/cache/cd}"
+HIFI_TOOL="${HIFI_TOOL:-${TTY2OLED_PATH:-/media/fat/tty2oledplus}/tty2oledplus_cd.py}"
+HIFI_CORE="MiSTerHiFi"
+HIFI_PORT_DEFAULT=8182
+
+hifi_core() { [ "${1,,}" = "misterhifi" ]; }
+
+# The disc went, or another came: its names go too.
+hifi_forget_disc() {
+  HIFI_DISC=""; HIFI_TRACKS=(); HIFI_SCAN_SIG=""; HIFI_SCANNED=""; HIFI_RETRY_AT=""
+}
+
+hifi_reset() {
+  HIFI_PID=""; HIFI_BIN=""; HIFI_PORT=""; HIFI_CONF_SEEN=""
+  HIFI_JSON=""; HIFI_DISC_SIG=""; HIFI_DEV=""
+  HF_STATE=""; HF_TITLE=""; HF_ARTIST=""; HF_ALBUM=""; HF_FORMAT=""
+  HF_POS=0; HF_DUR=0; HF_QI=0; HF_QN=0; HF_TRACK=0; HF_IDLE="yes"; HF_SIG=""
+  HIFI_SIG_BUILT=""; HIFI_BUILT=""; HIFI_HAD="no"
+  HIFI_FOLD_KEY=""; HIFI_FOLD_OUT=()
+  hifi_forget_disc
+}
+hifi_reset
+
+# Is this command line the player? By argv[0]'s name - its launcher script is
+# bash - and not the same binary run for a moment to pass a command on
+# ("--send") or to say its version.
+_hifi_argv() {  # _hifi_argv <argv0> <argv1>
+  local b="${1##*/}"
+  [ "${b,,}" = "mister_hifi" ] || return 1
+  case "${2}" in --send|--version|-v) return 1 ;; esac
+  return 0
+}
+
+_hifi_is() {  # _hifi_is <pid>; its argv[0] into _R
+  local a0="" a1=""
+  { IFS= read -r -d '' a0; IFS= read -r -d '' a1; } 2>/dev/null <"${PROC_ROOT:-/proc}/${1}/cmdline"
+  _R="${a0}"
+  _hifi_argv "${a0}" "${a1}"
+}
+
+# The running player: HIFI_PID, kept and checked with a read, and HIFI_BIN.
+hifi_find() {
+  local f="" pid=""
+  [ -n "${HIFI_PID}" ] && _hifi_is "${HIFI_PID}" && return 0
+  hifi_reset
+  proc_hits
+  for f in "${PROC_HITS[@]}"; do
+    pid="${f%/cmdline}"; pid="${pid##*/}"
+    _hifi_is "${pid}" && { HIFI_PID="${pid}"; HIFI_BIN="${_R}"; return 0; }
+  done
+  return 1
+}
+
+# Where its remote listens, into HIFI_PORT; empty when it is switched off.
+# From its config.json, beside the binary: read when the player is found, and
+# again after any look it did not answer - the port or the switch changed.
+hifi_port() {
+  local conf="${HIFI_CONFIG:-${HIFI_BIN%/*}/config.json}" text="" v=""
+  [ "${HIFI_CONF_SEEN}" = "yes" ] && return 0
+  HIFI_CONF_SEEN="yes"
+  HIFI_PORT="${HIFI_PORT_DEFAULT}"
+  IFS= read -r -d '' text 2>/dev/null <"${conf}"
+  [ -n "${text}" ] || return 0
+  case "${text}" in *'"web_remote_enabled"'*) ;; *) return 0 ;; esac
+  v="${text#*\"web_remote_enabled\"}"; v="${v#*:}"; v="${v%%[,\}]*}"
+  case "${v}" in *false*) HIFI_PORT=""; return 0 ;; esac
+  case "${text}" in *'"web_remote_port"'*) ;; *) return 0 ;; esac
+  v="${text#*\"web_remote_port\"}"; v="${v#*:}"; v="${v%%[,\}]*}"; v="${v//[!0-9]/}"
+  [ -n "${v}" ] && [ "${v}" -gt 0 ] && [ "${v}" -lt 65536 ] && HIFI_PORT="${v}"
+  return 0
+}
+
+# Its state, one line of JSON, into HIFI_JSON. HIFI_STATE_FILE stands in for
+# the socket in the tests.
+hifi_get() {
+  local l="" fd="" n=0
+  HIFI_JSON=""
+  if [ -n "${HIFI_STATE_FILE:-}" ]; then
+    IFS= read -r HIFI_JSON 2>/dev/null <"${HIFI_STATE_FILE}"
+    [ -n "${HIFI_JSON}" ]; return
+  fi
+  [ -n "${HIFI_PORT}" ] || return 1
+  # Braced: a redirection that fails on a bare exec ends the shell.
+  { exec {fd}<>"/dev/tcp/127.0.0.1/${HIFI_PORT}"; } 2>/dev/null || return 1
+  printf 'GET /api/state HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n' 2>/dev/null 1>&"${fd}"
+  # The headers, a blank line, then the body - which ends with no newline.
+  while IFS= read -r -t 2 -u "${fd}" l || [ -n "${l}" ]; do
+    [[ "${l}" == '{'* ]] && HIFI_JSON="${l%$'\r'}"
+    l=""; n=$(( n + 1 ))
+    [ "${n}" -lt 64 ] || break
+  done 2>/dev/null
+  exec {fd}>&-
+  [ -n "${HIFI_JSON}" ]
+}
+
+# A string of HIFI_JSON, by its key, into _R - unescaped. No process.
+_hifi_str() {
+  local k="\"${1}\":\"" s="" part="" out="" bs=""
+  _R=""
+  [[ "${HIFI_JSON}" == *"${k}"* ]] || return 1
+  s="${HIFI_JSON#*"${k}"}"
+  while :; do
+    [[ "${s}" == *'"'* ]] || return 1
+    part="${s%%\"*}"; s="${s#*\"}"
+    out="${out}${part}"
+    bs="${part##*[!\\]}"                 # the backslashes it ends with
+    [ $(( ${#bs} % 2 )) -eq 0 ] && break
+    out="${out}\""                       # an escaped quote: the string goes on
+  done
+  if [[ "${out}" == *\\* ]]; then
+    out="${out//\\\\/$'\001'}"           # an escaped backslash, put aside
+    out="${out//\\\"/\"}"; out="${out//\\\///}"
+    out="${out//\\u0026/&}"; out="${out//\\u003c/<}"; out="${out//\\u003e/>}"
+    out="${out//\\u0027/\'}"
+    out="${out//\\[nrtbf]/ }"
+    out="${out//\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/}"
+    out="${out//$'\001'/\\}"
+  fi
+  _R="${out}"
+}
+
+# A number of HIFI_JSON into _R (whole) and _R2 (its first decimal).
+_hifi_num() {
+  local k="\"${1}\":" v=""
+  _R=0; _R2=0
+  [[ "${HIFI_JSON}" == *"${k}"* ]] || return 1
+  v="${HIFI_JSON#*"${k}"}"; v="${v%%[,\}]*}"
+  case "${v}" in ''|*[!0-9.]*) return 1 ;; esac
+  if [[ "${v}" == *.* ]]; then _R2="${v#*.}"; _R2="${_R2:0:1}"; v="${v%%.*}"; fi
+  _R=$(( 10#${v:-0} )); _R2="${_R2:-0}"
+}
+
+# Which disc is in, as far as a read can tell: each drive's size in sectors,
+# and how many tracks the player counts. HIFI_DEV is the first drive holding
+# one.
+hifi_discsig() {
+  local f="" v="" d=""
+  HIFI_DISC_SIG=""; HIFI_DEV=""
+  for f in "${HIFI_SYS:-/sys/block}"/sr[0-9]*/size; do
+    v=""; IFS= read -r v 2>/dev/null <"${f}" || continue
+    [ "${v:-0}" != "0" ] || continue
+    d="${f%/size}"; d="${d##*/}"
+    [ -n "${HIFI_DEV}" ] || HIFI_DEV="/dev/${d}"
+    HIFI_DISC_SIG="${HIFI_DISC_SIG}${d}:${v} "
+  done
+  HIFI_DISC_SIG="${HIFI_DISC_SIG}${HF_QN}"
+  [ -n "${HIFI_DEV}" ] || HIFI_DEV="/dev/sr0"
+}
+
+# One look at the player: HF_*, and HF_SIG - everything its layout is built
+# from, so that a look can tell whether a build is due. Fails when it does
+# not answer.
+hifi_look() {
+  local n=""
+  hifi_port
+  hifi_get || { HIFI_CONF_SEEN=""; return 1; }
+  _hifi_str state;  HF_STATE="${_R}"
+  _hifi_str title;  HF_TITLE="${_R}"
+  _hifi_str artist; HF_ARTIST="${_R}"
+  _hifi_str album;  HF_ALBUM="${_R}"
+  _hifi_str format; HF_FORMAT="${_R}"
+  _hifi_num position;     HF_POS="${_R}"
+  _hifi_num duration;     HF_DUR=$(( _R + (_R2 >= 5 ? 1 : 0) ))
+  _hifi_num queue_index;  HF_QI="${_R}"
+  _hifi_num queue_length; HF_QN="${_R}"
+  # Nothing chosen yet: the player's own browser is up.
+  HF_IDLE="no"
+  [ -n "${HF_TITLE}" ] || HF_IDLE="yes"
+  HF_TRACK=$(( HF_QI + 1 ))
+  [ "${HF_QN}" -gt 0 ] || HF_TRACK=0
+  HIFI_DISC_SIG=""
+  if [ "${HF_FORMAT}" = "CDDA" ]; then
+    # "Track 03" is the disc's own number, shuffled or not.
+    case "${HF_TITLE}" in
+      "Track "[0-9]*) n="${HF_TITLE#Track }"
+                      case "${n}" in *[!0-9]*) ;; *) HF_TRACK=$(( 10#${n} )) ;; esac ;;
+    esac
+    hifi_discsig
+  fi
+  HF_SIG="${HF_IDLE}|${HF_TITLE}|${HF_ARTIST}|${HF_ALBUM}|${HF_FORMAT}|${HF_QN}|${HIFI_DISC_SIG}"
+  return 0
+}
+
+# A disc's track file into HIFI_TRACKS: "<title>|<artist>" by track number.
+hifi_loadtracks() {
+  local -a lines=()
+  HIFI_TRACKS=()
+  [ -n "${1}" ] && [ -r "${1}" ] || return 1
+  mapfile -t lines <"${1}"
+  [ "${lines[0]:-}" = "tty2oledplus-cd 1" ] || return 1
+  HIFI_TRACKS=("${lines[@]}")            # [0] is the mark, so [n] is track n
+  return 0
+}
+
+# What the player reports of a file, as the display can show it: tags are
+# UTF-8 and the panel's fonts are not. One process, once a track, and only
+# for a track that needs it.
+_hifi_ascii() {
+  local key="${HF_TITLE}"$'\037'"${HF_ARTIST}"$'\037'"${HF_ALBUM}"
+  HF_A_TITLE="${HF_TITLE}"; HF_A_ARTIST="${HF_ARTIST}"; HF_A_ALBUM="${HF_ALBUM}"
+  case "${key}" in *[![:ascii:]]*) ;; *) return 0 ;; esac
+  if [ "${HIFI_FOLD_KEY}" != "${key}" ]; then
+    HIFI_FOLD_KEY="${key}"; HIFI_FOLD_OUT=()
+    [ -r "${HIFI_TOOL}" ] && mapfile -t HIFI_FOLD_OUT < <(
+      printf '%s\n' "${HF_TITLE}" "${HF_ARTIST}" "${HF_ALBUM}" | python3 "${HIFI_TOOL}" fold 2>/dev/null)
+    [ "${#HIFI_FOLD_OUT[@]}" -eq 3 ] ||
+      HIFI_FOLD_OUT=("${HF_TITLE//[![:ascii:]]/}" "${HF_ARTIST//[![:ascii:]]/}" "${HF_ALBUM//[![:ascii:]]/}")
+  fi
+  HF_A_TITLE="${HIFI_FOLD_OUT[0]}"; HF_A_ARTIST="${HIFI_FOLD_OUT[1]}"; HF_A_ALBUM="${HIFI_FOLD_OUT[2]}"
+}
+
+# The player's layout: the track as the title, the album's details under it.
+# Nothing playing, or no answer from the player: its picture, and
+# META_SHOWCORE when a track shown until now has gone. Built once a track
+# (HIFI_BUILT), since this runs every pass beside the music.
+#
+# HIFI_FIELDS picks and orders the fields, from Artist Album Year Label Genre
+# Format. Year, Label and Genre are a looked-up CD's alone.
+: "${HIFI_FIELDS:=Artist Album Year Format}"
+_HIFI_KNOWN="Artist Album Year Label Genre Format"
+hifi_meta() {
+  local had="${HIFI_HAD}" stamp="" f="" label="" t="" who="" format=""
+  META_KIND="console"
+  if ! hifi_find || ! hifi_look || [ "${HF_IDLE}" = "yes" ]; then
+    META_TITLE="${DISPLAY_CORENAME}"
+    META_SOURCE="core"
+    META_ICON=""
+    [ "${had}" = "yes" ] && META_SHOWCORE="yes"
+    HIFI_HAD="no"; HIFI_BUILT=""; HIFI_SIG_BUILT="${HF_SIG}"
+    return 0
+  fi
+  HIFI_HAD="yes"
+  HIFI_SIG_BUILT="${HF_SIG}"
+  META_SOURCE="hifi"
+  META_GAME="yes"
+  META_ICON="misterhifi"
+
+  # Another disc than the one that was read: its names are not this one's.
+  [ "${HF_FORMAT}" = "CDDA" ] && [ "${HIFI_DISC_SIG}" = "${HIFI_SCAN_SIG}" ] || { HIFI_DISC=""; HIFI_TRACKS=(); }
+
+  stamp="${HF_SIG}|${HF_TRACK}|${HIFI_DISC}|${#HIFI_TRACKS[@]}|${META_MTIME[${SCRAPE_DIR}/CD.txt]:-}"
+  if [ "${HIFI_BUILT}" = "${stamp}" ]; then
+    META_TITLE="${HIFI_C_TITLE}"; META_DESC="${HIFI_C_DESC}"
+    META_FIELDS=("${HIFI_C_FIELDS[@]}")
+    return 0
+  fi
+  HIFI_BUILT="${stamp}"
+
+  _hifi_ascii
+  scr_reset
+  declare -A avail=()
+  format="${HF_FORMAT}"
+  if [ "${HF_FORMAT}" = "CDDA" ]; then
+    format="Audio CD"
+    [ -n "${HIFI_DISC}" ] && lookup_scraped "${HIFI_DISC}" "" CD
+    t="${HIFI_TRACKS[${HF_TRACK}]:-}"
+    who="${t#*|}"; [ "${who}" != "${t}" ] || who=""
+    t="${t%%|*}"
+    META_TITLE="${t:-${HF_A_TITLE}}"
+    avail=([Artist]="${who:-${SCR_SERIES}}" [Album]="${SCR_TITLE}" [Year]="${SCR_RELEASED:0:4}"
+           [Label]="${SCR_PUBLISHER}" [Genre]="${SCR_GENRE}")
+    [ "${SHOW_DESCRIPTION:-yes}" = "yes" ] && META_DESC="${SCR_DESC}"
+  else
+    META_TITLE="${HF_A_TITLE}"
+    avail=([Artist]="${HF_A_ARTIST}" [Album]="${HF_A_ALBUM}")
+  fi
+  # A title the panel's fonts have no letters for.
+  [ -n "${META_TITLE// /}" ] || META_TITLE="Track ${HF_TRACK}"
+  avail[Format]="${format}"
+  for f in ${HIFI_FIELDS}; do
+    _canon_label "${f}" "${_HIFI_KNOWN}" || continue
+    label="${_R}"
+    meta_addfield "${label}" "${avail[${label}]:-}"
+  done
+  META_PINNED_COUNT=0
+  HIFI_C_TITLE="${META_TITLE}"; HIFI_C_DESC="${META_DESC}"
+  HIFI_C_FIELDS=("${META_FIELDS[@]}")
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # meta_inputs - everything build_meta reads, as one string, into META_INPUTS:
 # the core, the state files' contents, and the times of those and of the
 # tables and folders it looks things up in (meta_stat). The same string, the
@@ -1905,6 +2214,20 @@ build_meta() {
     fi
     DISPLAY_CORENAME="${DVD_DISPLAY}"
     dvd_meta
+    return 0
+  fi
+
+  # MiSTer Hi-Fi: music, over the menu core - whose RBFNAME and STARTPATH
+  # are no names for it. Its name read from names.txt once a core change.
+  if [ "${HIFI_SCREEN:-yes}" = "yes" ] && hifi_core "${corename}"; then
+    if [ "${corechange}" = "corechange" ] || [ -z "${HIFI_DISPLAY:-}" ]; then
+      CORE_STARTPATH=""
+      display_corename "${corename}"
+      [ "${DISPLAY_CORENAME}" = "${corename}" ] && DISPLAY_CORENAME="MiSTer Hi-Fi"
+      HIFI_DISPLAY="${DISPLAY_CORENAME}"
+    fi
+    DISPLAY_CORENAME="${HIFI_DISPLAY}"
+    hifi_meta
     return 0
   fi
 

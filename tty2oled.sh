@@ -344,6 +344,8 @@ senddata() {
     # 50ms gap before CMDCOR, and the transfer and a Fade ate the whole hold -
     # the artwork faded in and straight back out.
     [ "${hold}" = "yes" ] && sendcoreboot
+    # A track's place ahead of its layout, which is then drawn with it.
+    [ "${META_SOURCE}" = "hifi" ] && { now_ms; hifi_place; }
     # CMDMETAOFF went out above, so a game's line always differs from the
     # last one sent and a core with no game sends nothing more.
     sendbuiltmeta && sendicon "${META_ICON}"
@@ -534,7 +536,8 @@ META_INPUTS_LAST=""
 refreshmeta() {
   local corename="${1}"
   [ "${SHOW_METADATA}" = "yes" ] || return 0
-  if ! scummvm_core "${corename}" && ! { dvd_core "${corename}" && dvd_screen_on; }; then
+  if ! scummvm_core "${corename}" && ! { dvd_core "${corename}" && dvd_screen_on; } &&
+     ! { hifi_core "${corename}" && hifi_screen_on; }; then
     meta_inputs "${corename}"
     if [ "${META_INPUTS}" = "${META_INPUTS_LAST}" ]; then
       META_STAT_FRESH=""
@@ -551,6 +554,8 @@ refreshmeta() {
   fi
   # A disc's place goes ahead of its layout, which is then drawn with it.
   [ "${META_SOURCE}" = "dvd" ] && dvd_tick
+  # A track's likewise, from the look its layout was just built from.
+  [ "${META_SOURCE}" = "hifi" ] && { now_ms; hifi_place; }
   if sendbuiltmeta; then
     sendicon "${META_ICON}"
   elif [ "${META_GAME:-no}" = "yes" ] && [ "${META_WIRE_LAST:-}" != "OFF" ] &&
@@ -640,7 +645,7 @@ BG_GIVEUP_dvl=60                # the lookup: two requests, 15s each at most
 DVD_TICK_SECS="1"
 DVD_SCAN_GEN=""; DVD_SCAN_DEV=""
 declare -A DVD_ASKED=()         # disc keys Wikipedia was asked about, this run
-MEDIA_SENT=""                   # what the firmware holds: "state|length|chapter|of"
+MEDIA_SENT=""                   # what the firmware holds: "state|length|chapter|of|label"
 MEDIA_SENT_POS=0                # ...its seconds in when sent
 MEDIA_SENT_AT=0                 # ...and when, in ms
 
@@ -730,8 +735,8 @@ dvd_pos() {
 # the title's length or the chapter changed, or its count has drifted two
 # seconds from the daemon's. Firmware 0.8.2b or later; older draws it as text.
 MEDIA_FW_FOR="-"; MEDIA_FW="no"
-sendmedia() {  # sendmedia <state> <seconds in> <length> <chapter> <chapters>
-  local want="${1}|${3}|${4}|${5}" shown=0
+sendmedia() {  # sendmedia <state> <seconds in> <length> <chapter> <chapters> [<label>]
+  local want="${1}|${3}|${4}|${5}|${6:-}" shown=0
   # Asked once a firmware version, not every look: fw_atleast is two regexes.
   if [ "${MEDIA_FW_FOR}" != "${FW_VERSION:-}" ]; then
     MEDIA_FW_FOR="${FW_VERSION:-}"
@@ -744,9 +749,11 @@ sendmedia() {  # sendmedia <state> <seconds in> <length> <chapter> <chapters>
     [ "${3}" -gt 0 ] && [ "${shown}" -gt "${3}" ] && shown="${3}"
     [ $(( shown - ${2} )) -lt 2 ] && [ $(( ${2} - shown )) -lt 2 ] && return 0
   else
-    dbug "Sending: CMDMEDIA,${1},${2},${3},${4},${5}"
+    dbug "Sending: CMDMEDIA,${1},${2},${3},${4},${5}${6:+,${6}}"
   fi
-  echo "CMDMEDIA,${1},${2},${3},${4},${5}" >"${TTYDEV}"
+  # The row's label, for what has tracks and not chapters: firmware before
+  # 0.8.9b reads past it and says Chapter.
+  echo "CMDMEDIA,${1},${2},${3},${4},${5}${6:+,${6}}" >"${TTYDEV}"
   nap "${CMDWAITSECS:-0.05}"
   MEDIA_SENT="${want}"; MEDIA_SENT_POS="${2}"; MEDIA_SENT_AT="${NOW_MS}"
 }
@@ -828,6 +835,99 @@ dvd_follow() {  # dvd_follow <seconds>
     now_ms
     [ "${NOW_MS}" -lt "${end}" ] || return 0
     nap "${DVD_TICK_SECS}"
+  done
+}
+
+# ---------------------------------------------------------------------------
+# MiSTer Hi-Fi: its disc named, its track followed
+# ---------------------------------------------------------------------------
+#
+# See tty2oled-meta.sh's Hi-Fi section for what can be seen and why. Here is
+# the doing: an audio CD's table of contents read and looked up in the
+# background, once a disc, and - between the passes, every HIFI_TICK_SECS -
+# one look at the player's state, which sends CMDMEDIA when the firmware's own
+# count would be wrong (a pause, a seek) and ends the wait when the track has
+# changed, for the pass to send its title. A look starts no process.
+BG_GIVEUP_hfd=90                # the lookup: three requests, 15s each at most
+HIFI_TICK_SECS="1"
+HIFI_RETRY_SECS=300             # a lookup that got no answer is tried again
+
+hifi_screen_on() { [ "${SHOW_METADATA}" = "yes" ] && [ "${HIFI_SCREEN:-yes}" = "yes" ]; }
+
+# An audio CD's names, in the background: once per disc, and again after
+# HIFI_RETRY_SECS when nobody answered. A disc seen before costs the read of
+# its table and no request.
+hifi_jobs() {
+  local now="${EPOCHSECONDS:-$(date +%s)}" id="" n="" file="" album="" nolook=""
+  if bg_collect hfd "${now}"; then
+    dbug "Hi-Fi: the disc: ${BG_LINE:-exit ${BG_RC:-killed}}"
+    if [ "${HIFI_SCAN_SIG}" = "${HIFI_SCANNED}" ]; then
+      case "${BG_LINE}" in
+        *'|'*'|'*'|'*)
+          IFS='|' read -r id n file album <<<"${BG_LINE}"
+          HIFI_DISC="${id}"
+          hifi_loadtracks "${file}"
+          HIFI_BUILT="" ;;
+      esac
+      [ "${BG_RC:-1}" = "1" ] && HIFI_RETRY_AT=$(( now + HIFI_RETRY_SECS ))
+    fi
+  fi
+
+  hifi_core "${oldcore}" && hifi_screen_on || return 0
+  [ "${HF_FORMAT}" = "CDDA" ] && [ -n "${HIFI_DISC_SIG}" ] || return 0
+  [ -r "${HIFI_TOOL}" ] || return 0
+  bg_running hfd && return 0
+  if [ "${HIFI_SCANNED}" = "${HIFI_DISC_SIG}" ]; then
+    [ -n "${HIFI_RETRY_AT}" ] && [ "${now}" -ge "${HIFI_RETRY_AT}" ] || return 0
+  fi
+  HIFI_SCANNED="${HIFI_DISC_SIG}"; HIFI_SCAN_SIG="${HIFI_DISC_SIG}"; HIFI_RETRY_AT=""
+  [ "${HIFI_LOOKUP:-yes}" = "yes" ] || nolook="--no-lookup"
+  dbug "Hi-Fi: reading the disc in ${HIFI_DEV}"
+  # shellcheck disable=SC2086  # nolook: an option or nothing
+  bg_start hfd "${now}" nice -n 10 python3 "${HIFI_TOOL}" disc --dev "${HIFI_DEV}" \
+    --cache "${HIFI_CACHE}" --db "${SCRAPE_DIR}/CD.txt" ${nolook}
+}
+
+# CMDMEDIA for the track as the last look found it: play, pause or stop, its
+# seconds, and which of how many - the row says Track.
+hifi_place() {
+  local st=3
+  [ "${HF_IDLE}" = "yes" ] && return 0
+  case "${HF_STATE,,}" in play*) st=1 ;; pause*) st=2 ;; esac
+  sendmedia "${st}" "${HF_POS}" "${HF_DUR}" "${HF_TRACK}" "${HF_QN}" "Track"
+}
+
+# One look. 0: nothing a pass is needed for. 1: the track, the disc or what
+# plays has changed - a pass builds and sends it. 2: no answer.
+hifi_tick() {
+  now_ms
+  hifi_look || return 2
+  [ "${HF_SIG}" = "${HIFI_SIG_BUILT}" ] || return 1
+  hifi_place
+  return 0
+}
+
+# Between the passes while the player is up: a look every HIFI_TICK_SECS for
+# up to $1 seconds - less when the core changes, the track does, or the
+# disc's lookup has finished, all of which a pass handles. A player that does
+# not answer (its remote switched off) is waited on, not asked in a spin.
+hifi_follow() {  # hifi_follow <seconds>
+  local end=0 core=""
+  now_ms; end=$(( NOW_MS + ${1} * 1000 ))
+  nap 0                                          # its pipe, opened once
+  while :; do
+    core=""; IFS= read -r core 2>/dev/null <"${corenamefile}"
+    [ "${core}" = "MENU" ] || return 0
+    hifi_tick
+    case "$?" in
+      1) return 0 ;;
+      2) _hifi_is "${HIFI_PID:-0}" && nap "${UPDATE_ALL_POLL:-2}"
+         return 0 ;;
+    esac
+    { bg_running hfd && [ -e "${UC_OUT}.hfd.rc" ]; } && return 0
+    now_ms
+    [ "${NOW_MS}" -lt "${end}" ] || return 0
+    nap "${HIFI_TICK_SECS}"
   done
 }
 
@@ -1470,8 +1570,8 @@ ZAPAROO_CORE="zaparoo"
 # in every respect - the game from the command line and all (tty2oled-meta.sh).
 SCUMMVM_CORE="ScummVM"
 
-# Which of them is up, into MENU_FRONTEND: SCUMMVM_CORE, DEGAUSS_CORE,
-# ZAPAROO_CORE or empty. One grep over /proc finds both; it only narrows the field (busybox
+# Which of them is up, into MENU_FRONTEND: SCUMMVM_CORE, HIFI_CORE (MiSTer
+# Hi-Fi, while its screen is on), DEGAUSS_CORE, ZAPAROO_CORE or empty. One grep over /proc finds both; it only narrows the field (busybox
 # grep has no -z to anchor on an argument), and the brackets keep it from
 # matching its own command line.
 #
@@ -1490,6 +1590,10 @@ menu_frontend() {
     b="${a0##*/}"
     [[ "${b,,}" == scummvm* ]] && { MENU_FRONTEND="${SCUMMVM_CORE}"; return 0; }
   fi
+  # MiSTer Hi-Fi the same way, once found.
+  if [ -n "${HIFI_PID:-}" ] && hifi_screen_on && _hifi_is "${HIFI_PID}"; then
+    MENU_FRONTEND="${HIFI_CORE}"; return 0
+  fi
   proc_hits
   for f in "${PROC_HITS[@]}"; do
     a0=""; a1=""
@@ -1498,6 +1602,11 @@ menu_frontend() {
     # its launcher script, nor anything naming its folder.
     b="${a0##*/}"
     [[ "${b,,}" == scummvm* ]] && { MENU_FRONTEND="${SCUMMVM_CORE}"; return 0; }
+    # MiSTer Hi-Fi's by argv[0] too. Over Degauss and Zaparoo: it draws over
+    # the menu either of them is.
+    if hifi_screen_on && _hifi_argv "${a0}" "${a1}"; then
+      MENU_FRONTEND="${HIFI_CORE}"; return 0
+    fi
     case "${a0}" in
       */.config/degauss/degauss|*/.degauss/degauss) MENU_FRONTEND="${DEGAUSS_CORE}"; continue ;;
     esac
@@ -2921,6 +3030,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
             dbug "Read CORENAME: -${newcore}-"
             dbug "Send -${newcore}- to ${TTYDEV}."
             dvd_core "${oldcore}" && dvd_reset    # its disc is not the next core's
+            hifi_core "${oldcore}" && hifi_reset  # nor its player
             senddata "${newcore}"
             oldcore=$newcore
           else
@@ -2929,6 +3039,7 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
           fi
           scummvm_jobs
           dvd_jobs
+          hifi_jobs
           [ "${1}" = "tty2x" ] && exit 9
           deferred_setup						  # the half of startup the picture did not need
           metawatch="$(metawatchlist)"
@@ -2950,6 +3061,9 @@ if [ -c "${TTYDEV}" ]; then # check for tty device
           # next pass, instead of a wait. No state file says anything there.
           if dvd_core "${oldcore}" && dvd_screen_on; then
             dvd_follow "${mpoll}"
+          # MiSTer Hi-Fi the same: its track and its seconds, asked of it.
+          elif hifi_core "${oldcore}" && hifi_screen_on; then
+            hifi_follow "${mpoll}"
           else
             # shellcheck disable=SC2086  # a list; metawatchlist leaves out names with spaces
             metawait "${mpoll}" ${metawatch}
