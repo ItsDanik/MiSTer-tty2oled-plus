@@ -123,15 +123,16 @@ switched it off in the player's settings; with it off the display shows the
 player's picture and nothing more. Firmware before 0.8.9b calls the track
 row "Chapter".
 
-**Hybrid cores** - [Dethrace](https://github.com/ItsDanik/Dethrace_MiSTer)
-(Carmageddon), [ECWolf](https://github.com/ItsDanik/ecwolf_MiSTer)
-(Wolfenstein 3D), [jfSW](https://github.com/ItsDanik/jfSW_MiSTer)
-(Shadow Warrior) and the upcoming openscreamer (Screamer), games that run on the MiSTer's ARM behind an FPGA core of
-their own - are one game each, so loading the core is enough: its banner,
-then the console layout with the game's title, who developed it, the year
-and publishers, the core and its author, the game's icon beside them and a
-description as the last page. What is shown for each is a line of
-`hybridcores.txt` in the install folder.
+**Hybrid ports** - Danik's [hybrid ports](https://github.com/ItsDanik/Hybrid_MiSTer)
+(Carmageddon, Wolfenstein 3D, Shadow Warrior, Screamer, Doom, Quake and
+more), games that run on the MiSTer's ARM behind an FPGA core of their own -
+show the game that runs: its logo, then the console layout with its title,
+developer, year, the port and its author, its icon beside them and its
+description as the last page. A game picked from a port's own list shows as
+soon as it is picked. Each port brings these itself, in its own folder
+(`games/dnk/<port>/oled/` and `info.txt`), so a port updated or added shows
+without an update of tty2oled+; a port packaged before 2026-10-26 shows its
+core's name until it is updated.
 
 ![The jfSW core's banner: Shadow Warrior](docs/img/hybrid-jfsw-art.png)
 

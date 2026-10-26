@@ -134,7 +134,6 @@ W = runs on the workstation, M = runs on the MiSTer.
 | `tty2oled-system.ini`, `tty2oled-user.ini` | Defaults; the user's overrides (sourced after, never shipped over). |
 | `VERSION`, `CHANGELOG.md`, `tools/bump-version.sh` | One version; an entry per release; moves/checks it. |
 | `coretypes.ini` | `corename=console\|computer\|arcade`, consulted before folder guessing. |
-| `hybridcores.txt` | `corename\|title\|label=value\|...\|description`: the layout of a hybrid core (Dethrace, ECWolf, jfSW, openscreamer). Shipped, replaced by every update. |
 | `MiSTer_SSD1322_USB/metadisplay.h` | Arcade card + console split layout. |
 | `.../bootscreen.h`, `bootlogo.h`, `bootlogo.png` | LittleFS boot image + reserved band; built-in 256x54 logo (generated from the PNG). |
 | `.../contrastfade.h` | Every contrast change fades; base level x transition veil. |
@@ -899,26 +898,33 @@ Degauss/Zaparoo; with `SVM_PID` known it is a read, not a search. `scummvm_core`
 ## Hybrid cores
 
 The user's own: [Hybrid_MiSTer](https://github.com/ItsDanik/Hybrid_MiSTer) -
-the game on the ARM, an FPGA core in `_Other` for video, sound and input,
-started by `danik_hybrid_cores.sh` while `/tmp/CORENAME` names the core
-(`Dethrace`, `ECWolf`, `jfSW`, `openscreamer`: the `CONF_STR` name, also `games/<Name>/`). **The core
-is the game**: nothing is selected, so MiSTer publishes the core name and no
-more, and `_Other` classifies as `unknown`.
+the game on the ARM, an FPGA core (`_Other/dnk/dnk-<Engine>_<date>.rbf`) for
+video, sound and input. MiSTer publishes only a core name: a game's set name
+(`ECWolf_SOD`, its menu entry's MGL) or the engine (`ECWolf`, the core started
+by itself). **The ports bring what is shown** (Hybrid_MiSTer `docs/oled.md`,
+2026-10-26): `/media/fat/games/dnk/<Engine>/games.txt` (`id|title`),
+`info.txt` (`id|year|developer|description`, ASCII), `oled/<id>_logo.gsc`
+(256x64) and `oled/<id>_icon.gsc` (86x64). tty2oled+ ships no table or
+pictures of its own for them any more (`hybridcores.txt` and the four
+banners/icons went after 0.8.9b; `migrate_pics` removes them from installs).
 
-- `hybridcores.txt` is the whole layout: `hybrid_core` (the table, reloaded
-  on mtime - it is in `meta_stat`) and `hybrid_meta`, in `build_meta` after
-  `classify_core`/`display_corename` and ahead of every state file - what the
-  last core left in `CURRENTPATH` is not this game's. Console kind,
-  `META_GAME=yes`, `META_SOURCE=hybrid`, nothing pinned: four rows are one
-  page, the description the next.
-- Rows are the line's own `label=value` fields, in its order - **not**
-  `METADATA_FIELDS`. The last field is the description, empty or not (taken
-  off before `read -a`, which drops an empty last field).
-- Picture and icon by core name, lower-cased: `pics/banner/dethrace.gsc`,
-  `pics/icon/dethrace.gsc`. `core_kind` is untouched (`unknown`, so
-  `findbanner`). `test-meta.sh` fails on a line without both, or with a
-  description that is not printable ASCII within `DESC_MAX`.
-- A new hybrid core is a line, a banner and an icon - no code.
+- `hybrid_core <corename>` (`tty2oled-meta.sh`) sets `HYB_ENGINE`/`HYB_ID`,
+  in order: `/tmp/dnk_game` (`<Engine>|<id>`, written by the port's library
+  once the game is known - from its list, or under a `_TEST` set name) when
+  it is newer than CORENAME and CORENAME is the engine or `<Engine>_*`; CORENAME
+  as `<Engine>_<id>`; CORENAME (or the part before its last `_`) as an engine
+  whose `games.txt` has one game. A game is one whose `_logo.gsc` is there.
+- `findpicture` takes the port's logo (after an exact `pics/user` banner when
+  those come first); `hybrid_meta` builds the console layout: title from
+  `games.txt`, rows Dev, Year, Port, Author (danik), description, icon by
+  absolute path (`findicon` takes one). Called in `build_meta` ahead of every
+  state file.
+- A game other than the one whose logo went up at the core change
+  (`HYB_SHOWN`) sets `META_SHOWCORE`, so `refreshmeta` sends the core change
+  again: its logo, then its layout. `/tmp/dnk_game` is in `meta_stat`; it is
+  seen at the next poll (`METADATA_POLL`, 5s), not watched.
+- Tests: `test-meta.sh` and `test-wire.sh` ("hybrid ports"), a fake port folder
+  (`HYBRID_DIR`, `HYBRID_GAME`).
 - Not checked on the real MiSTer yet.
 
 ## The DVD core
@@ -1140,7 +1146,7 @@ flashable at `0x0` (gitignored). Arduino IDE: `WEMOS LOLIN32`; on an S3 set
 | folder | what | size | whose |
 |---|---|---|---|
 | `pics/banner` | console/computer/utility core banners (200) | 256x64 | release, in the scripts archive **and** the pack |
-| `pics/icon` | console icons (33 core names: 27 systems - the DVD core's among them - four hybrid cores' games and MiSTer Hi-Fi's) | 86x64 | release, in the scripts archive |
+| `pics/icon` | console icons (29 core names: 27 systems - the DVD core's among them - ScummVM's and MiSTer Hi-Fi's) | 86x64 | release, in the scripts archive |
 | `pics/arcade` | `wheels.bin` + `wheels.idx` | 256x64 | release, in `tty2oledplus-pics.tar.gz` |
 | `pics/user` | the user's own banners, by core or set | 256x64 | **theirs** - nothing writes it |
 

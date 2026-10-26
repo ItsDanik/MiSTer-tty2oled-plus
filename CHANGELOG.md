@@ -4,6 +4,17 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
+## Unreleased
+
+- **Every game of the hybrid ports.** The ports bring their own logo, icon,
+  details and description for each of their games, in their own folders,
+  and the display shows the game that runs: the one of the menu entry, or
+  the one picked from a port's list as soon as it is picked. A port added
+  or updated shows without an update of tty2oled+. Ports packaged before
+  2026-10-26 show their core's name until they are updated. The table and
+  pictures tty2oled+ had for Dethrace, ECWolf, jfSW and openscreamer are
+  gone (they are the ports' own now) and are removed from your install.
+
 ## 0.8.9b — 2026-10-13
 
 - **Music on MiSTer Hi-Fi shows what is playing.** With the player from

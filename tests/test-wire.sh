@@ -928,33 +928,59 @@ refreshmeta "GBA" >/dev/null 2>&1
 ok "a game change in a running core sends only the details" \
    "$(wire_order)" "CMDMETA CMDICON"
 
-# A hybrid core (Dethrace, ECWolf) is its game: the core change alone brings
-# the whole layout, behind the core's own picture and its hold, with the
-# description and the icon - both named in lower case, as the release has them.
+# A hybrid port's game: the core change alone brings the whole layout, behind
+# the game's logo and its hold, with the description and the icon - all from
+# the port's folder (games/dnk/<Engine>/).
 reset_capture
-HYBRID_CORES="${TMP}/hybridcores.txt"
-printf 'Dethrace|Carmageddon|Dev=Stainless Software Ltd.|Year=1997, SCi, Interplay|Core=dethrace|Author=danik|A violent car racing game.\n' > "${HYBRID_CORES}"
-printf '/media/fat/_Other/Dethrace_20261004.rbf\n' > "${TMP}/STARTPATH"
-printf 'Dethrace\n' > "${TMP}/CORENAME"
-printf '#\n#\n#\n0a\n' > "${bannerfolder}/dethrace.gsc"
-{ echo "#"; echo "#"; echo "#"; head -c 2752 /dev/zero | xxd -p; } > "${iconfolder}/dethrace.gsc"
-senddata "Dethrace" >/dev/null 2>&1
+HYBRID_DIR="${TMP}/dnk"
+HYBRID_GAME="${TMP}/dnk_game"
+rm -rf "${HYBRID_DIR}" "${HYBRID_GAME}"
+mkdir -p "${HYBRID_DIR}/Dethrace/oled"
+printf 'CARMA|Carmageddon\nSPLAT|Carmageddon Splat Pack\n' > "${HYBRID_DIR}/Dethrace/games.txt"
+printf 'CARMA|1997|Stainless Software|A violent car racing game.\nSPLAT|1997|Stainless Software|More of it.\n' \
+  > "${HYBRID_DIR}/Dethrace/info.txt"
+for g in CARMA SPLAT; do
+  printf '#\n#\n#\n0a\n' > "${HYBRID_DIR}/Dethrace/oled/${g}_logo.gsc"
+  { echo "#"; echo "#"; echo "#"; head -c 2752 /dev/zero | xxd -p; } > "${HYBRID_DIR}/Dethrace/oled/${g}_icon.gsc"
+done
+printf '/media/fat/_Other/dnk/dnk-Dethrace_20261026.rbf\n' > "${TMP}/STARTPATH"
+printf 'Dethrace_CARMA\n' > "${TMP}/CORENAME"
+senddata "Dethrace_CARMA" >/dev/null 2>&1
 # The description's bytes end in no newline, so CMDICON follows them on their
 # line: the commands are picked out wherever they stand.
-ok "a hybrid core: off, picture, hold, the game, its description, its icon" \
+ok "a hybrid port's game: off, picture, hold, the game, its description, its icon" \
    "$(captured | grep -aoE 'CMD[A-Z]+' | paste -sd' ')" "CMDMETAOFF CMDCOR CMDCBOOT CMDMETA CMDDESC CMDICON"
 ok "its line: four rows on one page, nothing pinned" \
    "$(captured | grep -a '^CMDMETA,')" \
-   "CMDMETA,2,${METADATA_INTERVAL},0,0,Carmageddon|Dev=Stainless Software Ltd.|Year=1997  SCi  Interplay|Core=dethrace|Author=danik"
+   "CMDMETA,2,${METADATA_INTERVAL},0,0,Carmageddon|Dev=Stainless Software|Year=1997|Port=Dethrace|Author=danik"
 ok "its description, by length" "$(captured | grep -a '^CMDDESC,')" "CMDDESC,26"
+ok "its logo, the port's" "$(findpicture Dethrace_CARMA; printf '%s' "${PICFILE}")" \
+   "${HYBRID_DIR}/Dethrace/oled/CARMA_logo.gsc"
 reset_capture
-printf '/media/fat/_Other/Dethrace_20261004.rbf\n' > "${TMP}/STARTPATH"
-refreshmeta "Dethrace" >/dev/null 2>&1
-refreshmeta "Dethrace" >/dev/null 2>&1
+refreshmeta "Dethrace_CARMA" >/dev/null 2>&1
+refreshmeta "Dethrace_CARMA" >/dev/null 2>&1
 ok "and a pass with nothing new sends nothing again" \
    "$(captured | grep -ac '^CMDMETA,')" "1"
-rm -f "${bannerfolder}/dethrace.gsc" "${iconfolder}/dethrace.gsc" "${HYBRID_CORES}"
-HYBRID_CORES="${TMP}/no-such-table"
+ok "nor its logo" "$(captured | grep -ac 'CMDCOR')" "0"
+# The core started by itself, the game picked from its list: once the port
+# names it, its logo goes up and then its layout, as at a core change.
+reset_capture
+printf 'Dethrace\n' > "${TMP}/CORENAME"
+touch -d '2024-01-01 00:00:00' "${TMP}/CORENAME"
+senddata "Dethrace" >/dev/null 2>&1
+reset_capture
+printf 'Dethrace|SPLAT\n' > "${HYBRID_GAME}"
+touch -d '2024-01-01 00:00:05' "${HYBRID_GAME}"
+refreshmeta "Dethrace" >/dev/null 2>&1
+ok "a game picked from the list: its logo, then its layout" \
+   "$(captured | grep -aoE 'CMD[A-Z]+' | paste -sd' ')" "CMDMETAOFF CMDCOR CMDCBOOT CMDMETA CMDDESC CMDICON"
+ok "the game picked" "$(captured | grep -a '^CMDMETA,' | cut -d, -f6 | cut -d'|' -f1)" "Carmageddon Splat Pack"
+reset_capture
+refreshmeta "Dethrace" >/dev/null 2>&1
+ok "and only once" "$(captured | grep -ac 'CMDCOR')" "0"
+rm -rf "${HYBRID_DIR}" "${HYBRID_GAME}"
+HYBRID_DIR="${TMP}/no-such-dir"
+HYBRID_GAME="${TMP}/no-such-game"
 
 rm -f "${bannerfolder}/GBA.gsc" "${iconfolder}/GBA.gsc"
 TRANSITION="-1"

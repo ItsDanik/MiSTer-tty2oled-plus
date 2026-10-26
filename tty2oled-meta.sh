@@ -192,7 +192,7 @@ meta_stat() {
              "${MISTER_FILESELECT}" "${MISTER_GAMEID}" "${NAMES_TXT}" \
              "${CORETYPE_MAP:-}" "${SCRAPE_DIR}" "${TITLE_INDEX_DIR}" \
              "${TITLE_INDEX}" "${SCRAPE_DIR}/DVD.txt" "${SCRAPE_DIR}/CD.txt" \
-             "${HYBRID_CORES}" 2>/dev/null)
+             "${HYBRID_GAME}" 2>/dev/null)
   return 0
 }
 
@@ -251,65 +251,111 @@ _coretypes_load() {
 }
 
 # ---------------------------------------------------------------------------
-# Hybrid cores - a game on the ARM behind an FPGA core of its own
-# (github.com/ItsDanik/Hybrid_MiSTer: Dethrace, ECWolf). The core is the game:
-# nothing is ever selected, so MiSTer publishes a core name and no more, and
-# what the layout says comes from hybridcores.txt, by that name:
+# Hybrid ports - a game on the ARM behind an FPGA core of its own
+# (github.com/ItsDanik/Hybrid_MiSTer, its docs/oled.md). Nothing is ever
+# selected, so MiSTer publishes a core name and no more; the port brings what
+# is shown, in its own folder, games/dnk/<Engine>/:
 #
-#   <corename>|<title>|<label>=<value>|...|<description>
+#   games.txt          <id>|<title>, a line per game
+#   info.txt           <id>|<year>|<developer>|<description>
+#   oled/<id>_logo.gsc the game's logo, 256x64
+#   oled/<id>_icon.gsc its icon, 86x64
 #
-# Read into a table when its time changes, as names.txt is; the core name
-# lower-cased -> the rest of its line.
+# Which game runs, in this order: /tmp/dnk_game (<Engine>|<id>, which the port
+# writes once it knows the game: one picked from the core's list, or tried
+# under a test set name) while it is newer than CORENAME and names the core
+# loaded; CORENAME as <Engine>_<id> (a game's menu entry); CORENAME as the
+# engine of a port with one game, or of a set name its port does not know.
 # ---------------------------------------------------------------------------
-: "${HYBRID_CORES:=${TTY2OLED_PATH:-/media/fat/tty2oledplus}/hybridcores.txt}"
-declare -A HYBRID_MAP=()
-HYBRID_REF=""
-_hybrid_load() {
-  local line="" k=""
-  _table_stale "${HYBRID_CORES}" HYBRID_REF || return 0
-  HYBRID_MAP=()
-  [ -r "${HYBRID_CORES}" ] || return 0
-  while IFS= read -r line || [ -n "${line}" ]; do
-    line="${line%$'\r'}"
-    case "${line}" in '#'*|';'*|'') continue ;; esac
-    [[ "${line}" == *'|'* ]] || continue
-    k="${line%%|*}"
-    [ -n "${k}" ] && [ -z "${HYBRID_MAP[${k,,}]+set}" ] && HYBRID_MAP[${k,,}]="${line#*|}"
-  done <"${HYBRID_CORES}"
-  return 0
-}
+: "${HYBRID_DIR:=/media/fat/games/dnk}"
+: "${HYBRID_GAME:=/tmp/dnk_game}"
+HYB_ENGINE=""      # the game hybrid_core found: its port's folder name
+HYB_ID=""          # and its id there
+HYB_SHOWN=""       # <engine>|<id> whose logo went up with the last core change
 
-hybrid_core() {  # hybrid_core <corename>
-  [ -n "${1}" ] || return 1
-  _hybrid_load
-  [ -n "${HYBRID_MAP[${1,,}]+set}" ]
-}
-
-# The console layout for a hybrid core: its title, its rows as the table
-# orders them - none pinned, so four to a page - and its description. The
-# icon is the core's own, pics/icon/<corename>.
-hybrid_meta() {  # hybrid_meta <corename>
-  local corename="${1}" rest="" part="" desc=""
-  local -a parts=()
-  rest="${HYBRID_MAP[${corename,,}]}"
-  # The last field is the description, empty or not - taken off first, since
-  # read drops an empty field at the end of a line.
-  if [[ "${rest}" == *'|'* ]]; then
-    desc="${rest##*|}"
-    rest="${rest%|*}"
+# hybrid_core <corename>: whether a hybrid port's game runs, into HYB_ENGINE
+# and HYB_ID. A game is one whose logo is there.
+hybrid_core() {
+  local core="${1}" line="" e="" id="" n=0
+  HYB_ENGINE=""; HYB_ID=""
+  [ -n "${core}" ] && [ -d "${HYBRID_DIR}" ] || return 1
+  if [ -r "${HYBRID_GAME}" ] && [ "${HYBRID_GAME}" -nt "${MISTER_CORENAME:-/tmp/CORENAME}" ]; then
+    IFS= read -r line <"${HYBRID_GAME}" || [ -n "${line}" ]
+    e="${line%%|*}"; id="${line#*|}"
+    if [ -n "${e}" ] && [ -n "${id}" ] && [[ "${line}" == *'|'* ]] &&
+       { [ "${core,,}" = "${e,,}" ] || [ "${core:0:${#e}+1}" = "${e}_" ] || [ "${core:0:${#e}+1}" = "${e,,}_" ]; } &&
+       [ -r "${HYBRID_DIR}/${e}/oled/${id}_logo.gsc" ]; then
+      HYB_ENGINE="${e}"; HYB_ID="${id}"
+      return 0
+    fi
   fi
-  IFS='|' read -r -a parts <<<"${rest}"
+  if [[ "${core}" == *_* ]]; then
+    e="${core%_*}"; id="${core##*_}"
+    if [ -r "${HYBRID_DIR}/${e}/oled/${id}_logo.gsc" ]; then
+      HYB_ENGINE="${e}"; HYB_ID="${id}"
+      return 0
+    fi
+  fi
+  # The engine alone, its only game
+  for e in "${core}" "${core%_*}"; do
+    [ -r "${HYBRID_DIR}/${e}/games.txt" ] || continue
+    id=""; n=0
+    while IFS= read -r line || [ -n "${line}" ]; do
+      line="${line%$'\r'}"
+      case "${line}" in '#'*|'') continue ;; esac
+      [[ "${line}" == *'|'* ]] || continue
+      n=$((n + 1)); id="${line%%|*}"
+    done <"${HYBRID_DIR}/${e}/games.txt"
+    if [ "${n}" -eq 1 ] && [ -r "${HYBRID_DIR}/${e}/oled/${id}_logo.gsc" ]; then
+      HYB_ENGINE="${e}"; HYB_ID="${id}"
+      return 0
+    fi
+    break
+  done
+  return 1
+}
+
+# The line of <id> in a port's <file>, after the id: into _hl
+_hybrid_line() {  # _hybrid_line <file> <id>
+  local l=""
+  _hl=""
+  [ -r "${1}" ] || return 1
+  while IFS= read -r l || [ -n "${l}" ]; do
+    l="${l%$'\r'}"
+    [ "${l%%|*}" = "${2}" ] && [[ "${l}" == *'|'* ]] && { _hl="${l#*|}"; return 0; }
+  done <"${1}"
+  return 1
+}
+
+# The console layout for the game hybrid_core found: its title (games.txt),
+# Dev, Year, Port and Author - none pinned, so one page - its description
+# (info.txt) and its icon. A game other than the one whose logo went up with
+# the core (picked from the list, or named by the port after the core change)
+# asks for its logo first (META_SHOWCORE).
+hybrid_meta() {  # hybrid_meta <corename> [corechange]
+  local dir="${HYBRID_DIR}/${HYB_ENGINE}" _hl="" year="" dev="" desc=""
   META_KIND="console"
   META_SOURCE="hybrid"
   META_GAME="yes"
-  META_ICON="${corename}"
   META_PINNED_COUNT=0
-  META_TITLE="${parts[0]:-${DISPLAY_CORENAME}}"
-  # The fields between are rows, and one that is no <label>=<value> is none.
-  for part in "${parts[@]:1}"; do
-    [[ "${part}" == *=* ]] && meta_addfield "${part%%=*}" "${part#*=}"
-  done
+  META_TITLE="${DISPLAY_CORENAME}"
+  _hybrid_line "${dir}/games.txt" "${HYB_ID}" && META_TITLE="${_hl}"
+  if _hybrid_line "${dir}/info.txt" "${HYB_ID}"; then
+    year="${_hl%%|*}"; _hl="${_hl#*|}"
+    dev="${_hl%%|*}"; desc="${_hl#*|}"
+    [[ "${_hl}" == *'|'* ]] || desc=""
+  fi
+  [ -n "${dev}" ] && meta_addfield "Dev" "${dev}"
+  [ -n "${year}" ] && meta_addfield "Year" "${year}"
+  meta_addfield "Port" "${HYB_ENGINE}"
+  meta_addfield "Author" "danik"
+  [ -r "${dir}/oled/${HYB_ID}_icon.gsc" ] && META_ICON="${dir}/oled/${HYB_ID}_icon.gsc"
   [ "${SHOW_DESCRIPTION:-yes}" = "yes" ] && META_DESC="${desc}"
+  if [ "${2:-}" = "corechange" ]; then
+    HYB_SHOWN="${HYB_ENGINE}|${HYB_ID}"
+  elif [ "${HYB_SHOWN}" != "${HYB_ENGINE}|${HYB_ID}" ]; then
+    META_SHOWCORE="yes"
+  fi
   return 0
 }
 
@@ -2236,10 +2282,10 @@ build_meta() {
   _slurp _rbf "${MISTER_RBFNAME}"
   display_corename "${corename}" "${_rbf}"
 
-  # A hybrid core is its game, wherever it was started from and whatever is
-  # left in the state files: the table's line is the whole of it.
+  # A hybrid port's game, wherever it was started from and whatever is left
+  # in the state files: its port's folder is the whole of it.
   if hybrid_core "${corename}"; then
-    hybrid_meta "${corename}"
+    hybrid_meta "${corename}" "${corechange}"
     return 0
   fi
 

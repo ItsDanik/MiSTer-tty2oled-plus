@@ -223,6 +223,14 @@ migrate_pics() {
     rmdir "${pri}" 2>/dev/null
   fi
 
+  # The hybrid ports' pictures and table (up to 0.8.9b): the ports bring
+  # their own now, in their folders (games/dnk/<Engine>/oled/), and the
+  # updater copies files but removes none.
+  for f in dethrace ecwolf jfsw openscreamer; do
+    rm -f "${pics}/banner/${f}.gsc" "${pics}/icon/${f}.gsc" 2>/dev/null
+  done
+  rm -f "${install}/hybridcores.txt" 2>/dev/null
+
   mkdir -p "${pics}/user" 2>/dev/null
   return 0
 }

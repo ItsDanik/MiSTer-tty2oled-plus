@@ -255,6 +255,16 @@ core_kind() {
 findpicture() {
   local core="${1}"
   PICFILE=""; PICFRAME=""
+  # A hybrid port's game: its logo, in its port's folder (hybrid_core) - after
+  # a picture of yours named for the core, when yours come first.
+  if hybrid_core "${core}"; then
+    if [ "${PRIORITIZE_USER_BANNERS:-yes}" = "yes" ] && bannerin "${userbannerfolder}" "${core}" exact; then
+      PICFILE="${BANNERFILE}"
+    else
+      PICFILE="${HYBRID_DIR}/${HYB_ENGINE}/oled/${HYB_ID}_logo.gsc"
+    fi
+    return 0
+  fi
   core_kind "${core}"
   if [ "${CORE_KIND}" != "arcade" ]; then
     # Degauss and Zaparoo are not cores, and their names are looked up whole,

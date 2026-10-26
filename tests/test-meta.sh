@@ -684,101 +684,107 @@ ok "an .mra still wins over the map" "${META_KIND}" "arcade"
 export CORETYPE_MAP="${SAVED_MAP}"
 
 # ---------------------------------------------------------------------------
-section "hybrid cores - the core is the game, and the table says what it is"
+section "hybrid ports - the port's folder says what its game is"
 # ---------------------------------------------------------------------------
-# Dethrace and ECWolf run their game on the ARM: no file is selected, so
-# MiSTer publishes a core name and nothing else, from _Other - which
-# classifies as unknown, metadata off. hybridcores.txt is the whole layout.
+# A hybrid port runs its game on the ARM: no file is selected, so MiSTer
+# publishes a core name (a game's set name, or the engine's) and nothing else.
+# The port brings games.txt, info.txt and oled/<id>_logo.gsc, <id>_icon.gsc in
+# games/dnk/<Engine>/, and writes /tmp/dnk_game once it knows the game.
 clear_state
-HYBRID_CORES="${TMP}/hybridcores.txt"
-cat > "${HYBRID_CORES}" <<'HYB'
+HYBRID_DIR="${TMP}/dnk"
+HYBRID_GAME="${TMP}/dnk_game"
+rm -rf "${HYBRID_DIR}" "${HYBRID_GAME}"
+mkdir -p "${HYBRID_DIR}/ECWolf/oled" "${HYBRID_DIR}/ReNFS/oled" "${HYBRID_DIR}/Bare/oled"
+printf 'WL|Wolfenstein 3D\nSOD|Spear of Destiny\n' > "${HYBRID_DIR}/ECWolf/games.txt"
+cat > "${HYBRID_DIR}/ECWolf/info.txt" <<'HYB'
 # a comment
-Dethrace|Carmageddon|Dev=Stainless Software Ltd.|Year=1997, SCi, Interplay|Core=dethrace|Author=danik|A violent car racing game.
-Bare|Just A Title
-NoDesc|Rows Only|Dev=Someone|Year=2001|
-Odd|Odd One|not a row|Dev=Someone|Text with a = in it.
+WL|1992|id Software|B.J. breaks out of Castle Wolfenstein.
+SOD|1992|id Software|Before Wolfenstein 3D: the Spear of Destiny.
 HYB
-touch -d '2024-01-01 00:00:00' "${HYBRID_CORES}"
-printf '/media/fat/_Other/Dethrace_20261004.rbf\n' > "${TMP}/STARTPATH"
+printf '# its one game\nSE|The Need for Speed SE\n' > "${HYBRID_DIR}/ReNFS/games.txt"
+printf 'SE|1996|Pioneer Productions|Exotic cars on open roads.\n' > "${HYBRID_DIR}/ReNFS/info.txt"
+printf 'X|Bare Game\n' > "${HYBRID_DIR}/Bare/games.txt"
+for f in ECWolf/oled/WL ECWolf/oled/SOD ReNFS/oled/SE Bare/oled/X; do
+  printf '#\n#\n#\n0a\n' > "${HYBRID_DIR}/${f}_logo.gsc"
+  printf '#\n#\n#\n0b\n' > "${HYBRID_DIR}/${f}_icon.gsc"
+done
+rm -f "${HYBRID_DIR}/Bare/oled/X_icon.gsc"
+printf '/media/fat/_Other/dnk/dnk-ECWolf_20261026.rbf\n' > "${TMP}/STARTPATH"
 # Whatever the last core left behind is not this game's.
 printf 'games/GBA\n'             > "${TMP}/FULLPATH"
 printf 'Advance Wars (USA).gba\n' > "${TMP}/CURRENTPATH"
 printf 'selected\n'              > "${TMP}/FILESELECT"
+printf 'ECWolf_SOD\n' > "${TMP}/CORENAME"
 
-build_meta "Dethrace" corechange
-ok "a console layout"            "${META_KIND}"   "console"
-ok "with a game to show"         "${META_GAME}"   "yes"
-ok "the table's title"           "${META_TITLE}"  "Carmageddon"
-ok "said to be the table's"      "${META_SOURCE}" "hybrid"
-ok "the core's own icon"         "${META_ICON}"   "Dethrace"
-ok "four rows"                   "${#META_FIELDS[@]}" "4"
-ok "in the table's order"        "$(printf '%s;' "${META_FIELDS[@]}")" \
-   $'Dev\tStainless Software Ltd.;Year\t1997, SCi, Interplay;Core\tdethrace;Author\tdanik;'
-ok "none pinned: all four on one page" "${META_PINNED_COUNT}" "0"
-ok "and the description"         "${META_DESC}"   "A violent car racing game."
+build_meta "ECWolf_SOD" corechange
+ok "a game's menu entry: a console layout" "${META_KIND}|${META_GAME}|${META_SOURCE}" "console|yes|hybrid"
+ok "its title from games.txt"    "${META_TITLE}"  "Spear of Destiny"
+ok "its icon in its port's folder" "${META_ICON}" "${HYBRID_DIR}/ECWolf/oled/SOD_icon.gsc"
+ok "four rows, none pinned"      "${#META_FIELDS[@]}|${META_PINNED_COUNT}" "4|0"
+ok "Dev, Year, Port, Author"     "$(printf '%s;' "${META_FIELDS[@]}")" \
+   $'Dev\tid Software;Year\t1992;Port\tECWolf;Author\tdanik;'
+ok "and the description"         "${META_DESC}"   "Before Wolfenstein 3D: the Spear of Destiny."
 
-build_meta "dethrace"
-ok "the core name without regard to case" "${META_TITLE}" "Carmageddon"
-
-SHOW_DESCRIPTION="no" build_meta "Dethrace"
+SHOW_DESCRIPTION="no" build_meta "ECWolf_SOD" corechange
 ok "SHOW_DESCRIPTION=no leaves the page out" "${META_DESC}" ""
 
-build_meta "Bare"
-ok "a title alone: the title"    "${META_TITLE}|${#META_FIELDS[@]}|${META_DESC}" "Just A Title|0|"
-build_meta "NoDesc"
-ok "an empty description is not the last row" \
-   "${#META_FIELDS[@]}|${META_FIELDS[1]}|${META_DESC}" $'2|Year\t2001|'
-build_meta "Odd"
-ok "a field that is no label=value is no row" "${#META_FIELDS[@]}" "1"
-ok "and a description may hold an ="          "${META_DESC}" "Text with a = in it."
+printf 'ECWolf\n' > "${TMP}/CORENAME"
+build_meta "ECWolf" corechange
+ok "the engine of several games, none named: no game" "${META_KIND}|${META_GAME}" "unknown|no"
 
-build_meta "Template"
-ok "a core not in the table is untouched" "${META_KIND}|${META_GAME}" "unknown|no"
-ok "hybrid_core says which is which" \
-   "$(hybrid_core ECWolf && echo yes || echo no)$(hybrid_core Dethrace && echo yes || echo no)" "noyes"
-
-# Read again when the file changes, not before.
-printf 'ECWolf|Wolfenstein 3D|Dev=Id Software|\n' >> "${HYBRID_CORES}"
-touch -d '2024-01-02 00:00:00' "${HYBRID_CORES}"
+# The port names the game picked from its list, after the core change: it is
+# shown, and asks for its logo to go up first.
+printf 'ECWolf|WL\n' > "${HYBRID_GAME}"
+touch -d '2024-01-01 00:00:00' "${TMP}/CORENAME"
+touch -d '2024-01-01 00:00:05' "${HYBRID_GAME}"
 build_meta "ECWolf"
-ok "a changed table is read again" "${META_TITLE}" "Wolfenstein 3D"
-
-HYBRID_CORES="${TMP}/no-such-table"
-build_meta "Dethrace"
-ok "no table: the core as any other" "${META_KIND}|${META_GAME}" "unknown|no"
-
-# The shipped table: what each line names must be there, and fit the firmware.
-HYBRID_CORES="${ROOT}/hybridcores.txt"
-build_meta "Dethrace"
-ok "shipped: Dethrace is Carmageddon" "${META_TITLE}" "Carmageddon"
-ok "shipped: its rows" "$(printf '%s;' "${META_FIELDS[@]%%$'\t'*}")" "Dev;Year;Core;Author;"
+ok "/tmp/dnk_game names the game picked" "${META_TITLE}|${META_SOURCE}" "Wolfenstein 3D|hybrid"
+ok "which asks for its logo first"       "${META_SHOWCORE}" "yes"
+build_meta "ECWolf" corechange
 build_meta "ECWolf"
-ok "shipped: ECWolf is Wolfenstein 3D" "${META_TITLE}" "Wolfenstein 3D"
-ok "shipped: its rows" "$(printf '%s;' "${META_FIELDS[@]}")" \
-   $'Dev\tId Software;Year\t1992, Apogee, id;Core\tecwolf;Author\tdanik;'
-build_meta "jfSW"
-ok "shipped: jfSW is Shadow Warrior" "${META_TITLE}" "Shadow Warrior"
-ok "shipped: its rows" "$(printf '%s;' "${META_FIELDS[@]}")" \
-   $'Dev\t3D Realms;Year\t1997, GT Interactive;Core\tjfSW;Author\tdanik;'
-build_meta "openscreamer"
-ok "shipped: openscreamer is Screamer" "${META_TITLE}" "Screamer"
-ok "shipped: its rows" "$(printf '%s;' "${META_FIELDS[@]}")" \
-   $'Dev\tGraffiti;Year\t1995, Virgin Interactive;Core\topenscreamer;Author\tdanik;'
+ok "and not again once it went up"       "${META_SHOWCORE}" ""
+printf 'ECWolf_TEST\n' > "${TMP}/CORENAME"
+touch -d '2024-01-01 00:00:00' "${TMP}/CORENAME"
+build_meta "ECWolf_TEST" corechange
+ok "a test set name: the game the port names" "${META_TITLE}" "Wolfenstein 3D"
+touch -d '2024-01-01 00:00:10' "${TMP}/CORENAME"
+build_meta "ECWolf_TEST" corechange
+ok "a /tmp/dnk_game older than the core is not this game's" "${META_GAME}" "no"
+touch -d '2024-01-01 00:00:00' "${TMP}/CORENAME"
+build_meta "ReNFS" corechange
+ok "nor one of another engine" "${META_TITLE}" "The Need for Speed SE"
+build_meta "ECWolfish" corechange
+ok "nor of an engine whose name only starts the same" "${META_GAME}" "no"
+
+printf 'ReNFS\n' > "${TMP}/CORENAME"
+rm -f "${HYBRID_GAME}"
+build_meta "ReNFS" corechange
+ok "a port with one game: the engine is enough" \
+   "${META_TITLE}|$(printf '%s;' "${META_FIELDS[@]}")" \
+   $'The Need for Speed SE|Dev\tPioneer Productions;Year\t1996;Port\tReNFS;Author\tdanik;'
+build_meta "ReNFS_XYZ" corechange
+ok "and a set name its port does not know"  "${META_TITLE}" "The Need for Speed SE"
+build_meta "Bare" corechange
+ok "no info.txt line: the title, Port and Author" \
+   "${META_TITLE}|${#META_FIELDS[@]}|${META_DESC}" "Bare Game|2|"
+ok "and without its icon, none" "${META_ICON}" ""
+rm -f "${HYBRID_DIR}/ECWolf/oled/SOD_logo.gsc"
+build_meta "ECWolf_SOD" corechange
+ok "a game without its logo is none" "${META_KIND}|${META_GAME}" "unknown|no"
+build_meta "Template" corechange
+ok "a core of no port is untouched" "${META_KIND}|${META_GAME}" "unknown|no"
+
+# tty2oled+ ships nothing of the ports any more
 hyb_bad=""
-while IFS= read -r line; do
-  case "${line}" in '#'*|'') continue ;; esac
-  core="${line%%|*}"; desc="${line##*|}"
-  [ -e "${ROOT}/pics/banner/${core,,}.gsc" ] || hyb_bad="${hyb_bad} ${core}:banner"
-  [ -e "${ROOT}/pics/icon/${core,,}.gsc" ]   || hyb_bad="${hyb_bad} ${core}:icon"
-  [ "${#desc}" -le 2048 ]                    || hyb_bad="${hyb_bad} ${core}:long"
-  [ -n "${desc}" ]                           || hyb_bad="${hyb_bad} ${core}:nodesc"
-  LC_ALL=C grep -q '[^ -~]' <<<"${line}"     && hyb_bad="${hyb_bad} ${core}:ascii"
-done < "${ROOT}/hybridcores.txt"
-ok "shipped: a banner, an icon and a printable description that fits, each" "${hyb_bad}" ""
-ok "shipped: the installer carries the table" \
-   "$(. "${ROOT}/tools/manifest.sh"; case " ${MANIFEST_FILES//$'\n'/ } " in *" hybridcores.txt "*) echo yes ;; *) echo no ;; esac)" "yes"
-HYBRID_CORES="${TMP}/no-such-table"
-rm -f "${TMP}/hybridcores.txt"
+for f in dethrace ecwolf jfsw openscreamer; do
+  [ -e "${ROOT}/pics/banner/${f}.gsc" ] && hyb_bad="${hyb_bad} banner/${f}"
+  [ -e "${ROOT}/pics/icon/${f}.gsc" ] && hyb_bad="${hyb_bad} icon/${f}"
+done
+[ -e "${ROOT}/hybridcores.txt" ] && hyb_bad="${hyb_bad} hybridcores.txt"
+ok "no pictures or table of the hybrid ports shipped" "${hyb_bad}" ""
+HYBRID_DIR="${TMP}/no-such-dir"
+HYBRID_GAME="${TMP}/no-such-game"
+rm -rf "${TMP}/dnk"
 
 # ---------------------------------------------------------------------------
 section "check_mister_ini"
