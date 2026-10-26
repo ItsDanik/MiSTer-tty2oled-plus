@@ -914,6 +914,13 @@ banners/icons went after 0.8.9b; `migrate_pics` removes them from installs).
   it is newer than CORENAME and CORENAME is the engine or `<Engine>_*`; CORENAME
   as `<Engine>_<id>`; CORENAME (or the part before its last `_`) as an engine
   whose `games.txt` has one game. A game is one whose `_logo.gsc` is there.
+- `/tmp/dnk_game` as `<Engine>|`, no id, is the port's list of games
+  (`MH_GameList()`, 2026-10-26): `HYB_ID` "", `hybrid_picture` gives the
+  port's `oled/framework_logo.gsc` (the framework's banner), and
+  `hybrid_meta` no game (kind unknown, so CMDMETAOFF) and `META_SHOWCORE`
+  when something else was up: a game quit back to the list gets the banner
+  back. A core change that is not a hybrid port's game clears `HYB_SHOWN`, so
+  the same game picked again after another core gets its logo again.
 - `findpicture` takes the port's logo (after an exact `pics/user` banner when
   those come first); `hybrid_meta` builds the console layout: title from
   `games.txt`, rows Dev, Year, Port, Author (danik), description, icon by
@@ -925,7 +932,9 @@ banners/icons went after 0.8.9b; `migrate_pics` removes them from installs).
   seen at the next poll (`METADATA_POLL`, 5s), not watched.
 - Tests: `test-meta.sh` and `test-wire.sh` ("hybrid ports"), a fake port folder
   (`HYBRID_DIR`, `HYBRID_GAME`).
-- Not checked on the real MiSTer yet.
+- Checked on the real MiSTer (2026-10-26, ECWolf): WL and SOD from their menu
+  entries, SOD picked from the list, the banner on the list and back on it
+  after quitting.
 
 ## The DVD core
 

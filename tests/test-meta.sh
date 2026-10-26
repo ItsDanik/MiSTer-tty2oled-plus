@@ -709,6 +709,7 @@ for f in ECWolf/oled/WL ECWolf/oled/SOD ReNFS/oled/SE Bare/oled/X; do
   printf '#\n#\n#\n0b\n' > "${HYBRID_DIR}/${f}_icon.gsc"
 done
 rm -f "${HYBRID_DIR}/Bare/oled/X_icon.gsc"
+printf '#\n#\n#\n0c\n' > "${HYBRID_DIR}/ECWolf/oled/framework_logo.gsc"
 printf '/media/fat/_Other/dnk/dnk-ECWolf_20261026.rbf\n' > "${TMP}/STARTPATH"
 # Whatever the last core left behind is not this game's.
 printf 'games/GBA\n'             > "${TMP}/FULLPATH"
@@ -743,6 +744,27 @@ ok "which asks for its logo first"       "${META_SHOWCORE}" "yes"
 build_meta "ECWolf" corechange
 build_meta "ECWolf"
 ok "and not again once it went up"       "${META_SHOWCORE}" ""
+# The game quit, the core's list is up again: no game, the framework's banner
+printf 'ECWolf|\n' > "${HYBRID_GAME}"
+touch -d '2024-01-01 00:00:06' "${HYBRID_GAME}"
+build_meta "ECWolf"
+ok "the core's list: no game"            "${META_KIND}|${META_GAME}|${META_SOURCE}" "unknown|no|hybrid"
+ok "its picture put back up"             "${META_SHOWCORE}" "yes"
+ok "the framework's banner"              "$(hybrid_picture)" "${HYBRID_DIR}/ECWolf/oled/framework_logo.gsc"
+build_meta "ECWolf" corechange
+build_meta "ECWolf"
+ok "and only once"                       "${META_SHOWCORE}" ""
+mv "${HYBRID_DIR}/ECWolf/oled/framework_logo.gsc" "${TMP}/framework_logo.gsc"
+build_meta "ECWolf" corechange
+ok "a port without the banner: its list is none" "${META_KIND}|${META_SOURCE}" "unknown|core"
+mv "${TMP}/framework_logo.gsc" "${HYBRID_DIR}/ECWolf/oled/framework_logo.gsc"
+# Another core in between: the game named again is new, its logo goes up
+printf 'ECWolf|WL\n' > "${HYBRID_GAME}"
+touch -d '2024-01-01 00:00:05' "${HYBRID_GAME}"
+build_meta "ECWolf" corechange
+build_meta "Template" corechange
+build_meta "ECWolf"
+ok "the same game after another core: its logo first" "${META_SHOWCORE}" "yes"
 printf 'ECWolf_TEST\n' > "${TMP}/CORENAME"
 touch -d '2024-01-01 00:00:00' "${TMP}/CORENAME"
 build_meta "ECWolf_TEST" corechange

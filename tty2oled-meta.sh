@@ -260,18 +260,31 @@ _coretypes_load() {
 #   info.txt           <id>|<year>|<developer>|<description>
 #   oled/<id>_logo.gsc the game's logo, 256x64
 #   oled/<id>_icon.gsc its icon, 86x64
+#   oled/framework_logo.gsc  the framework's banner, 256x64
 #
 # Which game runs, in this order: /tmp/dnk_game (<Engine>|<id>, which the port
 # writes once it knows the game: one picked from the core's list, or tried
 # under a test set name) while it is newer than CORENAME and names the core
 # loaded; CORENAME as <Engine>_<id> (a game's menu entry); CORENAME as the
 # engine of a port with one game, or of a set name its port does not know.
+# While the core's list of games is up, /tmp/dnk_game is <Engine>| (no id):
+# no game, and the framework's banner as the core's picture.
 # ---------------------------------------------------------------------------
 : "${HYBRID_DIR:=/media/fat/games/dnk}"
 : "${HYBRID_GAME:=/tmp/dnk_game}"
 HYB_ENGINE=""      # the game hybrid_core found: its port's folder name
-HYB_ID=""          # and its id there
+HYB_ID=""          # and its id there, "" for the core's list
 HYB_SHOWN=""       # <engine>|<id> whose logo went up with the last core change
+
+# A hybrid port's picture: its game's logo, or the framework's banner while
+# its list is up (HYB_ID "")
+hybrid_picture() {
+  if [ -n "${HYB_ID}" ]; then
+    printf '%s/%s/oled/%s_logo.gsc' "${HYBRID_DIR}" "${HYB_ENGINE}" "${HYB_ID}"
+  else
+    printf '%s/%s/oled/framework_logo.gsc' "${HYBRID_DIR}" "${HYB_ENGINE}"
+  fi
+}
 
 # hybrid_core <corename>: whether a hybrid port's game runs, into HYB_ENGINE
 # and HYB_ID. A game is one whose logo is there.
@@ -282,9 +295,10 @@ hybrid_core() {
   if [ -r "${HYBRID_GAME}" ] && [ "${HYBRID_GAME}" -nt "${MISTER_CORENAME:-/tmp/CORENAME}" ]; then
     IFS= read -r line <"${HYBRID_GAME}" || [ -n "${line}" ]
     e="${line%%|*}"; id="${line#*|}"
-    if [ -n "${e}" ] && [ -n "${id}" ] && [[ "${line}" == *'|'* ]] &&
+    if [ -n "${e}" ] && [[ "${line}" == *'|'* ]] &&
        { [ "${core,,}" = "${e,,}" ] || [ "${core:0:${#e}+1}" = "${e}_" ] || [ "${core:0:${#e}+1}" = "${e,,}_" ]; } &&
-       [ -r "${HYBRID_DIR}/${e}/oled/${id}_logo.gsc" ]; then
+       { { [ -n "${id}" ] && [ -r "${HYBRID_DIR}/${e}/oled/${id}_logo.gsc" ]; } ||
+         { [ -z "${id}" ] && [ -r "${HYBRID_DIR}/${e}/oled/framework_logo.gsc" ]; }; }; then
       HYB_ENGINE="${e}"; HYB_ID="${id}"
       return 0
     fi
@@ -331,9 +345,22 @@ _hybrid_line() {  # _hybrid_line <file> <id>
 # Dev, Year, Port and Author - none pinned, so one page - its description
 # (info.txt) and its icon. A game other than the one whose logo went up with
 # the core (picked from the list, or named by the port after the core change)
-# asks for its logo first (META_SHOWCORE).
+# asks for its logo first (META_SHOWCORE). The core's list is no game: the
+# framework's banner alone, put back up when a game was shown before it.
 hybrid_meta() {  # hybrid_meta <corename> [corechange]
   local dir="${HYBRID_DIR}/${HYB_ENGINE}" _hl="" year="" dev="" desc=""
+  if [ -z "${HYB_ID}" ]; then
+    META_KIND="unknown"
+    META_SOURCE="hybrid"
+    META_GAME="no"
+    META_TITLE="${DISPLAY_CORENAME}"
+    if [ "${2:-}" = "corechange" ]; then
+      HYB_SHOWN="${HYB_ENGINE}|"
+    elif [ "${HYB_SHOWN}" != "${HYB_ENGINE}|" ]; then
+      META_SHOWCORE="yes"
+    fi
+    return 0
+  fi
   META_KIND="console"
   META_SOURCE="hybrid"
   META_GAME="yes"
@@ -2288,6 +2315,9 @@ build_meta() {
     hybrid_meta "${corename}" "${corechange}"
     return 0
   fi
+  # Another core, or the port's before it says anything: whatever it says next
+  # is new, its picture goes up
+  [ "${corechange}" = "corechange" ] && HYB_SHOWN=""
 
   case "${META_KIND}" in
 

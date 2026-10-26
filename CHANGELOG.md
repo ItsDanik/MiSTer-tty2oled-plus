@@ -4,7 +4,7 @@ The scripts and the firmware carry **one** version and are released together,
 so every entry below describes both. `tools/bump-version.sh` moves the number;
 a trailing `b` means beta.
 
-## Unreleased
+## 0.8.10b — 2026-10-26
 
 - **Every game of the hybrid ports.** The ports bring their own logo, icon,
   details and description for each of their games, in their own folders,
@@ -14,6 +14,14 @@ a trailing `b` means beta.
   2026-10-26 show their core's name until they are updated. The table and
   pictures tty2oled+ had for Dethrace, ECWolf, jfSW and openscreamer are
   gone (they are the ports' own now) and are removed from your install.
+- **A hybrid port's list of games shows the framework's banner.** A port
+  started on its own with several games puts up its list; while it is up
+  the display shows the Hybrid Core Framework's banner instead of the game
+  played before, and a game quit back to the list brings the banner back.
+  A game's menu entry goes straight to its game, so never shows it.
+- The logo of a hybrid port's game goes up again when it is picked after
+  another core ran in between; it was left out when the same game had been
+  shown before.
 
 ## 0.8.9b — 2026-10-13
 

@@ -261,7 +261,7 @@ findpicture() {
     if [ "${PRIORITIZE_USER_BANNERS:-yes}" = "yes" ] && bannerin "${userbannerfolder}" "${core}" exact; then
       PICFILE="${BANNERFILE}"
     else
-      PICFILE="${HYBRID_DIR}/${HYB_ENGINE}/oled/${HYB_ID}_logo.gsc"
+      PICFILE="$(hybrid_picture)"
     fi
     return 0
   fi

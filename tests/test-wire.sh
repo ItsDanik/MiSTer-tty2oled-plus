@@ -978,6 +978,19 @@ ok "the game picked" "$(captured | grep -a '^CMDMETA,' | cut -d, -f6 | cut -d'|'
 reset_capture
 refreshmeta "Dethrace" >/dev/null 2>&1
 ok "and only once" "$(captured | grep -ac 'CMDCOR')" "0"
+# The game quit, the core's list is up again: the framework's banner alone
+printf '#\n#\n#\n0c\n' > "${HYBRID_DIR}/Dethrace/oled/framework_logo.gsc"
+reset_capture
+printf 'Dethrace|\n' > "${HYBRID_GAME}"
+touch -d '2024-01-01 00:00:06' "${HYBRID_GAME}"
+refreshmeta "Dethrace" >/dev/null 2>&1
+ok "back to the core's list: the framework's banner, no layout" \
+   "$(captured | grep -aoE 'CMD[A-Z]+' | paste -sd' ')" "CMDMETAOFF CMDCOR"
+ok "the framework's banner, the port's" "$(findpicture Dethrace; printf '%s' "${PICFILE}")" \
+   "${HYBRID_DIR}/Dethrace/oled/framework_logo.gsc"
+reset_capture
+refreshmeta "Dethrace" >/dev/null 2>&1
+ok "and only once" "$(captured | grep -ac 'CMDCOR')" "0"
 rm -rf "${HYBRID_DIR}" "${HYBRID_GAME}"
 HYBRID_DIR="${TMP}/no-such-dir"
 HYBRID_GAME="${TMP}/no-such-game"
